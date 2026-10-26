@@ -1,0 +1,14 @@
+faster-whisper
+sounddevice
+numpy
+requests
+dateparser
+piper-tts
+onnxruntime
+scipy
+scikit-learn
+tqdm
+PyQt6
+ddgs
+yt-dlp
+evdev
