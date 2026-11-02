@@ -1,4 +1,5 @@
 """Ana's voice: text to speech with Piper, kept loaded in memory."""
+import atexit
 import os
 import queue
 import re
@@ -9,7 +10,7 @@ import threading
 import time
 import wave
 
-from . import config, state
+from . import config, events, state
 
 SPEAKING = threading.Event()
 LAST = [""]
@@ -18,6 +19,7 @@ _voice = [None]
 
 PRONOUNCE = [(r"\bVibee\b", "Vybee"), (r"\bVibeo\b", "Vybee"), (r"\bAna\b", "Ahna")]
 PLAYERS = ("pw-play", "paplay", "aplay")
+_player = []
 
 
 def pronounce(text):
@@ -53,17 +55,23 @@ def synth(text, wav_path):
         return False
 
 
+def player():
+    if not _player:
+        _player.append(next((p for p in PLAYERS if shutil.which(p)), None))
+    return _player[0]
+
+
 def play(wav_path):
-    for player in PLAYERS:
-        if shutil.which(player):
-            subprocess.run([player, wav_path], stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL)
-            return True
-    return False
+    cmd = player()
+    if cmd is None:
+        return False
+    subprocess.run([cmd, wav_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return True
 
 
 def _worker():
-    wav = f"/tmp/ana_say_{os.getpid()}.wav"
+    wav = str(config.runtime_file(f"say_{os.getpid()}.wav"))
+    atexit.register(config.discard, wav)
     while True:
         text = _queue.get()
         SPEAKING.set()
@@ -90,6 +98,7 @@ def say(text):
         return
     LAST[0] = text
     print(f"  {text}")
+    events.emit("ana", text)
     if state.get("muted") or not config.VOICE.exists():
         return
     SPEAKING.set()

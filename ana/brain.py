@@ -65,9 +65,9 @@ RULES = """Rules:
 
 def build_system(tools_doc):
     parts = [PERSONA.replace("{NAME}", config.ASSISTANT), SPEECH,
-             "Current local time: " + datetime.now().strftime("%A %Y-%m-%d %H:%M") + " (India Standard Time).",
+             "Current local time: " + datetime.now().astimezone().strftime("%A %Y-%m-%d %H:%M (%Z)") + ".",
              FORMAT, "Actions:\n" + tools_doc, RULES]
-    pet = config.get("USER_PET_NAME") or config.get("USER_NAME")
+    pet = config.PET_NAME
     short, full = config.SHORT_NAME, config.FULL_NAME
     if pet or short:
         parts.append(
@@ -130,6 +130,14 @@ def _groq(messages, use_json=True):
         return None, 200
 
 
+def _groq_json(messages):
+    data, code = _groq(messages)
+    # some models reject response_format; asking again without it usually still yields JSON
+    if data is None and code == 400:
+        data, code = _groq(messages, use_json=False)
+    return data
+
+
 def _ollama_model():
     wanted = config.get("OLLAMA_MODEL")
     if wanted:
@@ -180,9 +188,7 @@ def think(text, tools_doc):
     messages = [{"role": "system", "content": build_system(tools_doc)}]
     messages += _history[-6:]
     messages.append({"role": "user", "content": text})
-    data, code = _groq(messages)
-    if data is None and code == 400:
-        data, code = _groq(messages, use_json=False)
+    data = _groq_json(messages)
     if data is None:
         data = _ollama(messages)
     if data is None:
@@ -208,7 +214,4 @@ def warm():
 
 def ask_json(system, user):
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
-    data, code = _groq(messages)
-    if data is None and code == 400:
-        data, code = _groq(messages, use_json=False)
-    return data
+    return _groq_json(messages)

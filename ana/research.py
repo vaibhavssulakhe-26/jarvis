@@ -10,8 +10,8 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
-from . import brain, voice
-from .tools import ToolError, _browser, tool
+from . import brain, events, voice
+from .tools import ToolError, _browser, stamped_name, tool
 
 OUT = Path.home() / "Documents" / "research"
 HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0"}
@@ -129,13 +129,13 @@ def research(args):
         return str(out.get("speech") or "I did not find anything useful.")
     for it in items:
         print(f"   {it['n']}. {it['name']} | {it['date']} | {it['place']} | {it['url']}")
+        events.emit("sys", f"{it['n']}. {it['name']} | {it['date']} | {it['place']}")
     brain.NOTES = "Research results for: " + query + "\n" + "\n".join(
         f"{it['n']}. {it['name']} | date: {it['date']} | place: {it['place']} | url: {it['url'] or 'none'}"
         for it in items)
     brain.NOTES_AT = time.time()
     OUT.mkdir(parents=True, exist_ok=True)
-    slug = re.sub(r"[^a-z0-9]+", "-", query.lower()).strip("-")[:40] or "research"
-    path = OUT / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{slug}.md"
+    path = OUT / stamped_name(query, "research", ".md")
     md = [f"# {query}", "", "Searched " + datetime.now().strftime("%Y-%m-%d %H:%M"), ""]
     for it in items:
         md.append(f"{it['n']}. **{it['name']}** - {it['date']} - {it['place']}")

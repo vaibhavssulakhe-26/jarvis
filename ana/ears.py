@@ -1,42 +1,31 @@
-"""Ana's ears: wake word, recording one command, and speech to text."""
+"""Ana's ears: wake word, and recording one command for speech to text."""
+import atexit
 import collections
 import difflib
-import io
 import os
 import queue
 import random
 import re
 import shutil
 import subprocess
-import threading
 import time
 import traceback
-import wave
 
 import numpy as np
-import requests
 import sounddevice as sd
 from scipy.signal import lfilter
 
-from . import config, state, voice
+from . import config, events, state, stt, voice
 
-SR = 16000
+SR = stt.SR
 BLOCK = 1280  # 80 ms of audio per step
-GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
 
 OPENER = r"(?:can|could|would|will) you(?: please)?|please|i (?:want|need) you to|okay|hey|so|and|um|uh"
 FILLER = {"hey", "hi", "hello", "okay", "ok", "yo", "jarvis"}
 NAME_ALIASES = {"anna", "anah", "annah", "ahna", "aana", "anya", "hana", "hanna", "hannah", "ona"}
 NOISE = {"you", "thank you", "thanks", "thanks for watching", "bye", "okay", "ok",
          "yeah", "hmm", "mm", "uh", "um", "oh", "the", "so", "and"}
-def _names():
-    words = [config.ASSISTANT, config.get("USER_PET_NAME")] + config.FULL_NAME.split()
-    return ", ".join(w for w in dict.fromkeys(words) if w)
-
-
-PROMPT = ("Names: " + _names() + ". Commands: open YouTube Music, send mom hi on WhatsApp, remind me in two "
-          "minutes to stretch, take a screenshot, set the volume to forty percent.")
-
+WAKE_WORDS = {n.split()[-1].lower() for n in config.wake_names()} or {"jarvis"}
 
 VERBS = {"open", "play", "pause", "stop", "resume", "send", "call", "remind", "mute", "unmute",
          "lock", "search", "find", "write", "create", "close", "show", "take", "turn", "set",
@@ -59,14 +48,18 @@ def is_name(word):
     return abs(len(w) - len(name)) <= 1 and difflib.SequenceMatcher(None, w, name).ratio() >= 0.8
 
 
+def is_wake_word(word, cutoff):
+    w = re.sub(r"[^a-z]", "", word.lower())
+    return bool(w) and any(difflib.SequenceMatcher(None, w, k).ratio() >= cutoff for k in WAKE_WORDS)
+
+
 def strip_wake(text):
     """Remove a leading 'hey jarvis' or 'Ana' that the transcription picked up."""
     words = text.strip().split()
     i = 0
     while i < len(words):
         w = re.sub(r"[^a-z]", "", words[i].lower())
-        if w and (w in FILLER or is_name(w)
-                  or difflib.SequenceMatcher(None, w, "jarvis").ratio() >= 0.65):
+        if w and (w in FILLER or is_name(w) or is_wake_word(w, 0.65)):
             i += 1
         else:
             break
@@ -78,41 +71,24 @@ def is_noise(text):
     return len(t) < 2 or t in NOISE
 
 
-def save_wav(audio, path="/tmp/ana_last.wav"):
-    """Keep the last command so you can listen to exactly what Ana heard."""
-    pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
-    with wave.open(path, "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(SR)
-        w.writeframes(pcm.tobytes())
-
-
 def make_chime():
-    path = f"/tmp/ana_chime_{os.getpid()}.wav"
+    path = config.runtime_file(f"chime_{os.getpid()}.wav")
     parts = []
     for freq, dur in ((880.0, 0.09), (1174.7, 0.12)):
         n = int(SR * dur)
         t = np.arange(n) / SR
         env = np.clip(np.minimum(t / 0.01, (dur - t) / 0.04), 0.0, 1.0)
         parts.append(0.22 * np.sin(2 * np.pi * freq * t) * env)
-    pcm = (np.concatenate(parts) * 32767).astype(np.int16)
-    with wave.open(path, "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(SR)
-        w.writeframes(pcm.tobytes())
-    return path
+    path.write_bytes(stt.wav_bytes(np.concatenate(parts)))
+    atexit.register(config.discard, path)
+    return str(path)
 
 
 def play_chime(path):
-    if state.get("muted"):
+    player = voice.player()
+    if state.get("muted") or player is None:
         return
-    for player in voice.PLAYERS:
-        if shutil.which(player):
-            subprocess.Popen([player, path], stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL)
-            return
+    subprocess.Popen([player, path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def media_playing():
@@ -151,77 +127,20 @@ class Ears:
             self.wake_thr = float(config.get("WAKE_THRESHOLD", "0.4"))
         except ValueError:
             self.wake_thr = 0.4
-        self.cloud = config.get("ANA_STT", "local").lower() == "groq"
-        self.http = requests.Session()
         self.zi = np.zeros(1)
         try:
             self.gain = float(config.get("MIC_GAIN", "4"))
         except ValueError:
             self.gain = 4.0
-        self._whisper = None
-        self._model_lock = threading.Lock()
         self.oww = self._load_wake()
         self.chime = make_chime()
 
     def _load_wake(self):
         from openwakeword.model import Model
-        hits = sorted(config.MODELS.glob("*jarvis*.onnx"))
-        if not hits:
-            raise SystemExit("The wake word model is missing in " + str(config.MODELS))
-        return Model(wakeword_models=[str(hits[0])], inference_framework="onnx")
-
-    # ---------- speech to text ----------
-    def _model(self):
-        with self._model_lock:
-            if self._whisper is None:
-                from faster_whisper import WhisperModel
-                self._whisper = WhisperModel("base.en", device="cpu", compute_type="int8")
-            return self._whisper
-
-    def _local(self, audio):
-        segments, _ = self._model().transcribe(
-            audio, language="en", vad_filter=True, vad_parameters={"threshold": 0.4},
-            initial_prompt=PROMPT, beam_size=1, condition_on_previous_text=False,
-            no_speech_threshold=0.6, without_timestamps=True)
-        return " ".join(s.text.strip() for s in segments).strip()
-
-    def _groq(self, audio):
-        key = config.get("GROQ_API_KEY")
-        if not key:
-            return None
-        pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as w:
-            w.setnchannels(1)
-            w.setsampwidth(2)
-            w.setframerate(SR)
-            w.writeframes(pcm.tobytes())
-        try:
-            r = self.http.post(
-                GROQ_URL, headers={"Authorization": "Bearer " + key},
-                files={"file": ("command.wav", buf.getvalue(), "audio/wav")},
-                data={"model": "whisper-large-v3-turbo", "language": "en", "temperature": "0",
-                      "response_format": "json", "prompt": PROMPT},
-                timeout=15)
-            if r.status_code >= 400:
-                print(f"  (cloud speech unavailable: HTTP {r.status_code})")
-                return None
-            return str(r.json().get("text", "")).strip()
-        except Exception as e:
-            print(f"  (cloud speech unavailable: {type(e).__name__})")
-            return None
-
-    def transcribe(self, audio):
-        level = float(np.percentile(np.abs(audio), 99))
-        if 0.0005 < level < 0.3:
-            audio = np.clip(audio * min(20.0, 0.4 / level), -1.0, 1.0)
-        save_wav(audio)
-        if self.cloud:
-            text = self._groq(audio)
-            if text is not None:
-                return text
-            print("  (falling back to local speech recognition)")
-        return self._local(audio)
+        files = config.wake_files()
+        if not files:
+            raise SystemExit("No wake word model in " + str(config.MODELS))
+        return Model(wakeword_models=[str(p) for p in files], inference_framework="onnx")
 
     # ---------- listening ----------
     def _callback(self, indata, frames, t, status):
@@ -271,15 +190,12 @@ class Ears:
         self.awake_until = time.time() + seconds
 
     def run(self):
-        state.update(paused=False)
-        voice.warm()
-        if not self.cloud:
-            threading.Thread(target=self._model, daemon=True).start()
+        stt.warm()
         stream = sd.InputStream(samplerate=SR, channels=1, dtype="int16",
                                 blocksize=BLOCK, callback=self._callback)
         stream.start()
-        where = "Groq" if self.cloud else "this laptop"
-        print(f"  listening for Hey Jarvis (threshold {self.wake_thr}); "
+        where = "Groq" if stt.CLOUD else "this laptop"
+        print(f"  listening for {config.wake_label().title()} (threshold {self.wake_thr}); "
               f"speech is transcribed on {where}. Ctrl+C to stop.")
         try:
             while True:
@@ -304,6 +220,7 @@ class Ears:
         if now < self.deaf_until:
             return
         rms = block_rms(block)
+        events.set_level(rms)
         if st["talk_request"] > self.last_talk:
             self.last_talk = st["talk_request"]
             self.via_wake = True
@@ -334,6 +251,7 @@ class Ears:
         if score > self.wake_thr and now > self.cool_until:
             self.cool_until = now + 1.5
             print(f"  wake (score {score:.2f})")
+            events.emit("sys", "wake word heard")
             self.via_wake = True
             self._begin(now, "wait")
         elif now < self.awake_until:
@@ -386,12 +304,11 @@ class Ears:
 
     def _handle(self, audio, via_wake):
         t0 = time.time()
-        raw = self.transcribe(audio)
+        raw = stt.transcribe(audio)
         t1 = time.time()
         text = strip_wake(raw)
         bare = re.sub(r"[^a-z ]", "", text.lower()).strip()
-        named = any(is_name(w) or difflib.SequenceMatcher(None, re.sub(r"[^a-z]", "", w.lower()), "jarvis").ratio() >= 0.7
-                    for w in raw.split()[:3])
+        named = any(is_name(w) or is_wake_word(w, 0.7) for w in raw.split()[:3])
         if not bare:
             if via_wake or named:
                 print("  (nothing after the wake word)")
@@ -415,6 +332,7 @@ class Ears:
                 print(f"  (ignored a short remark: {repr(text)})")
                 return
         print(f"heard: {repr(text)}")
+        events.emit("you", text)
         t2 = time.time()
         self.expect = bool(self.on_command(text, via_wake or named))
         print(f"  [speech to text {t1 - t0:.1f}s, thinking and acting {time.time() - t2:.1f}s]")
@@ -429,6 +347,7 @@ def _demo(text, via_wake):
 
 
 if __name__ == "__main__":
+    state.update(paused=False)
     voice.say("Ears test. Say Hey Jarvis, then a short sentence.")
     voice.wait()
     Ears(_demo).run()

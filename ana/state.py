@@ -1,4 +1,4 @@
-"""Small shared state file so the icon and the assistant can talk to each other."""
+"""Small shared state file so the window, the daemon and the assistant can talk to each other."""
 import json
 import os
 import threading

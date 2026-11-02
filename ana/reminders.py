@@ -80,7 +80,7 @@ def notify(text):
     print(f"\n*** REMINDER: {text} ***")
     if shutil.which("notify-send"):
         subprocess.run(["notify-send", "-u", "critical", "Reminder", text])
-    pet = config.get("USER_PET_NAME") or "Hey"
+    pet = config.PET_NAME or "Hey"
     voice.say(f"{pet}, reminder: {text}.")
 
 

@@ -7,7 +7,7 @@ import threading
 import time
 from datetime import datetime
 
-from . import brain, companion, config, reminders, research, state, tools, voice
+from . import apps, brain, companion, config, reminders, state, tools, voice
 
 PENDING = {}
 STRONG_YES = {"yes", "yeah", "yep", "yup", "confirm", "confirmed", "proceed", "ahead"}
@@ -152,9 +152,9 @@ def fast_path(text):
         m = re.match(r"^(?:please )?(?:open|launch|start)(?: up)? (?:the |my )?(.+?)(?: app| application| folder)?$", t)
         if m:
             name = m.group(1).strip()
-            if name in tools.FOLDERS:
+            if name in apps.FOLDERS:
                 action, args = "open_folder", {"name": name}
-            elif tools.find_app(name):
+            elif apps.find_app(name):
                 action, args = "open_app", {"name": name}
     if action is None:
         return False
@@ -183,7 +183,15 @@ def execute(plan, addressed=False):
         voice.say("I can not do that yet.")
 
 
+_handle_lock = threading.Lock()
+
+
 def handle(text, via_wake=True):
+    with _handle_lock:
+        return _handle(text, via_wake)
+
+
+def _handle(text, via_wake=True):
     """Returns True when Ana expects an answer from you, so she keeps listening."""
     if check_pending(text):
         return bool(PENDING)
@@ -212,7 +220,7 @@ def handle(text, via_wake=True):
 def greet():
     now = datetime.now()
     part = "morning" if now.hour < 12 else "afternoon" if now.hour < 17 else "evening"
-    who = config.get("USER_PET_NAME") or config.get("USER_NAME") or "there"
+    who = config.PET_NAME or "there"
     me = config.ASSISTANT
     line = random.choice([
         f"Good {part}, {who}. {me} reporting for duty.",
@@ -225,12 +233,24 @@ def greet():
     voice.say(line)
 
 
-def main():
+def start(watch_reminders=True):
     state.update(paused=False)
-    reminders.watch(reminders.notify)
+    if watch_reminders:
+        reminders.watch(reminders.notify)
     companion.start()
     threading.Thread(target=brain.warm, daemon=True).start()
     voice.warm()
+
+
+def listen():
+    greet()
+    voice.wait()
+    from .ears import Ears
+    Ears(handle).run()
+
+
+def main():
+    start()
     if "--text" in sys.argv:
         print("text mode: type a command, Ctrl+C to stop")
         while True:
@@ -242,10 +262,7 @@ def main():
             if text.strip():
                 handle(text.strip())
                 voice.wait()
-    greet()
-    voice.wait()
-    from .ears import Ears
-    Ears(handle).run()
+    listen()
 
 
 if __name__ == "__main__":

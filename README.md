@@ -35,12 +35,14 @@ Work in progress. Developed on Fedora 44 with KDE Plasma on Wayland.
 5. Run `python -m ana.main`, or `python -m ana.main --text` to type instead of speak
 
 ## Layout
-- `ana/main.py` wires everything together
-- `ana/ears.py` wake word, recording and speech to text
+- `ana/main.py` wires everything together; `ana/ui.py` is the window
+- `ana/ears.py` wake word and recording; `ana/stt.py` speech to text
 - `ana/brain.py` the prompt, the cloud brain and the local fallback
-- `ana/tools.py` every action she can take, each with a risk level
-- `ana/research.py` web research
-- `ana/reminders.py`, `ana/voice.py`, `ana/state.py`, `ana/companion.py`, `ana/config.py`
+- `ana/tools.py` the tool registry and system actions, each with a risk level
+- `ana/apps.py`, `ana/media.py`, `ana/messaging.py`, `ana/research.py` more tools
+- `ana/reminders.py`, `ana/voice.py`, `ana/state.py`, `ana/events.py`, `ana/companion.py`, `ana/config.py`
+- `ana/daemon.py` reminders as a background service, see `systemd/ana-reminders.service`
+- `scripts/` one-off helpers: microphone calibration and the icon
 
 ## Known limits
 - Free-tier rate limits and a CPU-only laptop mean a command takes about two to four seconds

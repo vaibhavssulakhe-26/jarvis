@@ -3,9 +3,8 @@ import random
 import threading
 import time
 from datetime import datetime
-from pathlib import Path
 
-from . import config, state, voice
+from . import config, state, tools, voice
 
 JOKES = [
     "Why do programmers prefer dark mode? Because light attracts bugs.",
@@ -18,15 +17,6 @@ JOKES = [
 ]
 
 
-def _battery():
-    for d in sorted(Path("/sys/class/power_supply").glob("BAT*")):
-        try:
-            return int((d / "capacity").read_text()), (d / "status").read_text().strip().lower()
-        except (OSError, ValueError):
-            continue
-    return None, ""
-
-
 def _quiet():
     return state.get("paused") or state.get("muted") or voice.SPEAKING.is_set()
 
@@ -36,14 +26,14 @@ def start():
         return
 
     def loop():
-        pet = config.get("USER_PET_NAME") or config.get("USER_NAME") or "there"
+        pet = config.PET_NAME or "there"
         warned = False
         night_day = None
         next_break = time.time() + 90 * 60
         time.sleep(60)
         while True:
             try:
-                pct, status = _battery()
+                pct, status = tools.read_battery()
                 if pct is not None:
                     if status == "discharging" and pct <= 20 and not warned and not _quiet():
                         warned = True
