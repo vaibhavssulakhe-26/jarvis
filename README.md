@@ -5,10 +5,11 @@ A voice assistant for Linux that runs on your own laptop. Say the wake phrase, g
 Work in progress. Developed on Fedora 44 with KDE Plasma on Wayland.
 
 ## What she can do
-- Reminders in natural language, announced by notification and voice
+- Reminders in natural language, one-off or repeating, announced by notification and voice
 - Open apps and web apps, play music on YouTube Music
 - Send WhatsApp messages to saved contacts (she reads the message back first, then types and sends it)
-- Volume, screenshots, battery and system status, lock screen
+- Volume, mute with the level remembered, screenshots, battery and system status, lock screen
+- Says what is on the screen or in the clipboard, only when asked
 - Web research that reads a few pages and summarizes them, with a saved list you can follow up on
 - Drafts for emails and messages, signed with your name
 - Writes code files into a project folder and opens them in your editor
@@ -21,7 +22,7 @@ Work in progress. Developed on Fedora 44 with KDE Plasma on Wayland.
 - Voice: Piper, running locally
 
 ## Privacy and safety
-- Only the transcribed text of a command goes to the cloud brain. With `ANA_STT=groq`, the audio of each command (after the wake word) goes to Groq too. Nothing is sent before the wake word
+- Only the transcribed text of a command goes to the cloud brain, plus a screenshot or the clipboard text when you ask about them. With `ANA_STT=groq`, the audio of each command (after the wake word) goes to Groq too. Nothing is sent before the wake word
 - The model can only choose from the tools in `ana/tools.py`. It cannot run shell commands
 - Risky tools (messages, shutdown, restart, suspend) ask for a clear yes first, unless the contact is on your trusted list
 - Web pages, emails and files are treated as data, never as instructions
@@ -39,14 +40,14 @@ Work in progress. Developed on Fedora 44 with KDE Plasma on Wayland.
 - `ana/ears.py` wake word and recording; `ana/stt.py` speech to text
 - `ana/brain.py` the prompt, the cloud brain and the local fallback
 - `ana/tools.py` the tool registry and system actions, each with a risk level
-- `ana/apps.py`, `ana/media.py`, `ana/messaging.py`, `ana/research.py` more tools
+- `ana/apps.py`, `ana/media.py`, `ana/messaging.py`, `ana/research.py`, `ana/screen.py` more tools
 - `ana/reminders.py`, `ana/voice.py`, `ana/state.py`, `ana/events.py`, `ana/companion.py`, `ana/config.py`
 - `ana/daemon.py` reminders as a background service, see `systemd/ana-reminders.service`
 - `scripts/` one-off helpers: microphone calibration and the icon
 
 ## Known limits
 - Free-tier rate limits and a CPU-only laptop mean a command takes about two to four seconds
-- She cannot see the screen or click inside apps
+- She can describe the screen when asked, but cannot click inside apps
 - Linux only
 
 ## License

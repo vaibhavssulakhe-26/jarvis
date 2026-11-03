@@ -81,18 +81,33 @@ def battery(args):
     return f"Battery is at {pct} percent and {status}."
 
 
-@tool("system_status", "args {} - memory, disk space and uptime")
+def cpu_temp():
+    import psutil
+    try:
+        temps = psutil.sensors_temperatures()
+    except (AttributeError, OSError):
+        return None
+    for chip in ("k10temp", "coretemp", "zenpower", "cpu_thermal", "acpitz"):
+        for t in temps.get(chip, []):
+            if t.current and t.current > 0:
+                return t.current
+    return None
+
+
+@tool("system_status", "args {} - battery, charging, memory, processor load and temperature")
 def system_status(args):
-    mem = {}
-    for line in open("/proc/meminfo"):
-        key, value = line.split(":", 1)
-        mem[key] = int(value.split()[0])
-    total = mem["MemTotal"] / 1048576
-    used = (mem["MemTotal"] - mem["MemAvailable"]) / 1048576
-    disk = shutil.disk_usage(str(HOME))
-    up = float(open("/proc/uptime").read().split()[0])
-    return (f"Memory {used:.1f} of {total:.1f} gigabytes in use. Disk has {disk.free / 1e9:.0f} gigabytes free. "
-            f"Up for {int(up // 3600)} hours {int(up % 3600 // 60)} minutes.")
+    import psutil
+    parts = []
+    pct, status = read_battery()
+    if pct is not None:
+        parts.append(f"Battery {pct} percent, {status}")
+    mem = psutil.virtual_memory()
+    parts.append(f"memory {mem.used / 2**30:.1f} of {mem.total / 2**30:.1f} gigabytes in use")
+    load = f"processor at {psutil.cpu_percent(interval=0.3):.0f} percent"
+    temp = cpu_temp()
+    parts.append(load + (f" and {temp:.0f} degrees" if temp else ""))
+    line = ", ".join(parts) + "."
+    return line[0].upper() + line[1:]
 
 
 def _wp(*a):
@@ -109,44 +124,76 @@ def set_volume(args):
     return f"Volume {n} percent."
 
 
-@tool("volume_up", "args {} - raise the volume a little")
+def _step(args):
+    try:
+        return max(1, min(100, int(float(args.get("by", 10)))))
+    except (TypeError, ValueError):
+        return 10
+
+
+@tool("volume_up", 'args {} to raise the volume a little, or {"by": percent} to raise it by that much')
 def volume_up(args):
-    _wp("set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", "10%+")
+    _wp("set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", f"{_step(args)}%+")
     return "Louder."
 
 
-@tool("volume_down", "args {} - lower the volume a little")
+@tool("volume_down", 'args {} to lower the volume a little, or {"by": percent} to lower it by that much')
 def volume_down(args):
-    _wp("set-volume", "@DEFAULT_AUDIO_SINK@", "10%-")
+    _wp("set-volume", "@DEFAULT_AUDIO_SINK@", f"{_step(args)}%-")
     return "Quieter."
 
 
-@tool("mute", "args {} - mute the laptop sound")
+_before_mute = [None]
+
+
+def get_volume():
+    r = subprocess.run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"], capture_output=True, text=True, timeout=5)
+    m = re.search(r"([0-9.]+)", r.stdout)
+    return round(float(m.group(1)) * 100) if m else None
+
+
+@tool("mute", "args {} - mute the laptop sound, remembering the volume level")
 def mute(args):
-    _wp("set-mute", "@DEFAULT_AUDIO_SINK@", "1")
+    level = get_volume()
+    if level:
+        _before_mute[0] = level
+    _wp("set-volume", "@DEFAULT_AUDIO_SINK@", "0")
     return "Muted."
 
 
-@tool("unmute", "args {} - unmute the laptop sound")
+@tool("unmute", "args {} - unmute the laptop sound, or restore the volume to where it was before muting")
 def unmute(args):
+    level = _before_mute[0]
+    if level is None:
+        level = get_volume() or 40
     _wp("set-mute", "@DEFAULT_AUDIO_SINK@", "0")
-    return "Sound is back."
+    _wp("set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", f"{level / 100:.2f}")
+    _before_mute[0] = None
+    return f"Sound is back at {level} percent."
 
 
 @tool("screenshot", "args {} - take a screenshot of the whole screen")
 def screenshot(args):
-    if shutil.which("spectacle") is None:
-        raise ToolError("Spectacle is not installed.")
     folder = HOME / "Pictures"
     folder.mkdir(exist_ok=True)
-    path = folder / datetime.now().strftime("shot-%Y%m%d-%H%M%S.png")
-    subprocess.run(["spectacle", "-b", "-n", "-f", "-o", str(path)], timeout=15,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    capture_screen(folder / datetime.now().strftime("shot-%Y%m%d-%H%M%S.png"))
+    return "Screenshot saved in your Pictures folder."
+
+
+def capture_screen(path):
+    # scrot and gnome-screenshot only work on X11 or GNOME, so they are fallbacks behind spectacle
+    for cmd in (["spectacle", "-b", "-n", "-f", "-o", str(path)],
+                ["gnome-screenshot", "-f", str(path)],
+                ["scrot", "-o", str(path)]):
+        if shutil.which(cmd[0]):
+            break
+    else:
+        raise ToolError("I need spectacle to take a screenshot.")
+    subprocess.run(cmd, timeout=15, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if not path.exists():
         time.sleep(1.5)
     if not path.exists():
         raise ToolError("I could not save the screenshot.")
-    return "Screenshot saved in your Pictures folder."
 
 
 @tool("lock_screen", "args {} - lock the screen")
@@ -156,10 +203,19 @@ def lock_screen(args):
 
 
 # ---------- reminders and notes ----------
-@tool("set_reminder", 'args {"task": "<short phrase>", "when": "YYYY-MM-DD HH:MM"} using 24-hour local time; for relative times such as in thirty seconds or in ten minutes use "in_seconds": <number> instead of when')
+@tool("set_reminder", 'args {"task": "<short phrase>", "when": "YYYY-MM-DD HH:MM"} using 24-hour local time; for relative times such as in thirty seconds or in ten minutes use "in_seconds": <number> instead of when; for a repeating reminder such as every 30 minutes add "every_minutes": <number>, with when or in_seconds only if the user said when it starts')
 def set_reminder(args):
     task = str(args.get("task", "")).strip() or "reminder"
     when = None
+    every = None
+    try:
+        mins = float(args.get("every_minutes"))
+        if 1 <= mins <= 7 * 1440:
+            every = int(mins * 60)
+    except (TypeError, ValueError):
+        pass
+    if every and not args.get("in_seconds") and not str(args.get("when", "")).strip():
+        when = datetime.now() + timedelta(seconds=every)
     try:
         secs = float(args.get("in_seconds"))
         if 0 < secs <= 30 * 86400:
@@ -182,8 +238,21 @@ def set_reminder(args):
         raise ToolError("I could not work out the time. When should I remind you?")
     if when <= datetime.now():
         raise ToolError("That time has already passed.")
-    reminders.add(task, when)
+    reminders.add(task, when, every)
+    if every:
+        return f"Okay. I will remind you to {task} {reminders.interval(every)}, starting {reminders.friendly(when)}."
     return f"Okay. Reminder to {task}, {reminders.friendly(when)}."
+
+
+@tool("cancel_reminder", 'args {"task": "<a word or two from the reminder>"} - stop one reminder, including a repeating one')
+def cancel_reminder(args):
+    task = str(args.get("task", "")).strip()
+    if not task:
+        raise ToolError("Which reminder should I stop?")
+    n = reminders.cancel(task)
+    if not n:
+        raise ToolError(f"I could not find a reminder about {task}.")
+    return f"Stopped the {task} reminder." if n == 1 else f"Stopped {n} reminders about {task}."
 
 
 @tool("list_reminders", "args {} - read out the pending reminders")
@@ -289,4 +358,4 @@ def restart(args):
 
 
 # these modules register their tools on import, so they must load after the registry above
-from . import apps, media, messaging, research  # noqa: E402,F401
+from . import apps, media, messaging, research, screen  # noqa: E402,F401

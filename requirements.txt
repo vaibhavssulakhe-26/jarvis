@@ -12,3 +12,4 @@ PyQt6
 ddgs
 yt-dlp
 evdev
+psutil

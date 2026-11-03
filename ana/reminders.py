@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from . import config
 
@@ -28,10 +28,13 @@ def _save(items):
     os.replace(tmp, FILE)
 
 
-def add(task, when):
+def add(task, when, every=None):
+    item = {"text": task, "due": when.isoformat(), "done": False}
+    if every:
+        item["every"] = int(every)
     with _lock:
         items = _load()
-        items.append({"text": task, "due": when.isoformat(), "done": False})
+        items.append(item)
         _save(items)
 
 
@@ -46,15 +49,40 @@ def clear():
         _save([r for r in _load() if r.get("done")])
 
 
+def cancel(words):
+    """Stop the pending reminders whose text contains all of words. Returns how many."""
+    words = [w for w in str(words).lower().split() if w]
+    n = 0
+    with _lock:
+        items = _load()
+        for r in items:
+            text = r["text"].lower()
+            if not r.get("done") and words and all(w in text for w in words):
+                r["done"] = True
+                n += 1
+        if n:
+            _save(items)
+    return n
+
+
 def take_due(now=None):
     now = now or datetime.now()
     due = []
     with _lock:
         items = _load()
         for r in items:
-            if not r.get("done") and datetime.fromisoformat(r["due"]) <= now:
+            if r.get("done") or datetime.fromisoformat(r["due"]) > now:
+                continue
+            due.append(r["text"])
+            every = r.get("every")
+            if every:
+                # skip the slots missed while the laptop slept, so it fires once and not in a burst
+                nxt = datetime.fromisoformat(r["due"])
+                while nxt <= now:
+                    nxt += timedelta(seconds=every)
+                r["due"] = nxt.isoformat()
+            else:
                 r["done"] = True
-                due.append(r["text"])
         if due:
             _save(items)
     return due
@@ -66,11 +94,20 @@ def friendly(dt):
     return f"{day} at {dt.strftime('%I:%M %p').lstrip('0')}"
 
 
+def interval(seconds):
+    for unit, size in (("hour", 3600), ("minute", 60)):
+        if seconds >= size and seconds % size == 0:
+            n = seconds // size
+            return f"every {unit}" if n == 1 else f"every {n} {unit}s"
+    return f"every {seconds} seconds"
+
+
 def describe():
     items = pending()
     if not items:
         return "You have no pending reminders."
-    parts = [f"{r['text']}, {friendly(datetime.fromisoformat(r['due']))}" for r in items]
+    parts = [f"{r['text']}, " + (interval(r["every"]) + ", next " if r.get("every") else "")
+             + friendly(datetime.fromisoformat(r["due"])) for r in items]
     n = len(items)
     return f"You have {n} reminder{'s' if n > 1 else ''}. " + ". ".join(parts) + "."
 
@@ -99,7 +136,6 @@ def watch(on_due):
 
 if __name__ == "__main__":
     import sys
-    from datetime import timedelta
     if len(sys.argv) > 1 and sys.argv[1] == "list":
         print(describe())
         sys.exit(0)

@@ -1,5 +1,6 @@
 """Ana's brain: turns what you said into one action.
 Groq is the main brain. Ollama on this laptop is the backup when Groq is busy or offline."""
+import base64
 import json
 import time
 from datetime import datetime
@@ -11,6 +12,7 @@ from . import config
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 OLLAMA_URL = config.get("OLLAMA_URL", "http://localhost:11434")
 MODEL = config.get("GROQ_MODEL", "openai/gpt-oss-20b")
+VISION_MODEL = config.get("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
 _http = requests.Session()
 _history = []
 _last = [0.0]
@@ -48,6 +50,7 @@ FORMAT = (
 RULES = """Rules:
 - A reminder task with no time or day: use ask with "When should I remind you?". When the user answers with a time, combine it with the earlier task into set_reminder.
 - For relative times such as in thirty seconds, in ten minutes or in two hours, use in_seconds (30, 600, 7200) instead of when. Vague times: morning 09:00, afternoon 14:00, evening 18:00, tonight or night 21:00, "before tonight" 18:00. A day with no time means 09:00. A clock time with no day means its next occurrence. The task is only what to do, without "remind me", "to", "and also" or "so".
+- "Every" means a repeating reminder: "remind me to drink water every 30 minutes" is set_reminder with task "drink water" and every_minutes 30; every hour is 60. Leave out when unless the user said when it starts. To stop one, such as "stop the water reminder", use cancel_reminder.
 - A message to someone with no text: use ask and ask what it should say. Never guess missing details: if the user did not say what to play, what to send, to whom or what to search for, use ask. Never make up message text, song names, search queries or web links.
 - If the text is only a fragment of one or two words that does not clearly answer your last question, use ask or none instead of acting.
 - Never invent an action that is not listed. The program performs the action after your reply, so in "say" describe what will happen, for example "Okay, I will remind you to stretch at 2:55 PM."
@@ -103,14 +106,15 @@ def _extract_json(text):
     return data if isinstance(data, dict) else None
 
 
-def _groq(messages, use_json=True):
+def _groq(messages, use_json=True, model=None):
+    model = model or MODEL
     key = config.get("GROQ_API_KEY")
     if not key:
         return None, 0
-    body = {"model": MODEL, "messages": messages, "temperature": 0.2, "max_tokens": 1500}
+    body = {"model": model, "messages": messages, "temperature": 0.2, "max_tokens": 1500}
     if use_json:
         body["response_format"] = {"type": "json_object"}
-    if MODEL.startswith("openai/gpt-oss"):
+    if model.startswith("openai/gpt-oss"):
         body["reasoning_effort"] = "low"
     try:
         r = _http.post(GROQ_URL, headers={"Authorization": "Bearer " + key}, json=body, timeout=25)
@@ -215,3 +219,11 @@ def warm():
 def ask_json(system, user):
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     return _groq_json(messages)
+
+
+def look(prompt, jpeg):
+    """Ask the vision model about an image. Returns its JSON reply, or None."""
+    url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()
+    content = [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": url}}]
+    data, _ = _groq([{"role": "user", "content": content}], use_json=False, model=VISION_MODEL)
+    return data

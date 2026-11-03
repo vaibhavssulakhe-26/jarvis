@@ -14,7 +14,10 @@ STRONG_YES = {"yes", "yeah", "yep", "yup", "confirm", "confirmed", "proceed", "a
 YES_FILLER = STRONG_YES | {"go", "do", "it", "please", "sir"}
 NO_WORDS = {"no", "nope", "cancel", "stop", "never", "mind", "don", "t", "not", "abort", "please", "sir"}
 SLOW = re.compile(r"\b(and|then|also|after|before|remind|reminder|draft|email|write|note|find|search|"
-                  r"research|create|shut|shutdown|restart|suspend|play|pause|mute|unmute|message|send)\b")
+                  r"research|create|shut|shutdown|restart|suspend|play|pause|message|send)\b")
+MUTE = re.compile(r"(?:please )?mute(?: the| my)?(?: sound| volume| audio| laptop| speakers)?(?: please)?")
+UNMUTE = re.compile(r"(?:please )?(?:unmute(?: the| my)?(?: sound| volume| audio| laptop| speakers)?"
+                    r"|(?:restore|bring back) (?:the |my )?(?:sound|volume|audio))(?: please)?")
 UNITS = {w: i for i, w in enumerate(
     "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
     "sixteen seventeen eighteen nineteen".split())}
@@ -136,18 +139,29 @@ def fast_path(text):
     action, args = None, {}
     if re.search(r"\bbattery\b", t):
         action = "battery"
+    elif re.search(r"\b(system status|how s my (system|laptop|computer)|how is my (system|laptop|computer))\b", t):
+        action = "system_status"
     elif re.search(r"\b(screenshot|screen shot|green shot|screen grab)\b", t):
         action = "screenshot"
+    elif re.search(r"\bclipboard\b", t):
+        action = "read_clipboard"
+    elif re.search(r"\b(on|read|describe|at|see) (my |the )?screen\b", t):
+        action = "describe_screen"
     elif re.search(r"\block\b", t) and re.search(r"\b(screen|laptop|computer)\b", t):
         action = "lock_screen"
+    elif UNMUTE.fullmatch(t):
+        action = "unmute"
+    elif MUTE.fullmatch(t):
+        action = "mute"
     elif re.search(r"\b(volume|sound)\b", t):
         n = find_number(t)
-        if n is not None:
-            action, args = "set_volume", {"percent": n}
-        elif re.search(r"\b(up|increase|raise|louder|higher)\b", t):
-            action = "volume_up"
+        by = {"by": n} if n else {}
+        if re.search(r"\b(up|increase|raise|louder|higher)\b", t):
+            action, args = "volume_up", by
         elif re.search(r"\b(down|decrease|lower|quieter|softer|reduce)\b", t):
-            action = "volume_down"
+            action, args = "volume_down", by
+        elif n is not None:
+            action, args = "set_volume", {"percent": n}
     else:
         m = re.match(r"^(?:please )?(?:open|launch|start)(?: up)? (?:the |my )?(.+?)(?: app| application| folder)?$", t)
         if m:
