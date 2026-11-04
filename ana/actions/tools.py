@@ -7,7 +7,11 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
-from . import brain, config, events, reminders
+from . import events
+from ..brain import brain
+from ..core import config
+from ..memory import memory
+from ..scheduling import reminders
 
 HOME = Path.home()
 TOOLS = {}
@@ -334,6 +338,16 @@ def write_file(args):
     return f"Created {p.name} in ana-projects" + (" and opened it." if editor else ".")
 
 
+# ---------- memory ----------
+@tool("remember", 'args {"fact": "short statement about the user", "name": "their name, only if they gave it"} - keep a lasting personal fact for future conversations')
+def remember(args):
+    fact, name = str(args.get("fact") or "").strip(), str(args.get("name") or "").strip()
+    if not (fact or name):
+        raise ToolError("I did not catch what to remember.")
+    memory.remember(fact, name)
+    return "Got it, I will remember that."
+
+
 # ---------- power ----------
 def _power_desc(verb):
     return lambda args: f"I will {verb}."
@@ -358,4 +372,5 @@ def restart(args):
 
 
 # these modules register their tools on import, so they must load after the registry above
-from . import apps, media, messaging, research, screen  # noqa: E402,F401
+from . import apps, media, messaging, screen  # noqa: E402,F401
+from ..research import research  # noqa: E402,F401

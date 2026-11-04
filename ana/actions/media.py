@@ -6,7 +6,8 @@ import threading
 import time
 from urllib.parse import quote
 
-from . import apps, voice
+from . import apps
+from ..voice import voice
 from .tools import ToolError, _browser, _launch, heard_recently, tool
 
 

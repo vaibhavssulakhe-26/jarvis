@@ -4,7 +4,9 @@ import threading
 import time
 from datetime import datetime
 
-from . import config, state, tools, voice
+from ..actions import tools
+from ..core import config, state
+from ..voice import voice
 
 JOKES = [
     "Why do programmers prefer dark mode? Because light attracts bugs.",

@@ -15,7 +15,9 @@ import numpy as np
 import sounddevice as sd
 from scipy.signal import lfilter
 
-from . import config, events, state, stt, voice
+from ..actions import events
+from ..core import config, state
+from . import stt, voice
 
 SR = stt.SR
 BLOCK = 1280  # 80 ms of audio per step

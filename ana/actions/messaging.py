@@ -1,13 +1,16 @@
-"""WhatsApp messages to saved contacts, sent by typing Enter through a virtual keyboard."""
+"""WhatsApp messages and screenshots to saved contacts, sent through a virtual keyboard."""
 import difflib
 import json
 import re
+import shutil
+import subprocess
 import threading
 import time
 from urllib.parse import quote
 
-from . import config, voice
-from .tools import ToolError, _browser, heard_recently, tool
+from ..core import config
+from ..voice import voice
+from .tools import ToolError, _browser, capture_screen, heard_recently, tool
 
 CONTACTS = config.DATA / "contacts.json"
 CONTACT_ALIASES = {"mom": {"mum", "mummy", "mother", "mama", "amma", "ma"},
@@ -68,19 +71,28 @@ def _trusted(args):
         return False
 
 
-def _press_enter():
+def _press(*steps):
+    """Each step is a tuple of key names pressed together, followed by a pause in seconds."""
     from evdev import UInput, ecodes as e
-    ui = UInput({e.EV_KEY: [e.KEY_ENTER]}, name="ana-keyboard")
+    ui = UInput({e.EV_KEY: [e.KEY_ENTER, e.KEY_LEFTCTRL, e.KEY_V]}, name="ana-keyboard")
     try:
         time.sleep(0.5)
-        ui.write(e.EV_KEY, e.KEY_ENTER, 1)
-        ui.syn()
-        time.sleep(0.05)
-        ui.write(e.EV_KEY, e.KEY_ENTER, 0)
-        ui.syn()
-        time.sleep(0.2)
+        for keys, pause in steps:
+            codes = [getattr(e, "KEY_" + k) for k in keys]
+            for code in codes:
+                ui.write(e.EV_KEY, code, 1)
+            ui.syn()
+            time.sleep(0.05)
+            for code in reversed(codes):
+                ui.write(e.EV_KEY, code, 0)
+            ui.syn()
+            time.sleep(pause)
     finally:
         ui.close()
+
+
+def _press_enter():
+    _press((("ENTER",), 0.2))
 
 
 def _send_later(delay, name):
@@ -105,3 +117,49 @@ def message_contact(args):
     _browser(f"https://web.whatsapp.com/send?phone={phone}&text={quote(text)}")
     _send_later(delay, name)
     return f"Sending to {name}: {text}. Please keep your hands off the keyboard for a few seconds."
+
+
+def _copy_image(path):
+    if shutil.which("wl-copy") is None:
+        raise ToolError("I need wl-copy to send a picture.")
+    with open(path, "rb") as f:
+        subprocess.run(["wl-copy", "--type", "image/png"], stdin=f, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=10, check=True)
+
+
+def _paste_and_send(delay, name, path):
+    def go():
+        time.sleep(delay)
+        try:
+            _press((("LEFTCTRL", "V"), 3.0), (("ENTER",), 0.2))
+            voice.say(f"I pasted the screenshot and pressed send for {name}. Take a quick look to make sure it went through.")
+        except Exception as e:
+            voice.say(f"I could not send the picture, {type(e).__name__}. It is still on your clipboard, so you can paste it yourself.")
+        finally:
+            config.discard(path)
+    threading.Thread(target=go, daemon=True).start()
+
+
+def _describe_screenshot(args):
+    name, phone, _ = _prepare_message({**args, "text": "screenshot"}, check=False)
+    return f"I will take a screenshot of your screen and send it to {name} on WhatsApp."
+
+
+@tool("send_screenshot", 'args {"contact": "<name as said, for example mom>"} - take a screenshot of the screen and send it as a picture to a saved contact on WhatsApp; the program pastes it into the chat and presses send after the user confirms',
+      risk="confirm", describe=_describe_screenshot)
+def send_screenshot(args):
+    name, phone, _ = _prepare_message({**args, "text": "screenshot"}, check=False)
+    path = config.runtime_file("whatsapp-shot.png")
+    capture_screen(path)
+    try:
+        _copy_image(path)
+    except (ToolError, subprocess.SubprocessError):
+        config.discard(path)
+        raise ToolError("I could not put the screenshot on the clipboard.")
+    try:
+        delay = max(5.0, min(40.0, float(config.get("ANA_SEND_DELAY", "13"))))
+    except ValueError:
+        delay = 13.0
+    _browser(f"https://web.whatsapp.com/send?phone={phone}")
+    _paste_and_send(delay, name, path)
+    return f"Sending a screenshot to {name}. Please keep your hands off the keyboard for a few seconds."

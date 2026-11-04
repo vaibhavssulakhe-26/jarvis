@@ -6,7 +6,7 @@ import wave
 import numpy as np
 import requests
 
-from . import config
+from ..core import config
 
 SR = 16000
 GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"

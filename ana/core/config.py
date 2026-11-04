@@ -3,7 +3,7 @@ import os
 import re
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 DATA = ROOT / "data"
 MODELS = ROOT / "models"
 ENV_FILE = ROOT / ".env"
@@ -51,11 +51,15 @@ def discard(path):
 
 
 def wake_files():
-    """Wake word models in models/. A custom one (not Jarvis) is used when it exists."""
-    shared = {"embedding_model", "melspectrogram"}
+    """The model named by WAKE_WORD: a path to an .onnx file, or a name matching a file in models/."""
+    wanted = get("WAKE_WORD", "alexa")
+    path = Path(wanted).expanduser()
+    if path.suffix == ".onnx" and path.is_file():
+        return [path]
+    shared = {"embedding_model", "melspectrogram", "silero_vad"}
     files = sorted(p for p in MODELS.glob("*.onnx") if p.stem not in shared)
-    custom = [p for p in files if "jarvis" not in p.name.lower()]
-    return custom or files
+    named = [p for p in files if p.stem.lower().startswith(wanted.lower())]
+    return named or files
 
 
 def wake_names():

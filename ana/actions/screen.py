@@ -2,7 +2,8 @@
 import shutil
 import subprocess
 
-from . import brain, config
+from ..brain import brain
+from ..core import config
 from .tools import ToolError, capture_screen, tool
 
 MAX_WIDTH = 1600

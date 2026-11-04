@@ -10,14 +10,15 @@ import threading
 import time
 import wave
 
-from . import config, events, state
+from ..actions import events
+from ..core import config, state
 
 SPEAKING = threading.Event()
 LAST = [""]
 _queue = queue.Queue()
 _voice = [None]
 
-PRONOUNCE = [(r"\bVibee\b", "Vybee"), (r"\bVibeo\b", "Vybee"), (r"\bAna\b", "Ahna")]
+PRONOUNCE = [(r"\bVibe\b", "Vyb"), (r"\bVibeo\b", "Vybee"), (r"\bAna\b", "Ahna")]
 PLAYERS = ("pw-play", "paplay", "aplay")
 _player = []
 

@@ -4,7 +4,7 @@ PartOf=graphical-session.target
 After=graphical-session.target
 
 [Service]
-ExecStart=%h/ana/.venv/bin/python -u -m ana.daemon
+ExecStart=%h/ana/.venv/bin/python -u -m ana.scheduling.daemon
 WorkingDirectory=%h/ana
 Restart=on-failure
 RestartSec=5

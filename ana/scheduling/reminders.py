@@ -7,7 +7,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from . import config
+from ..core import config
 
 FILE = config.DATA / "reminders.json"
 _lock = threading.Lock()
@@ -113,7 +113,7 @@ def describe():
 
 
 def notify(text):
-    from . import voice
+    from ..voice import voice
     print(f"\n*** REMINDER: {text} ***")
     if shutil.which("notify-send"):
         subprocess.run(["notify-send", "-u", "critical", "Reminder", text])
@@ -139,7 +139,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "list":
         print(describe())
         sys.exit(0)
-    from . import voice
+    from ..voice import voice
     add("this is a test reminder", datetime.now() + timedelta(seconds=20))
     print("test reminder set for 20 seconds from now, waiting")
     watch(notify)

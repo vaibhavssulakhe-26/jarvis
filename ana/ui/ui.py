@@ -18,8 +18,10 @@ from PyQt6.QtGui import (QBrush, QColor, QFont, QIcon, QKeySequence, QLinearGrad
 from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QLineEdit, QPushButton,
                              QTextEdit, QVBoxLayout, QWidget)
 
-from . import brain, config, events, state, voice
-from . import main as core
+from ..actions import events
+from ..brain import brain
+from ..core import config, main as core, state
+from ..voice import voice
 
 AMBER = QColor("#ff9a1f")
 ORANGE = QColor("#ff6a1a")

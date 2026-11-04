@@ -10,8 +10,10 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
-from . import brain, events, voice
-from .tools import ToolError, _browser, stamped_name, tool
+from ..actions import events
+from ..brain import brain
+from ..voice import voice
+from ..actions.tools import ToolError, _browser, stamped_name, tool
 
 OUT = Path.home() / "Documents" / "research"
 HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0"}
