@@ -1,7 +1,7 @@
 # Ana
 
 Personal voice assistant for Fedora KDE Wayland. PyQt6 window, openWakeWord, faster-whisper, Piper,
-Groq as the brain with Ollama as the offline fallback.
+Groq as the brain, OpenRouter as the first fallback and Ollama as the offline fallback.
 
 ## Running
 - `python -m ana.main` from the repo root, inside `.venv`. Never `python ana/main.py`: the package uses relative imports.

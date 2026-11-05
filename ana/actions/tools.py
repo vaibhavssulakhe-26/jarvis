@@ -270,16 +270,25 @@ def clear_reminders(args):
     return "Cleared your pending reminders."
 
 
-@tool("take_note", 'args {"text": "..."} - add a line to the notes file')
+@tool("take_note", 'args {"topic": "<the subject in one or two words, such as DSA>", "text": "<everything the user wants noted, in full, including the topic words>"} - write a note down, for "make a note", "write this down" or "remember this for later"')
 def take_note(args):
     text = str(args.get("text", "")).strip()
     if not text:
         raise ToolError("What should I write down?")
-    notes = HOME / "Documents" / "assistant-notes.md"
-    notes.parent.mkdir(parents=True, exist_ok=True)
-    with open(notes, "a") as f:
-        f.write(f"- {datetime.now().strftime('%Y-%m-%d %H:%M')}  {text[:1000]}\n")
-    return "Noted."
+    topic = str(args.get("topic") or "").strip() or "general"
+    memory.save_note(topic, text)
+    return f"Noted under {topic}."
+
+
+@tool("read_notes", 'args {"topic": "<one or two words>"} - read back what the user noted about a topic, for "what did I note about X"')
+def read_notes(args):
+    topic = str(args.get("topic") or "").strip()
+    if not topic:
+        raise ToolError("Which topic should I look up?")
+    lines = memory.read_notes(topic)
+    if not lines:
+        return f"I have no notes about {topic}."
+    return f"Your notes about {topic}: " + " ".join(lines[-5:])
 
 
 # ---------- web ----------
@@ -339,12 +348,12 @@ def write_file(args):
 
 
 # ---------- memory ----------
-@tool("remember", 'args {"fact": "short statement about the user", "name": "their name, only if they gave it"} - keep a lasting personal fact for future conversations')
+@tool("remember", 'args {"fact": "short statement about the user"} - keep a lasting personal fact for future conversations')
 def remember(args):
-    fact, name = str(args.get("fact") or "").strip(), str(args.get("name") or "").strip()
-    if not (fact or name):
+    fact = str(args.get("fact") or "").strip()
+    if not fact:
         raise ToolError("I did not catch what to remember.")
-    memory.remember(fact, name)
+    memory.remember(fact)
     return "Got it, I will remember that."
 
 
@@ -372,5 +381,5 @@ def restart(args):
 
 
 # these modules register their tools on import, so they must load after the registry above
-from . import apps, media, messaging, screen  # noqa: E402,F401
+from . import apps, documents, media, messaging, screen  # noqa: E402,F401
 from ..research import research  # noqa: E402,F401

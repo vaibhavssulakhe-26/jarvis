@@ -1,7 +1,10 @@
 """Ana's brain: turns what you said into one action.
-Groq is the main brain. Ollama on this laptop is the backup when Groq is busy or offline."""
+Groq is the main brain. OpenRouter is the first backup, then Ollama on this laptop when Groq is busy or offline."""
 import base64
 import json
+import re
+import shutil
+import subprocess
 import time
 from datetime import datetime
 
@@ -14,9 +17,19 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 OLLAMA_URL = config.get("OLLAMA_URL", "http://localhost:11434")
 MODEL = config.get("GROQ_MODEL", "openai/gpt-oss-20b")
 VISION_MODEL = config.get("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODELS = [m.strip() for m in config.get(
+    "OPENROUTER_MODEL", "google/gemma-4-26b-a4b-it:free,nvidia/nemotron-3.5-lightning:free").split(",") if m.strip()]
+OPENROUTER_BUDGET = 30
+PLAN_TOKENS = 600
+CODE_TOKENS = 1500
+MIN_FREE_GB = 3.0
+_CODE_WORDS = re.compile(r"\b(code|script|program|function|website|html|python|write|create)\b", re.I)
 _http = requests.Session()
 _history = []
-TURNS = 10
+TURNS = 6
+OLLAMA_TIMEOUT = 25
+OLLAMA_START_WAIT = 10
 _ollama_name = {"t": 0.0, "name": None}
 RECENT = []
 NOTES = ""
@@ -65,6 +78,7 @@ RULES = """Rules:
 - When you decline something, say so warmly in one short sentence and then immediately do the clean alternative in the same reply, for example tell the clean joke right away. Never only announce that you can do it, and never give a bare I can not help with that.
 - Jokes are spoken aloud, so keep them clean and family-friendly. If asked for crude or adult jokes, say lightly that you keep them clean and tell a clean one instead.
 - When the user tells you something lasting about themselves (their name, where they study or work, what they like, an ongoing project), also record it with remember, and put a short natural acknowledgement in "say". Do not remember passing moods or one-off requests.
+- Never mention names of AI products, companies or models in your responses. If asked to compare AI systems, speak generically.
 - Use none only for background noise or talk that is clearly not addressed to you. Never answer a direct request with silence: if you cannot or will not do something, say so briefly.
 """
 
@@ -83,7 +97,9 @@ def build_system(tools_doc, text=""):
             + (full or short) + ". When you draft something professional and the user has not said which name "
             "to sign with, use ask once, for example: Should I sign it as " + (short or full)
             + ", or with your full name, " + (full or short) + "? After they answer, use draft_text and sign "
-            "with exactly that name. Never leave placeholders such as [Your Name].")
+            "with exactly that name. Never leave placeholders such as [Your Name]."
+            + (" Their traditional name (namkaran) is " + config.GOD_NAME + "; use it only when they ask "
+               "for it, for example on religious or family documents." if config.GOD_NAME else ""))
     known = memory.context(text)
     if known:
         parts.append(known)
@@ -112,12 +128,12 @@ def _extract_json(text):
     return data if isinstance(data, dict) else None
 
 
-def _groq(messages, use_json=True, model=None):
+def _groq(messages, use_json=True, model=None, max_tokens=CODE_TOKENS):
     model = model or MODEL
     key = config.get("GROQ_API_KEY")
     if not key:
         return None, 0
-    body = {"model": model, "messages": messages, "temperature": 0.2, "max_tokens": 1500}
+    body = {"model": model, "messages": messages, "temperature": 0.2, "max_tokens": max_tokens}
     if use_json:
         body["response_format"] = {"type": "json_object"}
     if model.startswith("openai/gpt-oss"):
@@ -140,11 +156,36 @@ def _groq(messages, use_json=True, model=None):
         return None, 200
 
 
-def _groq_json(messages):
-    data, code = _groq(messages)
+def _openrouter(messages, max_tokens=PLAN_TOKENS):
+    key = config.get("OPENROUTER_API_KEY")
+    if not key:
+        return None
+    deadline = time.time() + OPENROUTER_BUDGET
+    for model in OPENROUTER_MODELS:
+        left = deadline - time.time()
+        if left < 3:
+            break
+        body = {"model": model, "messages": messages, "temperature": 0.2, "max_tokens": max_tokens}
+        try:
+            r = _http.post(OPENROUTER_URL, headers={"Authorization": "Bearer " + key}, json=body, timeout=left)
+            if r.status_code >= 400:
+                print(f"  (second cloud brain {model} unavailable: HTTP {r.status_code})")
+                continue
+            data = _extract_json(r.json()["choices"][0]["message"]["content"])
+        except (requests.RequestException, ValueError, KeyError, IndexError, TypeError) as e:
+            print(f"  (second cloud brain {model} unavailable: {type(e).__name__})")
+            continue
+        if data is not None:
+            print(f"  (using the second cloud brain: {model})")
+            return data
+    return None
+
+
+def _groq_json(messages, max_tokens=CODE_TOKENS):
+    data, code = _groq(messages, max_tokens=max_tokens)
     # some models reject response_format; asking again without it usually still yields JSON
     if data is None and code == 400:
-        data, code = _groq(messages, use_json=False)
+        data, code = _groq(messages, use_json=False, max_tokens=max_tokens)
     return data
 
 
@@ -171,16 +212,52 @@ def _ollama_model():
     return name
 
 
+def _ollama_up():
+    try:
+        return _http.get(OLLAMA_URL + "/api/tags", timeout=3).status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def _ensure_ollama():
+    if _ollama_up():
+        return True
+    if shutil.which("ollama") is None:
+        return False
+    subprocess.Popen(["ollama", "serve"], start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.time() + OLLAMA_START_WAIT
+    while time.time() < deadline:
+        if _ollama_up():
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def _enough_memory():
+    try:
+        import psutil
+        return psutil.virtual_memory().available / 2**30 >= MIN_FREE_GB
+    except ImportError:
+        return True
+
+
 def _ollama(messages):
+    if not _enough_memory():
+        print("  (backup brain skipped: not enough free memory)")
+        return None
+    if not _ensure_ollama():
+        print("  (backup brain is not running)")
+        return None
     model = _ollama_model()
     if not model:
         return None
     from ..voice import voice
     voice.say("My cloud brain is busy, so I am thinking on this laptop. Give me a moment.")
     body = {"model": model, "messages": messages, "stream": False, "format": "json",
-            "keep_alive": "45s", "options": {"temperature": 0.2, "num_ctx": 4096, "num_predict": 600}}
+            "keep_alive": "0", "options": {"temperature": 0.2, "num_ctx": 4096, "num_predict": 600}}
     try:
-        r = _http.post(OLLAMA_URL + "/api/chat", json=body, timeout=120)
+        r = _http.post(OLLAMA_URL + "/api/chat", json=body, timeout=OLLAMA_TIMEOUT)
         if r.status_code >= 400:
             print(f"  (backup brain failed: HTTP {r.status_code})")
             return None
@@ -196,7 +273,10 @@ def think(text, tools_doc):
     messages = [{"role": "system", "content": build_system(tools_doc, text)}]
     messages += _history[-2 * TURNS:]
     messages.append({"role": "user", "content": text})
-    data = _groq_json(messages)
+    budget = CODE_TOKENS if _CODE_WORDS.search(text) else PLAN_TOKENS
+    data = _groq_json(messages, budget)
+    if data is None:
+        data = _openrouter(messages, budget)
     if data is None:
         data = _ollama(messages)
     if data is None:
@@ -205,6 +285,12 @@ def think(text, tools_doc):
     _history.append({"role": "assistant", "content": _spoken(data)})
     del _history[:-2 * TURNS]
     return data
+
+
+def note_reply(text):
+    """Record something Ana said outside a plan, such as a question from a tool, so follow-ups make sense."""
+    _history.append({"role": "assistant", "content": json.dumps({"action": "ask", "say": text})})
+    del _history[:-2 * TURNS]
 
 
 def _spoken(data):
@@ -227,6 +313,24 @@ def warm():
 def ask_json(system, user):
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     return _groq_json(messages)
+
+
+def complete(prompt):
+    """Plain text chat completion on Groq: no JSON mode, no tools. Returns the reply text or ''."""
+    key = config.get("GROQ_API_KEY")
+    if not key:
+        return ""
+    body = {"model": MODEL, "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.2, "max_tokens": 600}
+    if MODEL.startswith("openai/gpt-oss"):
+        body["reasoning_effort"] = "low"
+    try:
+        r = _http.post(GROQ_URL, headers={"Authorization": "Bearer " + key}, json=body, timeout=25)
+        r.raise_for_status()
+        return str(r.json()["choices"][0]["message"]["content"] or "").strip()
+    except (requests.RequestException, ValueError, KeyError, IndexError) as e:
+        print(f"  (summary failed: {type(e).__name__} {e})")
+        return ""
 
 
 def look(prompt, jpeg):

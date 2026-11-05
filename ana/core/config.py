@@ -33,6 +33,7 @@ ASSISTANT = get("ASSISTANT_NAME", "Ana")
 PET_NAME = get("USER_PET_NAME") or get("USER_NAME")
 SHORT_NAME = get("USER_SHORT_NAME") or get("USER_NAME")
 FULL_NAME = get("USER_FULL_NAME") or SHORT_NAME
+GOD_NAME = get("USER_GOD_NAME")
 VOICE = Path.home() / "piper-voices" / (get("ANA_VOICE", "en_US-amy-medium") + ".onnx")
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "ana"
 

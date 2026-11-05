@@ -17,7 +17,7 @@ _lock = threading.Lock()
 
 
 def _names():
-    words = [config.ASSISTANT, config.get("USER_PET_NAME")] + config.FULL_NAME.split()
+    words = [config.ASSISTANT, config.get("USER_PET_NAME"), config.GOD_NAME] + config.FULL_NAME.split()
     return ", ".join(w for w in dict.fromkeys(words) if w)
 
 
