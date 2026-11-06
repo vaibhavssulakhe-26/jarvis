@@ -1,4 +1,5 @@
 """Reading the screen and the clipboard, only when the user asks for it."""
+import re
 import shutil
 import subprocess
 
@@ -64,11 +65,34 @@ def read_clip():
     raise ToolError("I need wl-paste to read the clipboard.")
 
 
+def write_clip(text):
+    """Put text on the clipboard. Returns False when no clipboard tool is installed."""
+    for cmd in (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]):
+        if shutil.which(cmd[0]):
+            subprocess.run(cmd, input=str(text).encode(), timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+    return False
+
+
+SECRET = re.compile(
+    r"(?i)(?:\b(?:sk|gsk|ghp|gho|xox[abp]|AKIA|AIza)[-_A-Za-z0-9]{12,}"
+    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    r"|\b(?:password|passwd|passphrase|secret|api[_ -]?key|token|bearer)\b\s*[:=]?\s*\S{6,}"
+    r"|^[A-Za-z0-9+/_=-]{24,}$)", re.M)
+
+
+def looks_secret(text):
+    t = str(text).strip()
+    return bool(SECRET.search(t)) and len(t) < 4000
+
+
 @tool("read_clipboard", "args {} - read out or summarise the clipboard text; only when the user asks about their clipboard")
 def read_clipboard(args):
     text = read_clip()
     if not text:
         return "Your clipboard is empty, or it holds something that is not text."
+    if looks_secret(text):
+        return "Your clipboard looks like a key or a password, so I will not read it out."
     if len(text.split()) <= SHORT_CLIP:
         return "Your clipboard says: " + text
     data = brain.ask_json(CLIP_SYSTEM, "<clipboard>\n" + text[:8000] + "\n</clipboard>")

@@ -14,3 +14,5 @@ yt-dlp
 evdev
 psutil
 pdfminer.six
+python-docx
+openwakeword==0.3.0  # install with: pip install --no-deps openwakeword==0.3.0

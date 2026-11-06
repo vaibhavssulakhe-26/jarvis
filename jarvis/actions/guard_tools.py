@@ -19,7 +19,7 @@ def _until(phrase, default_minutes):
     return when.timestamp()
 
 
-@tool("guard_switch", 'args {"on": true or false} - turn the distraction guard on or off; for "turn on distraction guard"')
+@tool("guard_switch", 'args {"on": true or false} - turn the distraction guard on or off; for "turn on focus guard", "turn it off"')
 def guard_switch(args):
     on = args.get("on") in (True, "true", "yes", "on", 1)
     if on and windows.active_window(max_age=0) is None:
@@ -28,8 +28,8 @@ def guard_switch(args):
     state.update(guard=on)
     if on:
         guard.start()
-        return "Distraction guard is on. It only looks at window titles on this laptop and keeps minutes, not titles."
-    return "Distraction guard is off."
+        return "Focus guard is on. Titles stay on this laptop unless one is unclear, then a few go to the brain together. I keep minutes, not titles."
+    return "Focus guard is off."
 
 
 @tool("focus_mode", 'args {"for": "90 minutes"} - strict study time: the guard speaks up after five minutes and reminders wait; also "end focus mode"')

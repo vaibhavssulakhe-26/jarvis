@@ -92,6 +92,12 @@ TRIGGERS = {
     "summarise_file": "summarise summarize summary pdf file document read synopsis",
     "research": "research find out news latest hackathon search events",
     "open_url": "open link url website page",
+    "translate": "translate translation hindi kannada marathi tamil telugu spanish french german",
+    "debug_clipboard": "explain error debug code clipboard fix bug",
+    "send_to_device": "send phone laptop handoff share",
+    "clip_monitor_switch": "clipboard monitor watcher",
+    "research_topic": "research topic sources cited",
+    "open_palette": "palette command box",
 }
 ALWAYS = {"remember"}
 MAX_TOOLS = 6
@@ -449,5 +455,6 @@ def restart(args):
 
 
 # these modules register their tools on import, so they must load after the registry above
-from . import apps, briefing, documents, guard_tools, mail, media, messaging, notes, recall, reminder_tools, screen, watches  # noqa: E402,F401
-from ..research import research  # noqa: E402,F401
+from . import (apps, briefing, clipwatch, debug, documents, guard_tools, handoff, mail, media, messaging,  # noqa: E402,F401
+               notes, palette_tools, recall, reminder_tools, screen, translate, watches)
+from ..research import research, topic  # noqa: E402,F401

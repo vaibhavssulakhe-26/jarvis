@@ -20,16 +20,21 @@ NAG_GAP = 3600
 FOCUS_LIMIT_MIN = 5
 CATEGORIES = ("work", "learning", "music", "entertainment", "social", "other")
 DISTRACTING = {"entertainment", "social"}
-ASK_PER_HOUR = 12
+ASK_PER_HOUR = 6
+BATCH = 8
+BATCH_GAP = 60
 
 MUSIC_APPS = ("spotify", "rhythmbox", "elisa", "amberol", "strawberry", "youtube music", "ytmusic")
 MUSIC_WORDS = ("lyrics", "official audio", "playlist", "mix", "song", "songs", "remix", "lofi", "lo-fi", "music",
                "jukebox", "karaoke", "album", "audio", "soundtrack")
 LEARN_WORDS = ("tutorial", "lecture", "course", "explained", "how to", "dsa", "python", "machine learning",
                "interview prep", "algorithm", "data structure", "leetcode", "system design", "java", "sql",
-               "full stack", "crash course", "walkthrough", "mit opencourseware", "khan academy")
+               "full stack", "crash course", "walkthrough", "mit opencourseware", "khan academy",
+               "documentation", "programming", "ml", "deep learning", "neural network", "computer science",
+               "lesson", "syllabus", "operating system", "database", "javascript", "c++", "react", "physics",
+               "maths", "mathematics", "chemistry")
 SOCIAL_WORDS = ("instagram", "facebook", "twitter", "tiktok", "snapchat", "reddit", "r/", "/ x", "threads.net",
-                "9gag", "pinterest")
+                "9gag", "pinterest", "reels")
 ENTERTAINMENT_WORDS = ("netflix", "prime video", "hotstar", "disney+", "hulu", "crunchyroll", "twitch", "anime",
                        "zee5", "sonyliv", "jiocinema", "youtube shorts", "shorts", "gameplay", "trailer", "vlog",
                        "funny", "memes", "meme", "movie", "episode", "web series", "season ")
@@ -52,7 +57,9 @@ FOCUS_NUDGES = [
     "Focus mode check, {pet}: {mins} minutes away from your work. {plan}You can do this.",
 ]
 _asked = {}
+_queue = []
 _ask_times = []
+_words_cache = {}
 _flush = {"day": "", "secs": {}, "at": 0.0}
 _thread = [None]
 
@@ -61,48 +68,75 @@ def _study_words():
     return tuple(w.strip().lower() for w in config.get("STUDY_KEYWORDS").split(",") if w.strip())
 
 
-def _ask_category(title):
-    if title in _asked:
-        return _asked[title]
-    now = time.time()
-    _ask_times[:] = [t for t in _ask_times if now - t < 3600]
-    if len(_ask_times) >= ASK_PER_HOUR or not config.flag("GUARD_USE_CLOUD", True):
-        return "other"
-    _ask_times.append(now)
-    reply = brain.ask("Classify this window title as one word: work, learning, music, entertainment, social or "
-                      "other. Title: " + title[:100], 5)
-    word = re.sub(r"[^a-z]", "", reply.lower())
-    _asked[title] = word if word in CATEGORIES else "other"
-    return _asked[title]
+def _has(words, text):
+    """True if any word or phrase appears in text as whole words."""
+    pattern = _words_cache.get(words)
+    if pattern is None:
+        pattern = _words_cache[words] = re.compile(r"(?<![a-z0-9])(?:" + "|".join(re.escape(w) for w in words) + r")(?![a-z0-9])")
+    return bool(pattern.search(text))
 
 
-def classify(app, title, ask=True):
+def rule_verdict(app, title):
+    """A category from the local rules, or None when the title is ambiguous."""
     a, t = str(app or "").lower(), str(title or "").lower()
     if any(m in a for m in MUSIC_APPS):
         return "music"
     on_youtube = "youtube" in t
     if on_youtube and "youtube music" in t:
         return "music"
-    if any(w in t for w in SOCIAL_WORDS):
+    study = LEARN_WORDS + _study_words()
+    if _has(SOCIAL_WORDS, t) and not _has(("tutorial", "course", "lecture"), t):
         return "social"
-    if any(w in t for w in ENTERTAINMENT_WORDS) and not any(w in t for w in LEARN_WORDS):
+    if _has(ENTERTAINMENT_WORDS, t) and not _has(study, t):
         return "entertainment"
     if any(g in a for g in GAME_APPS):
         return "entertainment"
-    study = LEARN_WORDS + _study_words()
     if on_youtube:
-        if any(w in t for w in MUSIC_WORDS):
+        if _has(MUSIC_WORDS, t):
             return "music"
-        if any(w in t for w in study):
-            return "learning"
-        return _ask_category(title) if ask else "other"
-    if any(w in t for w in _study_words()) or any(w in t for w in ("tutorial", "lecture", "course")):
+        return "learning" if _has(study, t) else None
+    if _has(_study_words() + ("tutorial", "lecture", "course"), t):
         return "learning"
-    if any(w in a for w in WORK_APPS) or any(w in t for w in WORK_WORDS):
+    if any(w in a for w in WORK_APPS) or _has(WORK_WORDS, t):
         return "work"
-    if any(b in a for b in BROWSERS) and t.strip() and ask and not any(w in t for w in ("new tab", "gmail", "inbox")):
-        return _ask_category(title)
+    if any(b in a for b in BROWSERS) and t.strip() and not _has(("new tab", "gmail", "inbox"), t):
+        return None
     return "other"
+
+
+def classify(app, title):
+    """The category now. Ambiguous titles count as other until the next batched question answers them."""
+    verdict = rule_verdict(app, title)
+    if verdict is not None:
+        return verdict
+    key = str(title)[:100]
+    if key in _asked:
+        return _asked[key]
+    if key not in _queue and len(_queue) < 20:
+        _queue.append(key)
+    return "other"
+
+
+def resolve_queue():
+    """One cloud question for all waiting titles. Does nothing without the cloud setting or past the hourly limit."""
+    if not _queue:
+        return
+    now = time.time()
+    _ask_times[:] = [t for t in _ask_times if now - t < 3600]
+    if not config.flag("GUARD_USE_CLOUD", True) or len(_ask_times) >= ASK_PER_HOUR \
+            or (_ask_times and now - _ask_times[-1] < BATCH_GAP):
+        return
+    batch, _queue[:] = _queue[:BATCH], _queue[BATCH:]
+    _ask_times.append(now)
+    listing = "\n".join(f"{i}. {t}" for i, t in enumerate(batch, 1))
+    reply = brain.ask("Classify each window title as one word: work, learning, music, entertainment, social or "
+                      "other. Educational videos and documentation are learning. Answer one line per title like "
+                      "'1 learning'.\n" + listing, 12 * len(batch) + 10)
+    for num, word in re.findall(r"(\d+)\W+(" + "|".join(CATEGORIES) + ")", reply.lower()):
+        if 0 < int(num) <= len(batch):
+            _asked[batch[int(num) - 1]] = word
+    for t in batch:
+        _asked.setdefault(t, "other")
 
 
 class Tracker:
@@ -225,6 +259,7 @@ def start():
                         state.update(guard=False)
                     continue
                 category = classify(*win)
+                resolve_queue()
                 _record(category, dt)
                 mins = tracker.tick(category, dt, now, limit_minutes(), quiet=on_break() or state.get("muted"))
                 if mins:

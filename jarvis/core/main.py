@@ -8,16 +8,13 @@ import threading
 import time
 from datetime import datetime
 
-from ..actions import apps, files, mail, tools
+from ..actions import apps, clipwatch, files, mail, tools
 from ..brain import brain, companion
 from . import config, state
 from ..scheduling import digest, guard, monitor, reminders
 from ..voice import voice
 
 PENDING = {}
-STRONG_YES = {"yes", "yeah", "yep", "yup", "confirm", "confirmed", "proceed", "ahead"}
-YES_FILLER = STRONG_YES | {"go", "do", "it", "please", "sir"}
-NO_WORDS = {"no", "nope", "cancel", "stop", "never", "mind", "don", "t", "not", "abort", "please", "sir"}
 SLOW = re.compile(r"\b(and|then|also|after|before|remind|reminder|draft|email|write|note|find|search|"
                   r"research|create|shut|shutdown|restart|suspend|play|pause|message|send)\b")
 MUTE = re.compile(r"(?:please )?mute(?: the| my)?(?: sound| volume| audio| laptop| speakers)?(?: please)?")
@@ -110,29 +107,50 @@ def run_tool(action, args, spoken):
     do_tool(action, args, spoken)
 
 
+YES_WORDS = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "confirm", "confirmed", "proceed"}
+NO_START = {"no", "nope", "cancel", "stop", "never", "abort"}
+EXTRA_FILLER = YES_WORDS | {"go", "ahead", "do", "it", "please", "sir", "save", "this", "that", "as", "a", "note", "the", "jarvis"}
+_last_confirm = [0.0]
+
+
+def _verdict(words):
+    if not words:
+        return None
+    if words[0] in NO_START or words[:2] in (["don", "t"], ["do", "not"]) or "cancel" in words[:4]:
+        return "no"
+    head = words[:4]
+    if set(head) & YES_WORDS or head[:2] == ["go", "ahead"] or (len(words) <= 6 and "ahead" in words):
+        return "yes"
+    return None
+
+
 def check_pending(text):
-    """True if this sentence answered a pending yes or no question."""
+    """True if this sentence answered a pending yes or no question. The question is used up either way."""
     if not PENDING:
         return False
     if time.time() > PENDING["until"]:
         PENDING.clear()
         return False
     words = re.findall(r"[a-z]+", text.lower())
+    verdict = _verdict(words)
+    if verdict is None:
+        PENDING.clear()
+        print("  (the pending action was cancelled)")
+        return False
     action, args = PENDING["action"], PENDING["args"]
     PENDING.clear()
-    wordset = set(words)
-    if wordset and wordset <= YES_FILLER and (wordset & STRONG_YES or words[:2] == ["do", "it"]):
-        do_tool(action, args)
-        return True
-    if wordset and wordset <= NO_WORDS:
+    _last_confirm[0] = time.time()
+    if verdict == "no":
         voice.say("Okay, cancelled.")
         return True
-    if wordset & STRONG_YES and not (wordset & {"no", "nope", "cancel", "stop", "don", "not", "never"}):
-        PENDING.update({"action": action, "args": args, "until": time.time() + 30})
-        voice.say("I only want a clean yes or no for that one. Should I go ahead?")
-        return True
-    print("  (the pending action was cancelled)")
-    return False
+    do_tool(action, args)
+    rest = [w for w in words if w not in EXTRA_FILLER and w != "go"]
+    if rest:
+        tail = re.sub(r"^(?:\W*(?:yes|yeah|yep|yup|sure|ok|okay|go ahead|please|and)\b)+\W*", "", text.strip(), flags=re.I)
+        tail = re.sub(r"^save (?:this|it|that)(?: as a note)?\W*(?:and\W*)?", "", tail, flags=re.I).strip()
+        if tail:
+            _handle(tail)
+    return True
 
 
 def _waiting():
@@ -181,8 +199,22 @@ DIRECT = [
      lambda: bool(mail.SESSION["items"])),
     (re.compile(r"^that sender is (not )?important$", re.I), "rate_sender", lambda m: {"which": "that", "important": not m.group(1)},
      lambda: bool(mail.SESSION["items"])),
-    (re.compile(r"^turn (on|off) (?:the |my )?distraction guard$", re.I), "guard_switch", lambda m: {"on": m.group(1).lower() == "on"}),
-    (re.compile(r"^(?:start |enable |disable )?(?:the )?distraction guard$", re.I), "guard_switch", lambda m: {"on": True}),
+    (re.compile(r"^(?:please )?(turn on|turn off|enable|disable|start|stop) (?:the |my )?(?:distraction |focus )?guard$", re.I),
+     "guard_switch", lambda m: {"on": m.group(1).lower() in ("turn on", "enable", "start")}),
+    (re.compile(r"^(?:please )?turn it off$", re.I), "guard_switch", lambda m: {"on": False}, guard.enabled),
+    (re.compile(r"^(?:please )?open (?:the )?(?:command )?palette$", re.I), "open_palette", lambda m: {}),
+    (re.compile(r"^(?:please )?translate (.+?) (?:to|into|in) ([a-z]+)$", re.I), "translate",
+     lambda m: {"text": m.group(1), "language": m.group(2)}),
+    (re.compile(r"^(?:please )?(?:explain (?:this|the|that) error|explain the error on my clipboard)$", re.I),
+     "debug_clipboard", lambda m: {"kind": "error"}),
+    (re.compile(r"^(?:please )?debug (?:the |this )?code(?: on my clipboard| i copied)?$", re.I),
+     "debug_clipboard", lambda m: {"kind": "code"}),
+    (re.compile(r"^(?:please )?send (this|it|.+?) to my (phone|mobile|laptop|computer|pc)$", re.I), "send_to_device",
+     lambda m: {"what": "" if m.group(1).lower() in ("this", "it") else m.group(1), "device": m.group(2)}),
+    (re.compile(r"^(?:please )?(turn on|turn off|enable|disable) (?:the |my )?clipboard (?:monitor|watcher|watch)$", re.I),
+     "clip_monitor_switch", lambda m: {"on": m.group(1).lower() in ("turn on", "enable")}),
+    (re.compile(r"^(?:please )?research (?!.*\b(?:hackathons?|events?|news)\b)(.+)$", re.I), "research_topic",
+     lambda m: {"topic": m.group(1)}),
     (re.compile(r"^(?:end|stop|turn off) focus mode$", re.I), "focus_mode", lambda m: {"end": True}),
     (re.compile(r"^(?:start |turn on )?focus mode(?: for (.+))?$", re.I), "focus_mode", lambda m: {"for": m.group(1) or ""}),
     (re.compile(r"^i(?:'m| m| am) on a break$", re.I), "take_break", lambda m: {}),
@@ -283,10 +315,17 @@ def _handle(text, via_wake=True):
     """Returns True when Jarvis expects an answer from you, so it keeps listening."""
     if check_pending(text):
         return bool(PENDING)
+    if time.time() - _last_confirm[0] < 20 and _verdict(re.findall(r"[a-z]+", text.lower())) == "yes" \
+            and not set(re.findall(r"[a-z]+", text.lower())) - EXTRA_FILLER:
+        return False
     choice = files.take_choice(text)
     if choice:
         run_tool(choice[0], choice[1], "")
         return bool(PENDING) or files.waiting()
+    held = files.hold_choice(text)
+    if held:
+        voice.say(held)
+        return True
     state.update(activity="thinking", activity_at=time.time())
     try:
         if direct(text):
@@ -297,7 +336,7 @@ def _handle(text, via_wake=True):
         plan = brain.think(text, tools.prompt(text))
         print(f"  [brain {time.time() - t0:.1f}s]")
         if plan is None:
-            voice.say("My thinking service is not answering, so I can only do quick commands right now.")
+            voice.say("The brain is not answering. Quick commands only.")
             return False
         plans = plan.get("actions") if isinstance(plan.get("actions"), list) else [plan]
         plans = [p for p in plans if isinstance(p, dict)][:3]
@@ -337,8 +376,25 @@ def start(watch_reminders=True):
     companion.start()
     if guard.enabled():
         guard.start()
+    clipwatch.start()
+    threading.Thread(target=command_loop, daemon=True).start()
     threading.Thread(target=brain.warm, daemon=True).start()
     voice.warm()
+
+
+def command_loop():
+    """Runs commands typed into the palette, which sends them through the shared state file."""
+    last = 0.0
+    while True:
+        time.sleep(0.5)
+        st = state.read()
+        if st["command"] and st["command_at"] > last:
+            last, text = st["command_at"], st["command"]
+            state.update(command="")
+            try:
+                handle(text)
+            except Exception as e:
+                print(f"  (palette command failed: {type(e).__name__})")
 
 
 def listen():

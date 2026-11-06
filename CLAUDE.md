@@ -12,7 +12,7 @@ Groq as the brain, OpenRouter as the first fallback and Ollama as the offline fa
 - `requirements.txt`, plus `openwakeword` installed with `--no-deps`.
 - `psutil` for system status (memory, processor load, temperature).
 - No APScheduler: reminders, including repeating ones, run on the one-second polling thread in `jarvis/scheduling/reminders.py`.
-- System tools: `wpctl` (volume), `spectacle` (screenshots), `wl-paste` / `wl-copy` (clipboard).
+- System tools: `wpctl` (volume), `spectacle` (screenshots), `wl-paste` / `wl-copy` (clipboard), `kdotool` (active window).
   `scrot`, `gnome-screenshot`, `xclip` and `xsel` are used only as fallbacks.
 
 ## Configuration
@@ -39,6 +39,24 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
 - System awareness: `tools.system_status` (battery, charging state, memory, processor load and temperature) and
   `tools.battery`. "how's my system" and "battery status" go through `fast_path`. The low-battery warning
   (20 percent, once until charged again) is in `companion.py`.
+- Pending choices: a file question stays open for 60 seconds. `files.take_choice` resolves "second", "number two",
+  "newest" and so on anywhere in the sentence; `files.hold_choice` repeats the options or re-asks on a garbled reply
+  without searching again. `main.check_pending` handles yes / no, uses the question up once, and runs any extra words
+  after the yes as a new command.
+- Focus guard: `scheduling/guard.py` with `actions/windows.py` (kdotool) and `actions/guard_tools.py`. Off by default
+  (`DISTRACTION_GUARD`, or "turn on focus guard"). Local rules first; unclear titles go to the brain in one batch.
+  `scripts/guard_check.py` prints verdicts for sample titles.
+- Translation: `actions/translate.py`. Result goes to the clipboard; only Latin-script text is spoken.
+- Clipboard monitor: `actions/clipwatch.py`, off by default (`CLIPBOARD_MONITOR`). Offers one action for a link, error,
+  code or long text; skips anything that looks like a key or password; keeps only a hash of the last clip.
+- Palette: `ui/palette.py`. Sends the typed command through the `command` key in `core/state.py`; `main.command_loop`
+  runs it. Bind `.venv/bin/python -m jarvis.ui.palette` to a KDE shortcut.
+- Hand-off: `actions/handoff.py` appends to `<outbox>/phone.txt` or `laptop.txt` (`HANDOFF_DIR`, default `data/outbox`);
+  files are copied to `<outbox>/files`.
+- Code help: `actions/debug.py` (`debug_clipboard`) speaks a short answer and copies the full fix.
+- Research: `research/topic.py` (`research_topic`, "research X") makes one plain brain call and writes a cited note to
+  `data/notes/research-<topic>.md`. The older `research` tool still handles events and news.
+- Check scripts in `scripts/` run without a mic or accounts; each feature has its own `*_check.py`.
 
 ## Conventions
 - No docstrings that restate the function name, no banner comments, no emoji.

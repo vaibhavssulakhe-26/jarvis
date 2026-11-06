@@ -7,3 +7,4 @@ models/
 *.log
 training/.venv/
 training/work/
+.directory

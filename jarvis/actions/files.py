@@ -24,6 +24,9 @@ MAX_SECONDS = 8.0
 CLEAR_GAP = 0.15
 SESSION = {"results": [], "last": None}
 PENDING = {}
+HOLD = 60
+NEW_REQUEST = re.compile(r"\b(find|open|search|summari[sz]e|read|remind|play|send|what|how|why|when|where|volume|mute)\b")
+REPEAT = re.compile(r"\b(repeat|again|say that|come again|what were)\b")
 
 
 class FileChoice(Exception):
@@ -218,19 +221,25 @@ def pick(text):
     if not options:
         return None
     t = str(text).lower()
-    if re.search(r"\b(newest|latest|most recent|last modified)\b", t):
-        return max(options, key=lambda r: r["modified"])
-    if re.search(r"\b(oldest)\b", t):
-        return min(options, key=lambda r: r["modified"])
-    if re.search(r"\blast one\b", t):
-        return options[-1]
+    hits = []
+    for m in re.finditer(r"\b(newest|latest|most recent|last modified)\b", t):
+        hits.append((m.start(), max(options, key=lambda r: r["modified"])))
+    for m in re.finditer(r"\boldest\b", t):
+        hits.append((m.start(), min(options, key=lambda r: r["modified"])))
+    for m in re.finditer(r"\blast one\b|\blast\b(?! (?:modified|week|month|year|night))" if PENDING.get("options") else r"\blast one\b", t):
+        hits.append((m.start(), options[-1]))
     for word, i in ORDINALS.items():
-        if re.search(rf"\b{word}\b", t) and i < len(options):
-            return options[i]
-    m = re.search(r"\b(?:number|option|file|result)\s+(one|two|three|four|five|[1-5])\b", t)
-    if m and COUNTS[m.group(1)] < len(options):
-        return options[COUNTS[m.group(1)]]
-    return None
+        for m in re.finditer(rf"\b{word}\b", t):
+            if i < len(options):
+                hits.append((m.start(), options[i]))
+    for m in re.finditer(r"\b(?:number|option|file|result)\s+(one|two|three|four|five|[1-5])\b", t):
+        if COUNTS[m.group(1)] < len(options):
+            hits.append((m.start(), options[COUNTS[m.group(1)]]))
+    if not hits and PENDING.get("options") and len(t.split()) <= 6:
+        for m in re.finditer(r"\b(one|two|three|four|five|[1-5])\b", t):
+            if COUNTS[m.group(1)] < len(options):
+                hits.append((m.start(), options[COUNTS[m.group(1)]]))
+    return min(hits, key=lambda h: h[0])[1] if hits else None
 
 
 def is_pronoun(raw):
@@ -263,7 +272,7 @@ def locate(raw, then=None):
         return results[0]["path"]
     near = close_ones(results)
     SESSION["results"] = near
-    PENDING.update({"options": near, "then": then, "until": time.time() + 120})
+    PENDING.update({"options": near, "then": then, "until": time.time() + HOLD})
     raise FileChoice(f"I found {len(near)} files: " + "; ".join(describe(near))
                      + ". Which one, the first, the second, or the newest?")
 
@@ -272,6 +281,11 @@ def waiting():
     if PENDING and time.time() > PENDING.get("until", 0):
         PENDING.clear()
     return bool(PENDING)
+
+
+def question():
+    return ("The options are: " + "; ".join(describe(PENDING["options"]))
+            + ". Which one, the first, the second, or the newest?")
 
 
 def take_choice(text):
@@ -285,6 +299,20 @@ def take_choice(text):
     PENDING.clear()
     SESSION["last"] = chosen["path"]
     if not then:
-        return None
+        return "find_file", {"query": str(chosen["path"])}
     action, args = then
     return action, dict(args, path=str(chosen["path"]))
+
+
+def hold_choice(text):
+    """What to say when a file question is open and the reply did not pick anything, or None to carry on.
+    The question stays open; repeating it never searches again."""
+    if not waiting():
+        return None
+    if REPEAT.search(text.lower()):
+        PENDING["until"] = time.time() + HOLD
+        return question()
+    if len(text.split()) <= 5 and not NEW_REQUEST.search(text.lower()):
+        PENDING["until"] = time.time() + HOLD
+        return "Which one, the first, the second, or the newest?"
+    return None

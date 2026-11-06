@@ -4,8 +4,8 @@ PartOf=graphical-session.target
 After=graphical-session.target
 
 [Service]
-ExecStart=%h/ana/.venv/bin/python -u -m jarvis.scheduling.daemon
-WorkingDirectory=%h/ana
+ExecStart=%h/Documents/JARVIS/.venv/bin/python -u -m jarvis.scheduling.daemon
+WorkingDirectory=%h/Documents/JARVIS
 Restart=on-failure
 RestartSec=5
 MemoryMax=600M

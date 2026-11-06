@@ -138,11 +138,21 @@ class Ears:
         self.chime = make_chime()
 
     def _load_wake(self):
+        import onnxruntime
         from openwakeword.model import Model
         files = config.wake_files()
         if not files:
             raise SystemExit("No wake word model in " + str(config.MODELS))
-        return Model(wakeword_model_paths=[str(p) for p in files])
+        real = onnxruntime.InferenceSession
+
+        def cpu_session(*a, **kw):
+            kw["providers"] = ["CPUExecutionProvider"]
+            return real(*a, **kw)
+        onnxruntime.InferenceSession = cpu_session
+        try:
+            return Model(wakeword_model_paths=[str(p) for p in files])
+        finally:
+            onnxruntime.InferenceSession = real
 
     # ---------- listening ----------
     def _callback(self, indata, frames, t, status):
