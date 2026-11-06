@@ -142,7 +142,7 @@ class Ears:
         files = config.wake_files()
         if not files:
             raise SystemExit("No wake word model in " + str(config.MODELS))
-        return Model(wakeword_models=[str(p) for p in files], inference_framework="onnx")
+        return Model(wakeword_model_paths=[str(p) for p in files])
 
     # ---------- listening ----------
     def _callback(self, indata, frames, t, status):
