@@ -1,22 +1,22 @@
-# Ana
+# Jarvis
 
 Personal voice assistant for Fedora KDE Wayland. PyQt6 window, openWakeWord, faster-whisper, Piper,
 Groq as the brain, OpenRouter as the first fallback and Ollama as the offline fallback.
 
 ## Running
-- `python -m ana.main` from the repo root, inside `.venv`. Never `python ana/main.py`: the package uses relative imports.
-- `python -m ana.main --text` to type commands instead of speaking.
-- `python -m ana.scheduling.reminders list` prints pending reminders.
+- `python -m jarvis.main` from the repo root, inside `.venv`. Never `python jarvis/main.py`: the package uses relative imports.
+- `python -m jarvis.main --text` to type commands instead of speaking.
+- `python -m jarvis.scheduling.reminders list` prints pending reminders.
 
 ## Dependencies
 - `requirements.txt`, plus `openwakeword` installed with `--no-deps`.
 - `psutil` for system status (memory, processor load, temperature).
-- No APScheduler: reminders, including repeating ones, run on the one-second polling thread in `ana/scheduling/reminders.py`.
+- No APScheduler: reminders, including repeating ones, run on the one-second polling thread in `jarvis/scheduling/reminders.py`.
 - System tools: `wpctl` (volume), `spectacle` (screenshots), `wl-paste` / `wl-copy` (clipboard).
   `scrot`, `gnome-screenshot`, `xclip` and `xsel` are used only as fallbacks.
 
 ## Configuration
-All settings and keys come from `.env` (see `.env.example`), read in `ana/core/config.py`. Nothing is hardcoded.
+All settings and keys come from `.env` (see `.env.example`), read in `jarvis/core/config.py`. Nothing is hardcoded.
 - `GROQ_MODEL` text brain, `GROQ_VISION_MODEL` model used for reading the screen.
 
 ## How a command flows

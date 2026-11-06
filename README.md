@@ -1,4 +1,4 @@
-# Ana
+# Jarvis
 
 A personal voice assistant that runs locally on Linux. Talk to it, it listens, thinks, and acts.
 
@@ -15,15 +15,14 @@ A personal voice assistant that runs locally on Linux. Talk to it, it listens, t
 
 ## Wake word
 
-Currently uses `hey_jarvis` — say "Hey Jarvis" to activate.
-A custom "Hey Ana" wake word is planned and requires recording a personal model.
+The wake phrase is "Hey Jarvis" (`WAKE_WORD=hey_jarvis`).
 
 ## Stack
 
 Python, PyQt6, faster-whisper, openWakeWord, Piper TTS, Ollama
 
 ## Structure
-~ana/
+jarvis/
 core/ main loop, config, state
 brain/ cloud and local reasoning
 voice/ wake word, speech-to-text, text-to-speech
@@ -36,7 +35,7 @@ ui/ PyQt6 interface
 ## Run
 
 ```bash
-python -m ana.main
+python -m jarvis.main
 ```
 
 Requires `.env` with API credentials. See `.env.example`.

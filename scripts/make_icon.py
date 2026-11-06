@@ -9,7 +9,7 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QBrush, QColor, QGuiApplication, QPainter, QPen, QPixmap, QRadialGradient
 
-OUT = Path(__file__).resolve().parent.parent / "assets" / "ana.png"
+OUT = Path(__file__).resolve().parent.parent / "assets" / "jarvis.png"
 
 
 def main():

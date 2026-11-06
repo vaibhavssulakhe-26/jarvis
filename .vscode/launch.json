@@ -2,10 +2,10 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Run Ana",
+      "name": "Run Jarvis",
       "type": "python",
       "request": "launch",
-      "module": "ana.main",
+      "module": "jarvis.main",
       "python": "${workspaceFolder}/.venv/bin/python",
       "cwd": "${workspaceFolder}",
       "envFile": "${workspaceFolder}/.env",

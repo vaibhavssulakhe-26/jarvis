@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prepares everything needed to train the Ana wake word model, then trains it.
+# Prepares everything needed to train the Jarvis wake word model, then trains it.
 # Run from anywhere: ./training/setup.sh [prepare|train]
 set -euo pipefail
 
@@ -52,9 +52,9 @@ PY
 train() {
     cd "$HERE"
     [ -n "$(ls -A "$WORK/background" 2>/dev/null)" ] || { echo "$WORK/background is empty"; exit 1; }
-    "$VENV/bin/python" -m openwakeword.train --training_config ana.yaml --generate_clips --augment_clips --train_model
-    cp "$WORK/output/ana.onnx" "$HERE/../models/ana.onnx"
-    echo "Installed models/ana.onnx. WAKE_WORD=ana in .env picks it up."
+    "$VENV/bin/python" -m openwakeword.train --training_config jarvis.yaml --generate_clips --augment_clips --train_model
+    cp "$WORK/output/jarvis.onnx" "$HERE/../models/jarvis.onnx"
+    echo "Installed models/jarvis.onnx. WAKE_WORD=jarvis in .env picks it up."
 }
 
 case "${1:-prepare}" in

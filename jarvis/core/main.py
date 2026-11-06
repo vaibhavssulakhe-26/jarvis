@@ -1,0 +1,368 @@
+"""Jarvis: puts the ears, the brain, the tools and the voice together."""
+import atexit
+import json
+import random
+import re
+import sys
+import threading
+import time
+from datetime import datetime
+
+from ..actions import apps, files, mail, tools
+from ..brain import brain, companion
+from . import config, state
+from ..scheduling import digest, guard, monitor, reminders
+from ..voice import voice
+
+PENDING = {}
+STRONG_YES = {"yes", "yeah", "yep", "yup", "confirm", "confirmed", "proceed", "ahead"}
+YES_FILLER = STRONG_YES | {"go", "do", "it", "please", "sir"}
+NO_WORDS = {"no", "nope", "cancel", "stop", "never", "mind", "don", "t", "not", "abort", "please", "sir"}
+SLOW = re.compile(r"\b(and|then|also|after|before|remind|reminder|draft|email|write|note|find|search|"
+                  r"research|create|shut|shutdown|restart|suspend|play|pause|message|send)\b")
+MUTE = re.compile(r"(?:please )?mute(?: the| my)?(?: sound| volume| audio| laptop| speakers)?(?: please)?")
+UNMUTE = re.compile(r"(?:please )?(?:unmute(?: the| my)?(?: sound| volume| audio| laptop| speakers)?"
+                    r"|(?:restore|bring back) (?:the |my )?(?:sound|volume|audio))(?: please)?")
+UNITS = {w: i for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+    "sixteen seventeen eighteen nineteen".split())}
+TENS = {"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70,
+        "eighty": 80, "ninety": 90}
+
+
+def find_number(text):
+    m = re.search(r"\b(\d{1,3})\b", text)
+    if m:
+        return min(int(m.group(1)), 100)
+    total, found = 0, False
+    for tok in text.split():
+        if tok in UNITS:
+            total += UNITS[tok]
+            found = True
+        elif tok in TENS:
+            total += TENS[tok]
+            found = True
+        elif tok == "hundred":
+            total = max(total, 1) * 100
+            found = True
+    return min(total, 100) if found else None
+
+
+LAUNCH = {"open_app", "open_folder", "play_media", "open_url", "web_search"}
+_recent = {}
+
+
+def dedupe(plans):
+    """Drop repeated actions, and an open-YouTube action when a play action is also there."""
+    has_play = any(str(p.get("action")) == "play_media" for p in plans)
+    out, seen = [], set()
+    for p in plans:
+        act = str(p.get("action"))
+        args = p.get("args") if isinstance(p.get("args"), dict) else {}
+        if has_play and act == "open_app" and "youtube" in str(args.get("name", "")).lower():
+            continue
+        key = (act, json.dumps(args, sort_keys=True, default=str))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+    return out
+
+
+def do_tool(action, args, spoken=""):
+    if action in LAUNCH:
+        key = (action, json.dumps({k: v for k, v in args.items() if not str(k).startswith("_")},
+                                  sort_keys=True, default=str))
+        if time.time() - _recent.get(key, 0.0) < 20:
+            voice.say("That is already open.")
+            return
+        _recent[key] = time.time()
+    try:
+        result = tools.TOOLS[action]["fn"](args)
+    except tools.ToolError as e:
+        voice.say(str(e))
+        return
+    except Exception as e:
+        voice.say(f"That did not work: {type(e).__name__}")
+        return
+    voice.say(result or spoken or "Done.")
+
+
+def run_tool(action, args, spoken):
+    t = tools.TOOLS[action]
+    if t["risk"] == "confirm":
+        skip = False
+        if t["skip"]:
+            try:
+                skip = bool(t["skip"](args))
+            except Exception:
+                skip = False
+        if not skip:
+            try:
+                question = t["describe"](args)
+            except tools.ToolError as e:
+                voice.say(str(e))
+                return
+            PENDING.clear()
+            PENDING.update({"action": action, "args": args, "until": time.time() + 60})
+            voice.say(question + " Say yes to confirm, or no to cancel.")
+            return
+    do_tool(action, args, spoken)
+
+
+def check_pending(text):
+    """True if this sentence answered a pending yes or no question."""
+    if not PENDING:
+        return False
+    if time.time() > PENDING["until"]:
+        PENDING.clear()
+        return False
+    words = re.findall(r"[a-z]+", text.lower())
+    action, args = PENDING["action"], PENDING["args"]
+    PENDING.clear()
+    wordset = set(words)
+    if wordset and wordset <= YES_FILLER and (wordset & STRONG_YES or words[:2] == ["do", "it"]):
+        do_tool(action, args)
+        return True
+    if wordset and wordset <= NO_WORDS:
+        voice.say("Okay, cancelled.")
+        return True
+    if wordset & STRONG_YES and not (wordset & {"no", "nope", "cancel", "stop", "don", "not", "never"}):
+        PENDING.update({"action": action, "args": args, "until": time.time() + 30})
+        voice.say("I only want a clean yes or no for that one. Should I go ahead?")
+        return True
+    print("  (the pending action was cancelled)")
+    return False
+
+
+def _waiting():
+    return reminders.active() is not None
+
+
+DIRECT = [
+    (re.compile(r"^(?:ok|okay|done|got it|thanks|thank you|i did it|noted|i(?:'| )m on it)$", re.I), "ack_reminder", lambda m: {}, _waiting),
+    (re.compile(r"^snooze(?: it| this| that)?(?: for)?\s*(.*)$", re.I), "snooze_reminder", lambda m: {"for": m.group(1)}, _waiting),
+    (re.compile(r"^remind me again\s*(.*)$", re.I), "snooze_reminder", lambda m: {"until": m.group(1)}, _waiting),
+    (re.compile(r"^stop repeating(?: this| that| it)?(?: one)?$", re.I), "stop_repeating", lambda m: {}, _waiting),
+    (re.compile(r"^(?:please )?remember that (.+)$", re.I), "remember", lambda m: {"fact": m.group(1)}),
+    (re.compile(r"^(?:please )?remember ((?:my|i|i'm|i am|we|our)\b.+)$", re.I), "remember", lambda m: {"fact": m.group(1)}),
+    (re.compile(r"^(?:please )?forget (?:about |that |what i said about )?(.+)$", re.I), "forget", lambda m: {"what": m.group(1)}),
+    (re.compile(r"^what do you (?:know|remember) about me$", re.I), "what_do_you_know", lambda m: {}),
+    (re.compile(r"^(?:please )?(?:make|take|add|write|save) (?:me )?a note(?: (?:about|on|for) ([\w ]{1,30}?))?\s*[:,-]\s*(.+)$", re.I),
+     "take_note", lambda m: {"topic": m.group(1) or "", "text": m.group(2)}),
+    (re.compile(r"^what did i (?:note|write|save)(?: down)?(?: about| on) (.+)$", re.I), "read_notes", lambda m: {"topic": m.group(1)}),
+    (re.compile(r"^(?:list|show|read)(?: out)? (?:my )?notes$", re.I), "list_notes", lambda m: {}),
+    (re.compile(r"^search (?:my )?notes for (.+)$", re.I), "search_notes", lambda m: {"query": m.group(1)}),
+    (re.compile(r"^(?:delete|remove) (?:my )?notes? (?:about|on) (.+)$", re.I), "delete_note", lambda m: {"topic": m.group(1)}),
+    (re.compile(r"^what (?:does|did) (?:it|that|the file|the document|the pdf) say about (.+)$", re.I),
+     "ask_about_file", lambda m: {"question": m.group(1), "path": ""}),
+    (re.compile(r"^read (?:it|that|the file) (?:again|aloud|out loud|out)$", re.I), "read_aloud_file", lambda m: {"path": ""}),
+    (re.compile(r"^(?:please )?(?:summari[sz]e|summary of) (it|that|this)$", re.I), "summarise_file", lambda m: {"path": ""}),
+    (re.compile(r"^(?:please )?(?:summari[sz]e|summary of) (?!what i copied|my clipboard|the clipboard|this page)(?:the |my )?(.+)$", re.I),
+     "summarise_file", lambda m: {"path": m.group(1)}),
+    (re.compile(r"^(?:good morning,? )?(?:give me )?(?:my |the )?(?:morning (?:briefing|digest)|what s my day|what is my day|what'?s my day)$", re.I),
+     "morning_briefing", lambda m: {}),
+    (re.compile(r"^(?:watch|monitor) (?=.*\b(?:every|changes|for the word)\b)(.+?)(?: every (\d+|an?|one|two|five|ten|fifteen|thirty) ?(minutes?|mins?|hours?|hrs?))?"
+                r"(?: (?:and )?(?:tell|let) me when (?:it|that|this) changes)?(?: for the word (\w+))?$", re.I),
+     "add_watch", lambda m: {"target": m.group(1), "every": {"a": 1, "an": 1, "one": 1, "two": 2, "five": 5, "ten": 10,
+                             "fifteen": 15, "thirty": 30}.get((m.group(2) or "").lower(), m.group(2)),
+                             "unit": m.group(3), "word": m.group(4) or ""}),
+    (re.compile(r"^(?:list|show) (?:my )?watch(?:es| list)$", re.I), "list_watches", lambda m: {}),
+    (re.compile(r"^pause (?:the )?watch (.+)$", re.I), "pause_watch", lambda m: {"watch": m.group(1)}),
+    (re.compile(r"^resume (?:the )?watch (.+)$", re.I), "resume_watch", lambda m: {"watch": m.group(1)}),
+    (re.compile(r"^(?:remove|stop|delete) (?:the )?watch (.+)$", re.I), "remove_watch", lambda m: {"watch": m.group(1)}),
+    (re.compile(r"^(?:please )?(?:check|read|any|show)(?: me)?(?: my| the)? (?:new )?(?:emails?|mail|inbox)(?: please)?$", re.I), "check_email", lambda m: {}),
+    (re.compile(r"^(?:please )?check (?:my |the )?spam(?: folder)?$", re.I), "check_spam", lambda m: {}),
+    (re.compile(r"^open (?:my )?(?:email|e-mail|gmail|inbox|mail)$", re.I), "open_email", lambda m: {"which": "inbox"}),
+    (re.compile(r"^open (that one|the (?:first|second|third|fourth|fifth|sixth) one)$", re.I), "open_email", lambda m: {"which": m.group(1)},
+     lambda: bool(mail.SESSION["items"])),
+    (re.compile(r"^(that|the (?:first|second|third|fourth|fifth|sixth)) (?:one)?\s*(is not|isn'?t|isn t|'s not|s not|is|'s) important$", re.I),
+     "rate_sender", lambda m: {"which": m.group(1), "important": m.group(2) in ("is", "'s")},
+     lambda: bool(mail.SESSION["items"])),
+    (re.compile(r"^that sender is (not )?important$", re.I), "rate_sender", lambda m: {"which": "that", "important": not m.group(1)},
+     lambda: bool(mail.SESSION["items"])),
+    (re.compile(r"^turn (on|off) (?:the |my )?distraction guard$", re.I), "guard_switch", lambda m: {"on": m.group(1).lower() == "on"}),
+    (re.compile(r"^(?:start |enable |disable )?(?:the )?distraction guard$", re.I), "guard_switch", lambda m: {"on": True}),
+    (re.compile(r"^(?:end|stop|turn off) focus mode$", re.I), "focus_mode", lambda m: {"end": True}),
+    (re.compile(r"^(?:start |turn on )?focus mode(?: for (.+))?$", re.I), "focus_mode", lambda m: {"for": m.group(1) or ""}),
+    (re.compile(r"^i(?:'m| m| am) on a break$", re.I), "take_break", lambda m: {}),
+    (re.compile(r"^leave me alone(?: for (.+))?$", re.I), "take_break", lambda m: {"for": m.group(1) or ""}),
+    (re.compile(r"^(?:what s|what is|whats|what'?s) my screen time$|^how did i spend my time(?: today)?$", re.I), "screen_time", lambda m: {}),
+    (re.compile(r"^what did we (?:talk|speak|chat|discuss)(?: about)?\s*(.*)$", re.I), "recall_day", lambda m: {"when": m.group(1)}),
+]
+
+
+def direct(text):
+    """Phrases that map straight to one tool, without asking the brain."""
+    t = " ".join(text.strip().rstrip(".?!,").split())
+    for pattern, action, make, *guard in DIRECT:
+        m = pattern.match(t)
+        if m and action in tools.TOOLS and (not guard or guard[0]()):
+            print("  [direct command]")
+            run_tool(action, make(m), "")
+            return True
+    return False
+
+
+def fast_path(text):
+    """Short, unambiguous commands run at once, without asking the brain."""
+    t = re.sub(r"[^a-z0-9% ]", " ", text.lower())
+    t = re.sub(r"\s+", " ", t).strip()
+    if not t or len(t.split()) > 8 or SLOW.search(t):
+        return False
+    action, args = None, {}
+    if re.search(r"\bbattery\b", t):
+        action = "battery"
+    elif re.search(r"\b(system status|how s my (system|laptop|computer)|how is my (system|laptop|computer))\b", t):
+        action = "system_status"
+    elif re.search(r"\b(screenshot|screen shot|green shot|screen grab)\b", t):
+        action = "screenshot"
+    elif re.search(r"\bclipboard\b", t):
+        action = "read_clipboard"
+    elif re.search(r"\b(on|read|describe|at|see) (my |the )?screen\b", t):
+        action = "describe_screen"
+    elif re.search(r"\block\b", t) and re.search(r"\b(screen|laptop|computer)\b", t):
+        action = "lock_screen"
+    elif UNMUTE.fullmatch(t):
+        action = "unmute"
+    elif MUTE.fullmatch(t):
+        action = "mute"
+    elif re.search(r"\b(volume|sound)\b", t):
+        n = find_number(t)
+        by = {"by": n} if n else {}
+        if re.search(r"\b(up|increase|raise|louder|higher)\b", t):
+            action, args = "volume_up", by
+        elif re.search(r"\b(down|decrease|lower|quieter|softer|reduce)\b", t):
+            action, args = "volume_down", by
+        elif n is not None:
+            action, args = "set_volume", {"percent": n}
+    else:
+        m = re.match(r"^(?:please )?(?:open|launch|start)(?: up)? (?:the |my )?(.+?)(?: app| application| folder)?$", t)
+        if m:
+            name = m.group(1).strip()
+            if name in apps.FOLDERS:
+                action, args = "open_folder", {"name": name}
+            elif apps.find_app(name):
+                action, args = "open_app", {"name": name}
+    if action is None:
+        return False
+    print("  [quick command]")
+    do_tool(action, args)
+    return True
+
+
+def execute(plan, addressed=False):
+    action = str(plan.get("action", "chat"))
+    args = plan.get("args")
+    if not isinstance(args, dict):
+        args = {}
+    spoken = str(plan.get("say") or "").strip()
+    if action in ("ask", "chat"):
+        if spoken:
+            voice.say(spoken)
+    elif action == "none":
+        if addressed:
+            voice.say("Sorry, I did not catch that. Could you say it again?")
+        else:
+            print("  (not for me)")
+    elif action in tools.TOOLS:
+        run_tool(action, args, spoken)
+    else:
+        voice.say("I can not do that yet.")
+
+
+_handle_lock = threading.Lock()
+
+
+def handle(text, via_wake=True):
+    with _handle_lock:
+        return _handle(text, via_wake)
+
+
+def _handle(text, via_wake=True):
+    """Returns True when Jarvis expects an answer from you, so it keeps listening."""
+    if check_pending(text):
+        return bool(PENDING)
+    choice = files.take_choice(text)
+    if choice:
+        run_tool(choice[0], choice[1], "")
+        return bool(PENDING) or files.waiting()
+    state.update(activity="thinking", activity_at=time.time())
+    try:
+        if direct(text):
+            return bool(PENDING) or files.waiting()
+        if fast_path(text):
+            return False
+        t0 = time.time()
+        plan = brain.think(text, tools.prompt(text))
+        print(f"  [brain {time.time() - t0:.1f}s]")
+        if plan is None:
+            voice.say("My thinking service is not answering, so I can only do quick commands right now.")
+            return False
+        plans = plan.get("actions") if isinstance(plan.get("actions"), list) else [plan]
+        plans = [p for p in plans if isinstance(p, dict)][:3]
+        plans = dedupe(plans)
+        plans.sort(key=lambda p: 1 if tools.TOOLS.get(str(p.get("action")), {}).get("risk") == "confirm" else 0)
+        for p in plans:
+            execute(p, via_wake)
+        return bool(PENDING) or files.waiting() or any(str(p.get("action")) == "ask" for p in plans)
+    finally:
+        if not voice.SPEAKING.is_set():
+            state.update(activity="idle", activity_at=time.time())
+
+
+def greet():
+    now = datetime.now()
+    part = "morning" if now.hour < 12 else "afternoon" if now.hour < 17 else "evening"
+    who = config.PET_NAME or "there"
+    me = config.ASSISTANT
+    line = random.choice([
+        f"Good {part}, {who}. {me} reporting for duty.",
+        f"Hey {who}. {me} is awake and ready to help.",
+        f"Welcome back, {who}. What are we building today?",
+    ])
+    today = [r for r in reminders.pending() if datetime.fromisoformat(r["due"]).date() == now.date()]
+    if today:
+        line += f" You have {len(today)} reminder{'s' if len(today) > 1 else ''} today."
+    voice.say(line)
+
+
+def start(watch_reminders=True):
+    state.update(paused=False)
+    atexit.register(brain.finish)
+    if watch_reminders:
+        reminders.watch(reminders.notify)
+        digest.watch(voice.say)
+        monitor.watch()
+    companion.start()
+    if guard.enabled():
+        guard.start()
+    threading.Thread(target=brain.warm, daemon=True).start()
+    voice.warm()
+
+
+def listen():
+    greet()
+    voice.wait()
+    from ..voice.ears import Ears
+    Ears(handle).run()
+
+
+def main():
+    start()
+    if "--text" in sys.argv:
+        print("text mode: type a command, Ctrl+C to stop")
+        while True:
+            try:
+                text = input("\nYou: ")
+            except (KeyboardInterrupt, EOFError):
+                print("\nbye")
+                return
+            if text.strip():
+                handle(text.strip())
+                voice.wait()
+    listen()
+
+
+if __name__ == "__main__":
+    main()

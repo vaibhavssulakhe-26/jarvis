@@ -1,0 +1,35 @@
+model_name: jarvis
+target_phrase:
+  - "hey jarvis"
+custom_negative_phrases:
+  - "hey travis"
+  - "hey harvest"
+  - "hey jarvik"
+  - "hey service"
+  - "hey garvis"
+  - "hey harvey"
+n_samples: 20000
+n_samples_val: 2000
+tts_batch_size: 25
+augmentation_batch_size: 16
+augmentation_rounds: 1
+piper_sample_generator_path: ./work/piper-sample-generator
+output_dir: ./work/output
+rir_paths:
+  - ./work/mit_rirs
+background_paths:
+  - ./work/background
+background_paths_duplication_rate:
+  - 1
+false_positive_validation_data_path: ./work/validation_set_features.npy
+feature_data_files:
+  ACAV100M_sample: ./work/openwakeword_features_ACAV100M_2000_hrs_16bit.npy
+batch_n_per_class:
+  ACAV100M_sample: 1024
+  adversarial_negative: 50
+  positive: 50
+model_type: dnn
+layer_size: 32
+steps: 25000
+max_negative_weight: 1500
+target_false_positives_per_hour: 0.2

@@ -1,0 +1,14 @@
+[Unit]
+Description=Jarvis reminders
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/ana/.venv/bin/python -u -m jarvis.scheduling.daemon
+WorkingDirectory=%h/ana
+Restart=on-failure
+RestartSec=5
+MemoryMax=600M
+
+[Install]
+WantedBy=graphical-session.target
