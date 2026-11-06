@@ -56,6 +56,22 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
 - Code help: `actions/debug.py` (`debug_clipboard`) speaks a short answer and copies the full fix.
 - Research: `research/topic.py` (`research_topic`, "research X") makes one plain brain call and writes a cited note to
   `data/notes/research-<topic>.md`. The older `research` tool still handles events and news.
+- Brain fallbacks: `brain._try_groq` retries a 400 once on the plain path, a 429 moves to the next provider at once.
+  `brain.code` is the plain-text call for code; it tries `CODE_MODEL` on `CODE_PROVIDER` (OpenRouter by default) first.
+  Code is never requested through the JSON tool-calling path.
+- Voice: `voice/voices.py` lists voices in `models/voices` and `~/piper-voices`. The choice is saved in
+  `data/settings.json` and read before every spoken reply, so it changes at once. First-run default is `VOICE`
+  (or the older `JARVIS_VOICE` / `ANA_VOICE`), else `en_US-ryan-medium`. `scripts/get_voices.py` downloads the extras.
+- Coder: `actions/coder.py`. `build_project` plans the files, then one brain call per file into `CODE_WORKSPACE`
+  (default `~/Projects/jarvis-builds`). `edit_file` and `find_bugs` describe the change and apply it only after a yes
+  (`apply_edit` through the shared confirmation), keeping a `.bak`. `run_project` asks first, runs inside the
+  workspace only, 20 second limit, refuses files that use sudo.
+- Laptop control (`actions/apps.py`): app aliases (browser, terminal, VS Code), `close_app` (asks first),
+  `switch_app`, `minimise_window`, `open_path`, `brightness` (needs brightnessctl), `open_site`. Windows are found
+  by class with kdotool (`windows.py`). Only fixed commands run; nothing is passed to a shell.
+- Research: `research_topic` searches, reads up to five pages (trafilatura, robots.txt respected), one small call per
+  page and one final call, cached for an hour. "show me" opens the sources; `help_topic` ("I need help with X",
+  "how do I X") decides between research, a docs page and a direct answer.
 - Check scripts in `scripts/` run without a mic or accounts; each feature has its own `*_check.py`.
 
 ## Conventions

@@ -12,11 +12,12 @@ import wave
 
 from ..actions import events
 from ..core import config, state
+from . import voices
 
 SPEAKING = threading.Event()
 LAST = [""]
 _queue = queue.Queue()
-_voice = [None]
+_voice = [None, None]
 
 PRONOUNCE = [(r"\bVibe\b", "Vyb"), (r"\bVibeo\b", "Vybee")]
 PLAYERS = ("pw-play", "paplay", "aplay")
@@ -30,9 +31,12 @@ def pronounce(text):
 
 
 def _load():
-    if _voice[0] is None:
+    path = voices.current_path()
+    if path is None:
+        raise FileNotFoundError("no voice installed")
+    if _voice[0] is None or _voice[1] != path:
         from piper import PiperVoice
-        _voice[0] = PiperVoice.load(str(config.VOICE))
+        _voice[0], _voice[1] = PiperVoice.load(str(path)), path
     return _voice[0]
 
 
@@ -49,7 +53,7 @@ def synth(text, wav_path):
     except Exception as e:
         print(f"  (fast voice failed: {type(e).__name__}, using the slower one)")
     try:
-        r = subprocess.run([sys.executable, "-m", "piper", "-m", str(config.VOICE),
+        r = subprocess.run([sys.executable, "-m", "piper", "-m", str(voices.current_path()),
                             "-f", wav_path], input=text.encode(), capture_output=True)
         return r.returncode == 0
     except OSError:
@@ -100,7 +104,7 @@ def say(text):
     LAST[0] = text
     print(f"  {text}")
     events.emit("jarvis", text)
-    if state.get("muted") or not config.VOICE.exists():
+    if state.get("muted") or voices.current_path() is None:
         return
     SPEAKING.set()
     _queue.put(text)

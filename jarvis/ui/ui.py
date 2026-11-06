@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QLineEdit, QPush
 from ..actions import events
 from ..brain import brain
 from ..core import config, main as core, state
-from ..voice import voice
+from ..voice import voice, voices
 
 AMBER = QColor("#ff9a1f")
 ORANGE = QColor("#ff6a1a")
@@ -78,7 +78,7 @@ def hud_lines():
     else:
         brain_name = "LOCAL ONLY"
     return [("BRAIN", brain_name), ("EARS", stt), ("WAKE", config.wake_label()),
-            ("VOICE", config.VOICE.stem.upper())]
+            ("VOICE", voices.current_name().upper())]
 
 
 class Stage(QWidget):

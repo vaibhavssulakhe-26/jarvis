@@ -55,7 +55,10 @@ TRIGGERS = {
     "read_aloud_file": "read aloud file text",
     "web_search": "search google look browse",
     "draft_text": "draft email letter write compose message application",
-    "write_file": "write create build make code script program website app html file",
+    "build_project": "build create make write code script program website web app html page project",
+    "edit_file": "edit change modify update add file code",
+    "find_bugs": "bugs bug debug fix error check code file",
+    "run_project": "run execute start program project code",
     "remember": "remember",
     "snooze_reminder": "snooze again later tonight",
     "stop_repeating": "stop repeating",
@@ -96,8 +99,18 @@ TRIGGERS = {
     "debug_clipboard": "explain error debug code clipboard fix bug",
     "send_to_device": "send phone laptop handoff share",
     "clip_monitor_switch": "clipboard monitor watcher",
-    "research_topic": "research topic sources cited",
+    "research_topic": "research topic sources cited find out about",
+    "open_sources": "sources links show open",
+    "help_topic": "help how need topic understand learn",
     "open_palette": "palette command box",
+    "close_app": "close quit exit app window",
+    "switch_app": "switch focus window app",
+    "minimise_window": "minimise minimize window hide",
+    "open_path": "open file folder document pdf",
+    "brightness": "brightness brighter dim dimmer screen",
+    "open_site": "open website site go",
+    "change_voice": "voice change male female british accent",
+    "what_voice": "voice using",
 }
 ALWAYS = {"remember"}
 MAX_TOOLS = 6
@@ -141,8 +154,8 @@ def _launch(cmd):
 
 
 def _browser(url):
-    pref = config.get("JARVIS_BROWSER")
-    _launch([pref, url] if pref and shutil.which(pref) else ["xdg-open", url])
+    pref = config.get("BROWSER") or config.get("JARVIS_BROWSER") or "google-chrome"
+    _launch([pref, url] if shutil.which(pref) else ["xdg-open", url])
 
 
 _STOP = {"the", "a", "an", "to", "of", "on", "in", "at", "and", "or", "my", "me", "you", "your", "i",
@@ -395,33 +408,6 @@ def draft_text(args):
     return "I wrote the draft and saved it in your drafts folder" + (" and copied it to the clipboard." if copied else ".")
 
 
-@tool("write_file", 'args {"path": "<relative path such as todo-app/main.py>", "content": "<the full file text>"} - create a new code or text file inside the jarvis-projects folder and open it in the editor; never overwrites')
-def write_file(args):
-    root = config.PROJECTS
-    root.mkdir(exist_ok=True)
-    rel = str(args.get("path", "")).strip().lstrip("/")
-    content = str(args.get("content", ""))
-    if not rel or not content.strip():
-        raise ToolError("I need a file name and what to write in it.")
-    p = (root / rel).resolve()
-    try:
-        parts = p.relative_to(root.resolve()).parts
-    except ValueError:
-        raise ToolError(f"I only write inside the {root.name} folder.")
-    if not parts or any(x.startswith(".") for x in parts):
-        raise ToolError("I do not write hidden files.")
-    if p.exists():
-        raise ToolError("That file already exists, so I will not overwrite it.")
-    if len(content) > 20000:
-        raise ToolError("That file is too big for me to write in one go.")
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content)
-    editor = next((e for e in ("code", "antigravity") if shutil.which(e)), None)
-    if editor:
-        _launch([editor, str(p)])
-    return f"Created {p.name} in {root.name}" + (" and opened it." if editor else ".")
-
-
 # ---------- memory ----------
 @tool("remember", 'args {"fact": "short statement", "key": "<two word label>"} - keep a lasting fact about the user for later; never the user\'s own name. A relative\'s or friend\'s name is fine, say who they are')
 def remember(args):
@@ -455,6 +441,6 @@ def restart(args):
 
 
 # these modules register their tools on import, so they must load after the registry above
-from . import (apps, briefing, clipwatch, debug, documents, guard_tools, handoff, mail, media, messaging,  # noqa: E402,F401
-               notes, palette_tools, recall, reminder_tools, screen, translate, watches)
+from . import (apps, briefing, clipwatch, coder, debug, documents, guard_tools, handoff, mail, media, messaging,  # noqa: E402,F401
+               notes, palette_tools, recall, reminder_tools, screen, translate, voice_tools, watches)
 from ..research import research, topic  # noqa: E402,F401

@@ -16,6 +16,11 @@ A personal voice assistant that runs locally on Linux. Talk to it, it listens, t
 - Focus guard: opt-in, warns once when I drift into games or social feeds ("turn on focus guard")
 - Translate ("translate good morning to Hindi"), explain an error or debug code from the clipboard
 - Clipboard monitor (opt-in), research mode with cited notes, send text or files to my phone or laptop
+- Voice switching: "change your voice", "use a male voice", "use the British voice", "what voice are you using"
+- Coding: "build me a todo app", "add a footer to index.html", "find bugs in app.py", "run it" (asks first)
+- Laptop control: "open the browser", "close Spotify" (asks first), "switch to Chrome", "minimise this", "brightness up",
+  "open github.com", "search python decorators"
+- Research: "research graph theory", "I need help with X", "how do I X", then "show me" to open the sources
 - Command palette: a small box for typed commands ("open palette")
 
 ## Wake word
@@ -44,6 +49,8 @@ ui/ PyQt6 interface
 - Palette shortcut: in System Settings, Shortcuts, add a command `/home/<me>/Documents/JARVIS/.venv/bin/python -m jarvis.ui.palette`
   (run from the project folder) and bind a key.
 - Hand-off: set `HANDOFF_DIR` to a folder that Syncthing or KDE Connect shares with the phone.
+- Voices: `python scripts/get_voices.py` downloads Ryan, Joe and Alan into `models/voices`.
+- New `.env` keys: `VOICE` (first-run voice), `CODE_WORKSPACE`, `CODE_PROVIDER`, `CODE_MODEL`, `BROWSER`.
 - Checks: `python scripts/<name>_check.py` (no mic or accounts needed).
 
 ## Run

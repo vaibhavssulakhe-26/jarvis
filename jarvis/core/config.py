@@ -44,7 +44,6 @@ SHORT_NAME = get("USER_SHORT_NAME") or get("USER_NAME")
 FULL_NAME = get("USER_FULL_NAME") or SHORT_NAME
 GOD_NAME = get("USER_GOD_NAME")
 OTHER_NAMES = [n.strip() for n in get("USER_OTHER_NAMES").split(",") if n.strip()]
-VOICE = Path.home() / "piper-voices" / (get("JARVIS_VOICE", "en_US-amy-medium") + ".onnx")
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp") / "jarvis"
 _old_projects = Path.home() / "ana-projects"
 PROJECTS = Path.home() / ("ana-projects" if _old_projects.is_dir() and not (Path.home() / "jarvis-projects").is_dir()

@@ -90,3 +90,39 @@ def active_window(max_age=2.0):
             print("  (no way to read the active window: install kdotool; window features are off)")
     _cache["t"], _cache["value"] = time.time(), value
     return value
+
+
+def _kd(*args):
+    if not shutil.which("kdotool"):
+        return ""
+    try:
+        return _run(["kdotool", *args])
+    except (subprocess.SubprocessError, OSError):
+        return ""
+
+
+def find_ids(patterns):
+    """Window ids whose class matches any pattern. Titles are not searched, so a page that mentions an app does not match."""
+    ids = []
+    for pat in patterns:
+        for wid in _kd("search", "--class", "--classname", pat).split():
+            if wid not in ids:
+                ids.append(wid)
+    return ids
+
+
+def close(ids):
+    for wid in ids:
+        _kd("windowclose", wid)
+
+
+def activate(wid):
+    _kd("windowactivate", wid)
+
+
+def close_active():
+    _kd("getactivewindow", "windowclose")
+
+
+def minimise_active():
+    _kd("getactivewindow", "windowminimize")

@@ -2,10 +2,12 @@
 import difflib
 import re
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
 from ..core import config
+from . import windows
 from .tools import HOME, ToolError, _launch, tool
 
 APP_DIRS = [HOME / ".local/share/applications", Path("/usr/share/applications"),
@@ -54,10 +56,24 @@ def app_list():
     return items
 
 
+ALIASES = {"browser": ["Google Chrome", "Firefox", "Chromium", "Brave", "Zen Browser"],
+           "web browser": ["Google Chrome", "Firefox", "Chromium", "Brave"],
+           "terminal": ["Konsole", "Terminal", "Alacritty", "Kitty"],
+           "vs code": ["Visual Studio Code", "Code - OSS", "VSCodium"], "vscode": ["Visual Studio Code", "Code - OSS"],
+           "code": ["Visual Studio Code", "Code - OSS"], "code editor": ["Visual Studio Code", "Kate"],
+           "files": ["Dolphin"], "file manager": ["Dolphin"], "text editor": ["Kate", "KWrite"]}
+
+
 def find_app(spoken):
     s = _norm(spoken)
     if not s:
         return None
+    if s in ALIASES:
+        wanted = config.get("BROWSER") if "browser" in s else ""
+        for name in ([wanted] if wanted else []) + ALIASES[s]:
+            hit = find_app(name) if _norm(name) not in ALIASES else None
+            if hit:
+                return hit
     items = app_list()
     for name, path in items:
         if _norm(name) == s:
@@ -99,3 +115,107 @@ def open_folder(args):
         raise ToolError("I can open: " + ", ".join(FOLDERS) + ".")
     _launch(["dolphin", str(path)])
     return f"Opening {name}."
+
+
+def _patterns(label, path):
+    stem = Path(path).stem.split(".")[-1].lower()
+    return [stem, re.sub(r"[^a-z0-9]", "", label.lower())]
+
+
+def _app_windows(name):
+    found = find_app(name)
+    if found is None:
+        raise ToolError(f"I could not find an app called {name or 'that'} on this laptop.")
+    label, path = found
+    return label, windows.find_ids(_patterns(label, path))
+
+
+def _describe_close(args):
+    name = str(args.get("name", "")).strip().lower()
+    if name in ("", "this", "it", "that", "this window", "the window"):
+        return "Close the current window?"
+    label, ids = _app_windows(name)
+    if not ids:
+        raise ToolError(f"{label} does not seem to be open.")
+    return f"Close {label}?"
+
+
+@tool("close_app", 'args {"name": "<app name, or this for the current window>"} - close an open app window; for "close Spotify", "close this"',
+      risk="confirm", describe=_describe_close)
+def close_app(args):
+    name = str(args.get("name", "")).strip().lower()
+    if name in ("", "this", "it", "that", "this window", "the window"):
+        windows.close_active()
+        return "Closed it."
+    label, ids = _app_windows(name)
+    windows.close(ids)
+    return f"Closed {label}."
+
+
+@tool("switch_app", 'args {"name": "<app name>"} - bring an open app to the front; for "switch to Chrome"')
+def switch_app(args):
+    name = str(args.get("name", "")).strip()
+    label, ids = _app_windows(name)
+    if not ids:
+        raise ToolError(f"{label} is not open.")
+    windows.activate(ids[0])
+    return f"Switched to {label}."
+
+
+@tool("minimise_window", 'args {} - minimise the current window; for "minimise this"')
+def minimise_window(args):
+    if not shutil.which("kdotool"):
+        raise ToolError("I need kdotool to minimise windows.")
+    windows.minimise_active()
+    return "Minimised."
+
+
+@tool("open_path", 'args {"name": "<folder or file name as said>"} - open a folder or a file with its default app; for "open the resume pdf", "open my downloads folder"')
+def open_path(args):
+    given = str(args.get("path") or "").strip()
+    name = str(args.get("name", "")).strip()
+    if not given:
+        key = re.sub(r"^(?:the |my )|(?: folder)$", "", name.lower()).strip()
+        if key in FOLDERS:
+            return open_folder({"name": key})
+        from .documents import locate
+        given = str(locate(name, ("open_path", {})))
+    _launch(["xdg-open", given])
+    return f"Opening {Path(given).name}."
+
+
+def _brightness_cmd(text):
+    t = text.lower()
+    n = re.search(r"\b(\d{1,3})\b", t)
+    step = n.group(1) if n else "10"
+    if re.search(r"\b(up|increase|raise|brighter)\b", t):
+        return ["brightnessctl", "set", f"{step}%+"]
+    if re.search(r"\b(down|decrease|lower|reduce|dim|dimmer)\b", t):
+        return ["brightnessctl", "set", f"{step}%-"]
+    if n and re.search(r"\bto\b|\bset\b", t):
+        return ["brightnessctl", "set", f"{min(int(step), 100)}%"]
+    return None
+
+
+@tool("brightness", 'args {"text": "<what was said, such as brightness up or set brightness to 40>"} - change the screen brightness')
+def brightness(args):
+    cmd = _brightness_cmd(str(args.get("text", "")))
+    if cmd is None:
+        raise ToolError("Say brightness up, brightness down, or set brightness to a number.")
+    if not shutil.which("brightnessctl"):
+        raise ToolError("I need brightnessctl for that. Install it with dnf and try again.")
+    r = subprocess.run(cmd, capture_output=True, timeout=5)
+    if r.returncode:
+        raise ToolError("I could not change the brightness.")
+    return "Done."
+
+
+@tool("open_site", 'args {"site": "<website as said, for example github.com or youtube>"} - open a website the user named in the browser')
+def open_site(args):
+    from .tools import _browser, heard_recently
+    site = re.sub(r"\s+dot\s+", ".", str(args.get("site", "")).strip().lower()).replace(" ", "")
+    site = re.sub(r"^https?://|^www\.|/.*$", "", site)
+    if not re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)*", site) or not heard_recently(site.split(".")[0]):
+        raise ToolError("Which website should I open?")
+    _browser("https://" + (site if "." in site else site + ".com"))
+    return f"Opening {site}."
