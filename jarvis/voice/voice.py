@@ -11,7 +11,7 @@ import time
 import wave
 
 from ..actions import events
-from ..core import config, state
+from ..core import config, lang, state
 from . import voices
 
 SPEAKING = threading.Event()
@@ -30,8 +30,8 @@ def pronounce(text):
     return text
 
 
-def _load():
-    path = voices.current_path()
+def _load(path=None):
+    path = path or voices.current_path()
     if path is None:
         raise FileNotFoundError("no voice installed")
     if _voice[0] is None or _voice[1] != path:
@@ -42,8 +42,9 @@ def _load():
 
 def synth(text, wav_path):
     """Write text as speech to wav_path. Returns True on success."""
+    path = voices.path_for(text)
     try:
-        voice = _load()
+        voice = _load(path)
         with wave.open(wav_path, "wb") as f:
             if hasattr(voice, "synthesize_wav"):
                 voice.synthesize_wav(text, f)
@@ -53,7 +54,7 @@ def synth(text, wav_path):
     except Exception as e:
         print(f"  (fast voice failed: {type(e).__name__}, using the slower one)")
     try:
-        r = subprocess.run([sys.executable, "-m", "piper", "-m", str(voices.current_path()),
+        r = subprocess.run([sys.executable, "-m", "piper", "-m", str(path),
                             "-f", wav_path], input=text.encode(), capture_output=True)
         return r.returncode == 0
     except OSError:
@@ -96,6 +97,13 @@ def _worker():
 threading.Thread(target=_worker, daemon=True).start()
 
 
+def _no_kannada(text):
+    """No Kannada voice is installed: the text stays on screen and goes to the clipboard, and the spoken part is English."""
+    from ..actions.screen import write_clip
+    copied = write_clip(text)
+    say("I cannot speak Kannada yet, so the text is on screen" + (" and on your clipboard." if copied else "."))
+
+
 def say(text):
     """Print a line and speak it, unless Jarvis is muted."""
     text = str(text).strip()
@@ -104,6 +112,9 @@ def say(text):
     LAST[0] = text
     print(f"  {text}")
     events.emit("jarvis", text)
+    if lang.script(text) == "kn" and voices.for_language("kn") is None:
+        _no_kannada(text)
+        return
     if state.get("muted") or voices.current_path() is None:
         return
     SPEAKING.set()

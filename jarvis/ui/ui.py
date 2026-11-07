@@ -72,7 +72,7 @@ def current_mode():
 
 
 def hud_lines():
-    stt = "GROQ WHISPER" if config.get("JARVIS_STT", "local").lower() == "groq" else "LOCAL WHISPER"
+    stt = "GROQ WHISPER" if config.stt_cloud() else "LOCAL WHISPER"
     if config.get("GROQ_API_KEY"):
         brain_name = "GROQ " + brain.MODEL.split("/")[-1].upper()
     else:

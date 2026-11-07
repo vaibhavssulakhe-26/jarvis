@@ -8,3 +8,6 @@ models/
 training/.venv/
 training/work/
 .directory
+models/voices/
+*.onnx
+*.onnx.json

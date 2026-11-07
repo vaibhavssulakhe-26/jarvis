@@ -33,6 +33,12 @@ def get(name, default=""):
     return (default if value is None else value).strip()
 
 
+def stt_cloud():
+    """True when speech recognition should use Groq. STT or JARVIS_STT, and g / groq / cloud all count."""
+    value = (get("STT") or get("JARVIS_STT", "local")).lower()
+    return value in ("groq", "g", "cloud")
+
+
 def flag(name, default=False):
     raw = get(name, "true" if default else "false").lower()
     return raw in ("1", "true", "yes", "on")

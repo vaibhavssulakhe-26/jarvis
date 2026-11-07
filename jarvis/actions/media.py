@@ -1,13 +1,10 @@
 """Music and video: YouTube Music, YouTube, and the media player controls."""
-import re
 import shutil
 import subprocess
 import threading
 import time
-from urllib.parse import quote
 
-from . import apps
-from ..voice import voice
+from . import apps, play
 from .tools import ToolError, _browser, _launch, heard_recently, tool
 
 
@@ -23,30 +20,6 @@ def media(args):
     return "Done."
 
 
-def _youtube_id(query):
-    result = [""]
-
-    def go():
-        try:
-            import yt_dlp
-            opts = {"quiet": True, "no_warnings": True, "extract_flat": True,
-                    "skip_download": True, "socket_timeout": 8}
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info("ytsearch1:" + query, download=False)
-            for entry in (info or {}).get("entries") or []:
-                vid = str((entry or {}).get("id", ""))
-                if re.fullmatch(r"[A-Za-z0-9_-]{11}", vid):
-                    result[0] = vid
-                    return
-        except Exception as e:
-            print(f"  (video lookup failed: {type(e).__name__})")
-
-    worker = threading.Thread(target=go, daemon=True)
-    worker.start()
-    worker.join(12)
-    return result[0]
-
-
 def _resume_later(delay):
     def go():
         time.sleep(delay)
@@ -59,7 +32,7 @@ def _resume_later(delay):
     threading.Thread(target=go, daemon=True).start()
 
 
-@tool("play_media", 'args {"service": "youtube_music or youtube", "query": "<song, artist or video>"} - start playing music or a video; use an empty query ONLY to resume what is already playing in an open player; if the user asks to play something unnamed such as the first video, use ask instead')
+@tool("play_media", 'args {"service": "youtube_music or youtube", "query": "<what the user asked to play, in their words>"} - start playing music or a video; a vague request is fine, it picks one itself; use an empty query ONLY to resume what is already playing in an open player')
 def play_media(args):
     service = str(args.get("service", "youtube_music")).lower()
     query = str(args.get("query", "")).strip()[:120]
@@ -73,17 +46,6 @@ def play_media(args):
             _browser("https://music.youtube.com" if music else "https://www.youtube.com")
         _resume_later(9)
         return f"Opening {label}. I will try to press play for you."
-    if query.lower().strip(" .") in {"music", "song", "songs", "a song", "video", "videos", "something", "anything", "some music"}:
-        raise ToolError("Which song or artist should I play?")
-    if not heard_recently(query):
+    if not args.get("_heard") and not heard_recently(query):
         raise ToolError("I am not sure what you want me to play. Which song or video?")
-    voice.say(f"Looking that up on {label}.")
-    vid = _youtube_id(query)
-    if vid:
-        base = "https://music.youtube.com/watch?v=" if music else "https://www.youtube.com/watch?v="
-        _browser(base + vid)
-        _resume_later(7)
-        return f"Playing {query} on {label}. If it does not start by itself, press play once."
-    _browser(("https://music.youtube.com/search?q=" if music
-              else "https://www.youtube.com/results?search_query=") + quote(query))
-    return f"I opened the {label} search for {query}. I cannot press play on that page yet."
+    return play.start(query, music_service="music" in service and "youtube" in service)

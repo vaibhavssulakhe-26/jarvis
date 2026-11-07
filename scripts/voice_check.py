@@ -10,7 +10,7 @@ os.environ["JARVIS_DATA"] = tempfile.mkdtemp(prefix="jarvis-voice-")
 from jarvis.actions import tools  # noqa: E402,F401
 from jarvis.voice import voice, voices  # noqa: E402
 
-names = list(voices.installed())
+names = voices.english()
 print("installed voices:")
 for n in names:
     print(f"  {n}  ({voices.label(n)})")

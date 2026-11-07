@@ -6,7 +6,7 @@ import requests
 
 BASE = "https://huggingface.co/rhasspy/piper-voices/resolve/main/"
 VOICES = {"en_US-ryan-medium": "en/en_US/ryan/medium", "en_US-joe-medium": "en/en_US/joe/medium",
-          "en_GB-alan-medium": "en/en_GB/alan/medium"}
+          "en_GB-alan-medium": "en/en_GB/alan/medium", "hi_IN-pratham-medium": "hi/hi_IN/pratham/medium"}
 OUT = Path(__file__).resolve().parent.parent / "models" / "voices"
 
 
@@ -35,6 +35,7 @@ def main():
         print("\nDownload these by hand and put each file in", OUT)
         for url, _ in failed:
             print("  " + url)
+    print("\nNo Kannada voice is available yet: Jarvis shows Kannada text and copies it instead of speaking it.")
     return 1 if failed else 0
 
 

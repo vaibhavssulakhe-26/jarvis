@@ -23,6 +23,7 @@ CODES = {0: "clear", 1: "mostly clear", 2: "partly cloudy", 3: "overcast", 45: "
          71: "light snow", 73: "snow", 75: "heavy snow", 80: "rain showers", 81: "rain showers",
          82: "heavy showers", 95: "thunderstorms", 96: "thunderstorms", 99: "thunderstorms"}
 DEADLINE = re.compile(r"\b(deadline|submit|submission|due|exam|assignment|viva|fee)\b", re.I)
+RUNNING = threading.Event()
 _weather = {"t": 0.0, "city": "", "text": ""}
 
 
@@ -123,7 +124,11 @@ def run(speak):
     """Say the briefing once per day. Two processes cannot both do it."""
     if not store.claim("digest_last", date.today().isoformat()):
         return False
-    speak(build())
+    RUNNING.set()
+    try:
+        speak(build())
+    finally:
+        RUNNING.clear()
     return True
 
 

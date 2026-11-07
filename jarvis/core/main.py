@@ -6,13 +6,13 @@ import re
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from ..actions import apps, clipwatch, files, mail, tools
+from ..actions import apps, clipwatch, files, mail, play, tools
 from ..brain import brain, companion
 from . import config, state
 from ..research import topic as research_topic
-from ..scheduling import digest, guard, monitor, reminders
+from ..scheduling import digest, guard, monitor, proactive, reminders
 from ..voice import voice
 
 PENDING = {}
@@ -46,6 +46,46 @@ def find_number(text):
     return min(total, 100) if found else None
 
 
+NUMW = "|".join(list(UNITS) + list(TENS))
+COUNT = rf"(?:\d+|an?|(?:{NUMW})(?: (?:{NUMW}))?)"
+UNIT = r"(seconds?|secs?|minutes?|mins?|hours?|hrs?)"
+
+
+def count(word):
+    word = word.lower()
+    if word.isdigit():
+        return int(word)
+    if word in ("a", "an"):
+        return 1
+    return sum(UNITS.get(w) or TENS.get(w) or 0 for w in word.split())
+
+
+def seconds(num, unit):
+    return count(num) * (1 if unit.lower().startswith("sec") else 3600 if unit.lower().startswith("h") else 60)
+
+
+def clock(hour, minute, ampm, tomorrow=False):
+    """'YYYY-MM-DD HH:MM' for the next time it is hour:minute; None when am or pm is needed and missing."""
+    h, mi = int(hour), int(minute or 0)
+    if ampm:
+        if not 1 <= h <= 12:
+            return None
+        h = h % 12 + (12 if ampm.lower() == "pm" else 0)
+    elif 0 < h <= 12:
+        return None
+    if h > 23 or mi > 59:
+        return None
+    due = datetime.now().replace(hour=h, minute=mi, second=0, microsecond=0)
+    if tomorrow or due <= datetime.now():
+        due += timedelta(days=1)
+    return due.strftime("%Y-%m-%d %H:%M")
+
+
+def remind_at(m):
+    when = clock(m.group(2), m.group(3), m.group(4), bool(m.group(5)))
+    return {"task": m.group(1), "when": when} if when else None
+
+
 LAUNCH = {"open_app", "open_folder", "play_media", "open_url", "web_search"}
 _recent = {}
 
@@ -72,7 +112,7 @@ def do_tool(action, args, spoken=""):
         key = (action, json.dumps({k: v for k, v in args.items() if not str(k).startswith("_")},
                                   sort_keys=True, default=str))
         if time.time() - _recent.get(key, 0.0) < 20:
-            voice.say("That is already open.")
+            voice.say("That one is already open.")
             return
         _recent[key] = time.time()
     try:
@@ -81,7 +121,8 @@ def do_tool(action, args, spoken=""):
         voice.say(str(e))
         return
     except Exception as e:
-        voice.say(f"That did not work: {type(e).__name__}")
+        print(f"  (tool failed: {type(e).__name__})")
+        voice.say("Oops, that did not work. Something broke on my side.")
         return
     voice.say(result or spoken or "Done.")
 
@@ -159,6 +200,10 @@ def _waiting():
 
 
 DIRECT = [
+    (re.compile(r"^(.+)$"), "play_media", lambda m: play.answer(m.group(1)), play.asking),
+    (re.compile(r"^(?:please )?(?:next|next one|next video|next song|another one|another|not this one|something else|play (?:the )?next one)$", re.I),
+     "play_next", lambda m: {}, play.active),
+    (re.compile(r"^(?:please )?play (?!pause\b)(.+)$", re.I), "play_media", lambda m: {"query": m.group(0), "_heard": True}),
     (re.compile(r"^(?:ok|okay|done|got it|thanks|thank you|i did it|noted|i(?:'| )m on it)$", re.I), "ack_reminder", lambda m: {}, _waiting),
     (re.compile(r"^snooze(?: it| this| that)?(?: for)?\s*(.*)$", re.I), "snooze_reminder", lambda m: {"for": m.group(1)}, _waiting),
     (re.compile(r"^remind me again\s*(.*)$", re.I), "snooze_reminder", lambda m: {"until": m.group(1)}, _waiting),
@@ -204,15 +249,30 @@ DIRECT = [
      "guard_switch", lambda m: {"on": m.group(1).lower() in ("turn on", "enable", "start")}),
     (re.compile(r"^(?:please )?turn it off$", re.I), "guard_switch", lambda m: {"on": False}, guard.enabled),
     (re.compile(r"^(?:please )?close (?:the )?(.+?)(?: app| window)?$", re.I), "close_app", lambda m: {"name": m.group(1)}),
-    (re.compile(r"^(?:please )?switch to (?!(?:a |an |the )?(?:male|female|british|english|american) voice)(?:the )?(.+?)(?: app| window)?$", re.I), "switch_app", lambda m: {"name": m.group(1)}),
+    (re.compile(r"^(?:please )?switch to (?!(?:a |an |the )?(?:male|female|british|english|american) voice)(?!.*\bvoice$)(?:the )?(.+?)(?: app| window)?$", re.I), "switch_app", lambda m: {"name": m.group(1)}),
     (re.compile(r"^(?:please )?minimi[sz]e(?: this| it| the window| this window)?$", re.I), "minimise_window", lambda m: {}),
     (re.compile(r"^(?:please )?(?=.*\bbrightness\b)(.{0,40})$", re.I), "brightness", lambda m: {"text": m.group(1)}),
     (re.compile(r"^(?:please )?open (?:the |my )?(?:file|folder|document|pdf) (.+)$", re.I), "open_path", lambda m: {"name": m.group(1)}),
     (re.compile(r"^(?:please )?open ([a-z0-9-]+(?:\.[a-z]{2,})+)$", re.I), "open_site", lambda m: {"site": m.group(1)}),
     (re.compile(r"^(?:please )?(?:search|google)(?: the web| online)?(?: for)? (?!my\b|notes\b)(.+)$", re.I), "web_search", lambda m: {"query": m.group(1)}),
+    (re.compile(rf"^(?:please )?remind me (?:to )?(.+?) in ({COUNT}) {UNIT}$", re.I), "set_reminder",
+     lambda m: {"task": m.group(1), "in_seconds": seconds(m.group(2), m.group(3))}),
+    (re.compile(rf"^(?:please )?remind me in ({COUNT}) {UNIT} (?:to )?(.+)$", re.I), "set_reminder",
+     lambda m: {"task": m.group(3), "in_seconds": seconds(m.group(1), m.group(2))}),
+    (re.compile(rf"^(?:please )?remind me to (.+?) every (?:({COUNT}) )?{UNIT}$", re.I), "set_reminder",
+     lambda m: {"task": m.group(1), "every_minutes": seconds(m.group(2) or "a", m.group(3)) / 60}),
+    (re.compile(r"^(?:please )?remind me to (.+?) (?:at|by) (\d{1,2})(?::(\d{2}))? ?(am|pm)?(?: (tomorrow))?$", re.I),
+     "set_reminder", remind_at),
+    (re.compile(r"^(?:what are|list|show|read)(?: out)?(?: me)? my (?:pending |upcoming )?reminders$", re.I), "list_reminders", lambda m: {}),
     (re.compile(r"^(?:please )?change (?:your |the )?voice$", re.I), "change_voice", lambda m: {"which": "next"}),
     (re.compile(r"^(?:please )?(?:use|switch to|try) (?:a |an |the )?(male|female|british|english|american) voice$", re.I),
      "change_voice", lambda m: {"which": m.group(1)}),
+    (re.compile(r"^(?:please )?(?:use|switch to|try) (?:a |an |the )?([a-z]+) voice$", re.I), "change_voice", lambda m: {"which": m.group(1)}),
+    (re.compile(r"^(?:please )?(listen|reply|answer)(?: to me)? in (hindi|kannada|english|auto|automatic|any language|my language)(?: mode)?$", re.I),
+     "set_language", lambda m: {"mode": "reply" if m.group(1).lower() != "listen" else "listen", "language": m.group(2)}),
+    (re.compile(r"^(?:please )?(?:be )?(chattier|more talkative|quieter)$|^(?:please )?(talk more|talk less)$", re.I), "proactive_level",
+     lambda m: {"change": "more" if (m.group(1) or m.group(2)).lower() in ("chattier", "more talkative", "talk more") else "less"}),
+    (re.compile(r"^(?:please )?stop talking for (.+)$", re.I), "proactive_quiet", lambda m: {"for": m.group(1)}),
     (re.compile(r"^what voice are you using$|^which voice (?:are you|is this)(?: using)?$", re.I), "what_voice", lambda m: {}),
     (re.compile(r"^(?:please )?open (?:the )?(?:command )?palette$", re.I), "open_palette", lambda m: {}),
     (re.compile(r"^(?:please )?translate (.+?) (?:to|into|in) ([a-z]+)$", re.I), "translate",
@@ -256,8 +316,11 @@ def direct(text):
     for pattern, action, make, *guard in DIRECT:
         m = pattern.match(t)
         if m and action in tools.TOOLS and (not guard or guard[0]()):
+            args = make(m)
+            if args is None:
+                continue
             print("  [direct command]")
-            run_tool(action, make(m), "")
+            run_tool(action, args, "")
             return True
     return False
 
@@ -269,7 +332,11 @@ def fast_path(text):
     if not t or len(t.split()) > 8 or SLOW.search(t):
         return False
     action, args = None, {}
-    if re.search(r"\bbattery\b", t):
+    if re.fullmatch(r"(?:what s |what is |tell me )?(?:the )?(?:current )?time(?: is it)?(?: now| please)?|what time is it(?: now)?", t):
+        action, args = "time_date", {"what": "time"}
+    elif re.fullmatch(r"(?:what s |what is |tell me )?(?:the |today s )?(?:current )?date(?: today)?|what day is it(?: today)?|what is today s date", t):
+        action, args = "time_date", {"what": "date"}
+    elif re.search(r"\bbattery\b", t):
         action = "battery"
     elif re.search(r"\b(system status|how s my (system|laptop|computer)|how is my (system|laptop|computer))\b", t):
         action = "system_status"
@@ -320,13 +387,13 @@ def execute(plan, addressed=False):
             voice.say(spoken)
     elif action == "none":
         if addressed:
-            voice.say("Sorry, I did not catch that. Could you say it again?")
+            voice.say("Sorry, I missed that. Could you say it once more?")
         else:
             print("  (not for me)")
     elif action in tools.TOOLS:
         run_tool(action, args, spoken)
     else:
-        voice.say("I can not do that yet.")
+        voice.say("I cannot do that one yet, sorry.")
 
 
 _handle_lock = threading.Lock()
@@ -352,17 +419,18 @@ def _handle(text, via_wake=True):
     if held:
         voice.say(held)
         return True
-    state.update(activity="thinking", activity_at=time.time())
+    state.update(activity="thinking", activity_at=time.time(), touched_at=time.time())
     try:
         if direct(text):
-            return bool(PENDING) or files.waiting()
+            return bool(PENDING) or files.waiting() or play.asking()
         if fast_path(text):
             return False
         t0 = time.time()
-        plan = brain.think(text, tools.prompt(text))
-        print(f"  [brain {time.time() - t0:.1f}s]")
+        names = tools.pick_tools(text)
+        plan = brain.think(text, tools.prompt(names), names) if names else brain.chat(text)
+        print(f"  [brain {time.time() - t0:.1f}s ~{brain.take_tokens()} tokens]")
         if plan is None:
-            voice.say("The brain is not answering. Quick commands only.")
+            voice.say("I cannot reach my brain right now, so only quick things like time, volume and reminders will work.")
             return False
         plans = plan.get("actions") if isinstance(plan.get("actions"), list) else [plan]
         plans = [p for p in plans if isinstance(p, dict)][:3]
@@ -400,6 +468,7 @@ def start(watch_reminders=True):
         digest.watch(voice.say)
         monitor.watch()
     companion.start()
+    proactive.start()
     if guard.enabled():
         guard.start()
     clipwatch.start()

@@ -22,6 +22,9 @@ A personal voice assistant that runs locally on Linux. Talk to it, it listens, t
   "open github.com", "search python decorators"
 - Research: "research graph theory", "I need help with X", "how do I X", then "show me" to open the sources
 - Command palette: a small box for typed commands ("open palette")
+- Play: "play a video on dsa", "play a lofi song" picks one itself; "next" or "another one" moves to the next result
+- Hindi and Kannada: "listen in Hindi", "reply in Kannada", "listen in auto". Hindi is spoken; Kannada is shown and copied
+- Friendly chat, and optional check-ins when I have been quiet (`PROACTIVE`, "be chattier", "stop talking for two hours")
 
 ## Wake word
 
@@ -49,8 +52,18 @@ ui/ PyQt6 interface
 - Palette shortcut: in System Settings, Shortcuts, add a command `/home/<me>/Documents/JARVIS/.venv/bin/python -m jarvis.ui.palette`
   (run from the project folder) and bind a key.
 - Hand-off: set `HANDOFF_DIR` to a folder that Syncthing or KDE Connect shares with the phone.
-- Voices: `python scripts/get_voices.py` downloads Ryan, Joe and Alan into `models/voices`.
-- New `.env` keys: `VOICE` (first-run voice), `CODE_WORKSPACE`, `CODE_PROVIDER`, `CODE_MODEL`, `BROWSER`.
+- Voices: `python scripts/get_voices.py` downloads Ryan, Joe, Alan and the Hindi voice Pratham into `models/voices`.
+  If the network blocks it, the script prints the links to download by hand.
+- Film-style voice: put `jarvis.onnx` and `jarvis.onnx.json` in `models/voices` yourself, then say "use the jarvis voice".
+  The `dataset` field inside the `.onnx.json` must match the file name. Voice files are git-ignored.
+- Kannada has no speech voice yet (the only ONNX build of Meta MMS Kannada fails to run on onnxruntime, and the
+  original needs torch). Kannada replies appear on screen, go to the clipboard, and Jarvis says so in English.
+  No online speech service is used.
+- Speech recognition with `STT=groq` uses `STT_MODEL` (default whisper-large-v3) and detects the language itself.
+  The local fallback is the multilingual `STT_LOCAL_MODEL` (default `small`).
+- Proactive chat sends nothing online by itself: lines come from a local list, plus at most one small brain call every four hours.
+- New `.env` keys: `VOICE` (first-run voice), `CODE_WORKSPACE`, `CODE_PROVIDER`, `CODE_MODEL`, `BROWSER`, `STUDY_CHANNELS`,
+  `STT_MODEL`, `STT_LOCAL_MODEL`, `STT_LANGUAGE`, `PROACTIVE`.
 - Checks: `python scripts/<name>_check.py` (no mic or accounts needed).
 
 ## Run

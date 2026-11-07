@@ -1,4 +1,5 @@
 """Changing the speaking voice by command."""
+from ..core import lang
 from ..voice import voices
 from .tools import ToolError, tool
 
@@ -21,3 +22,20 @@ def what_voice(args):
     if name not in voices.installed():
         raise ToolError("I have no voice installed.")
     return f"I am using {voices.label(name)}."
+
+
+@tool("set_language", 'args {"mode": "listen or reply", "language": "hindi, kannada, english or auto"} - set the language Jarvis listens for or answers in; for "listen in Hindi", "reply in Kannada"')
+def set_language(args):
+    mode = "reply" if str(args.get("mode")).lower() == "reply" else "listen"
+    raw = str(args.get("language") or "auto").strip().lower()
+    code = lang.code(raw)
+    if raw not in ("auto", "automatic", "any language", "my language") and not code:
+        raise ToolError("I can do Hindi, Kannada, English or auto.")
+    name = lang.NAMES.get(code, "")
+    if mode == "listen":
+        lang.set_listening(code)
+        return f"Okay, I will listen for {name}." if name else "Okay, I will work out the language myself."
+    lang.set_reply(code)
+    if code == "kn" and voices.for_language("kn") is None:
+        return "Okay, I will answer in Kannada. I cannot speak it yet, so you will get the text on screen."
+    return f"Okay, I will answer in {name}." if name else "Okay, I will answer in whatever language you use."

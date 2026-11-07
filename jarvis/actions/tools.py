@@ -31,6 +31,7 @@ def tool(name, doc, risk="safe", describe=None, skip=None):
 
 # trigger words per tool: a new tool needs one entry here. Words match the start of a word in the sentence.
 TRIGGERS = {
+    "time_date": "time date day today clock",
     "battery": "battery charge charging",
     "system_status": "system status memory ram cpu processor temperature laptop computer",
     "set_volume": "volume sound louder quieter loud quiet",
@@ -87,6 +88,7 @@ TRIGGERS = {
     "open_app": "open launch start app",
     "open_folder": "open folder downloads documents pictures videos music desktop projects",
     "play_media": "play song music video youtube listen",
+    "play_next": "next another different skip",
     "media": "pause resume next previous skip song track",
     "message_contact": "message send text whatsapp tell mom",
     "send_screenshot": "send screenshot whatsapp",
@@ -111,13 +113,29 @@ TRIGGERS = {
     "open_site": "open website site go",
     "change_voice": "voice change male female british accent",
     "what_voice": "voice using",
+    "proactive_level": "chattier quieter talk more less",
+    "proactive_quiet": "stop talking quiet hours",
+    "set_language": "listen reply language hindi kannada english",
 }
 ALWAYS = {"remember"}
-MAX_TOOLS = 6
+MAX_TOOLS = 5
+MAX_DOC = 300
+SMALL_TALK = ("hey", "hi", "hello", "good morning", "good afternoon", "good evening", "good night", "thanks", "thank you",
+              "how are you", "how s it going", "how are things", "what s up", "who are you", "what is your name",
+              "what s your name", "can you hear me", "do you hear me", "are you there", "are you awake",
+              "are you listening", "bye", "goodbye", "nice", "cool", "great", "awesome", "tell me a joke",
+              "i m bored", "i m tired", "i m stressed", "i m sad", "i m happy")
+
+
+def small_talk(text):
+    t = " ".join(re.findall(r"[a-z0-9]+", str(text).lower()))
+    return len(t.split()) <= 8 and any(t == p or t.startswith(p + " ") for p in SMALL_TALK)
 
 
 def pick_tools(text):
-    """Names of the tools worth showing the brain for this sentence."""
+    """Names of the tools worth showing the brain for this sentence. Empty means plain conversation."""
+    if small_talk(text):
+        return []
     words = re.findall(r"[a-z0-9]+", str(text).lower())
     if len(words) <= 6 and brain.RECENT:
         # a short answer such as "seven pm" belongs to the sentence before it
@@ -130,16 +148,21 @@ def pick_tools(text):
         if hits:
             score[name] = hits
     if not score:
-        return list(TOOLS)
+        return []
     last = brain.LAST_ACTION[0]
     if last in TOOLS:
         score.setdefault(last, 1)
-    ranked = sorted(score, key=lambda n: -score[n])[:MAX_TOOLS]
-    return ranked + [n for n in sorted(ALWAYS) if n in TOOLS and n not in ranked]
+    always = [n for n in sorted(ALWAYS) if n in TOOLS]
+    ranked = [n for n in sorted(score, key=lambda n: -score[n]) if n not in always][:MAX_TOOLS - len(always)]
+    return ranked + always
 
 
-def prompt(text=""):
-    lines = ["- " + TOOLS[n]["doc"] for n in (pick_tools(text) if text else TOOLS)]
+def _short(doc):
+    return doc if len(doc) <= MAX_DOC else doc[:MAX_DOC].rsplit(" ", 1)[0]
+
+
+def prompt(names):
+    lines = ["- " + _short(TOOLS[n]["doc"]) for n in names]
     lines += ['- ask: a needed detail is missing, or you want to ask the user something back; put the question in "say"',
               '- chat: answer a question or just talk, in two to four short sentences in "say"',
               '- none: the text is noise or not meant for you']
@@ -186,6 +209,14 @@ def read_battery():
 
 
 # ---------- system ----------
+@tool("time_date", 'args {"what": "time or date"} - say the current time or date')
+def time_date(args):
+    now = datetime.now()
+    if str(args.get("what", "time")).lower().startswith("date"):
+        return f"Today is {now.strftime('%A')}, {now.day} {now.strftime('%B %Y')}."
+    return f"It is {now.strftime('%I:%M %p').lstrip('0')}."
+
+
 @tool("battery", "args {} - tell the battery level")
 def battery(args):
     pct, status = read_battery()
@@ -316,7 +347,7 @@ def lock_screen(args):
 
 
 # ---------- reminders and notes ----------
-@tool("set_reminder", 'args {"task": "<short phrase>", "when": "YYYY-MM-DD HH:MM"} using 24-hour local time; for relative times such as in thirty seconds or in ten minutes use "in_seconds": <number> instead of when; for a repeating reminder such as every 30 minutes add "every_minutes": <number>, with when or in_seconds only if the user said when it starts')
+@tool("set_reminder", 'args {"task": "<short phrase>", "when": "YYYY-MM-DD HH:MM"} in 24-hour local time; for in ten minutes use "in_seconds": <number> instead of when; for a repeating one add "every_minutes": <number>, and when or in_seconds only if the user said when it starts')
 def set_reminder(args):
     task = str(args.get("task", "")).strip() or "reminder"
     when = None
@@ -442,5 +473,5 @@ def restart(args):
 
 # these modules register their tools on import, so they must load after the registry above
 from . import (apps, briefing, clipwatch, coder, debug, documents, guard_tools, handoff, mail, media, messaging,  # noqa: E402,F401
-               notes, palette_tools, recall, reminder_tools, screen, translate, voice_tools, watches)
+               notes, palette_tools, play, proactive_tools, recall, reminder_tools, screen, translate, voice_tools, watches)
 from ..research import research, topic  # noqa: E402,F401

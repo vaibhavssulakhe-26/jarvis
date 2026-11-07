@@ -1,0 +1,158 @@
+"""Vague play requests: search YouTube metadata, pick one result, open it, and keep the rest for "next"."""
+import math
+import re
+import threading
+import time
+
+from ..core import config
+from .tools import ToolError, _browser, tool
+
+RESULTS = 8
+SESSION_SECONDS = 1800
+ASK_SECONDS = 30
+DEFAULT_CHANNELS = "freeCodeCamp,Abdul Bari,take U forward,NeetCode,Apna College"
+MUSIC_WORDS = {"song", "songs", "music", "track", "tracks", "lofi", "playlist", "remix", "beats"}
+FILLER = {"a", "an", "the", "some", "any", "me", "one", "something", "anything", "video", "videos", "song", "songs",
+          "music", "track", "tracks", "on", "about", "of", "for", "to", "please", "play", "youtube"}
+ARTICLES = {"a", "an", "the", "some", "any", "me", "one", "something", "anything", "video", "videos", "please", "play"}
+TEACH_WORDS = ("tutorial", "lecture", "course", "explained", "crash course", "full course", "for beginners")
+BAD_MUSIC = ("reaction", "cover", "karaoke", "slowed", "reverb", "8d", "nightcore", "tutorial", "how to")
+_state = {"results": [], "i": 0, "at": 0.0, "kind": "", "topic": "", "music": False, "ask": None}
+
+
+def study_channels():
+    return [c.strip().lower() for c in config.get("STUDY_CHANNELS", DEFAULT_CHANNELS).split(",") if c.strip()]
+
+
+def parse(text):
+    """Split a spoken request into (kind, topic, youtube_music). The topic is empty when none was named."""
+    t = re.sub(r"[^\w\s']", " ", text.lower())
+    t = re.sub(r"^\s*(?:please\s+)?play\b", " ", t)
+    music = bool(re.search(r"\byoutube music\b|\byt music\b", t))
+    t = re.sub(r"\b(?:on|in|from) (?:youtube music|youtube|yt music|yt)\b", " ", t)
+    words = t.split()
+    topic_words = [w for w in words if w not in FILLER]
+    topic = " ".join(topic_words)
+    if re.search(r"\b(?:video|videos|something|anything|one)\s+(?:on|about|for)\b", t) or \
+            re.search(r"\b(?:tutorial|lecture|course)\b", t):
+        kind = "learning"
+    elif set(words) & MUSIC_WORDS or "song" in t:
+        kind = "music"
+    elif re.search(r"\bvideos?\b", t):
+        kind = "video"
+    else:
+        kind = "music"
+    if kind == "music":
+        topic = " ".join(w for w in words if w not in ARTICLES) if topic_words else ""
+    return kind, topic, music
+
+
+def query_for(kind, topic):
+    return f"{topic} tutorial" if kind == "learning" else topic
+
+
+def search(query, n=RESULTS):
+    """Metadata only, no download. Returns [{id, title, channel, duration, views}] or []."""
+    found = []
+
+    def go():
+        try:
+            import yt_dlp
+            opts = {"quiet": True, "no_warnings": True, "extract_flat": True, "skip_download": True,
+                    "socket_timeout": 8}
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(f"ytsearch{n}:{query}", download=False)
+            for e in (info or {}).get("entries") or []:
+                vid = str((e or {}).get("id", ""))
+                if re.fullmatch(r"[A-Za-z0-9_-]{11}", vid):
+                    found.append({"id": vid, "title": str(e.get("title") or ""),
+                                  "channel": str(e.get("channel") or e.get("uploader") or ""),
+                                  "duration": e.get("duration") or 0, "views": e.get("view_count") or 0})
+        except Exception as e:
+            print(f"  (video lookup failed: {type(e).__name__})")
+
+    worker = threading.Thread(target=go, daemon=True)
+    worker.start()
+    worker.join(15)
+    return list(found)
+
+
+def score(item, kind, channels, query=""):
+    title, channel = item["title"].lower(), item["channel"].lower()
+    mins = (item["duration"] or 0) / 60
+    views = item["views"] or 0
+    pts = 0.0
+    if 0 < mins < 1:
+        pts -= 5
+    if kind == "learning":
+        pts += 3 if 10 <= mins <= 90 else 1 if 5 <= mins < 10 else -2 if mins > 180 else 0
+        pts += 2 if any(w in title for w in TEACH_WORDS) else 0
+        pts += 4 if any(c in channel for c in channels) else 0
+        pts += min(3.0, math.log10(views + 1) / 2)
+    elif kind == "music":
+        official = "official" in title or "vevo" in channel or channel.endswith("- topic")
+        pts += 2 if official else 0
+        pts += 1 if 1.5 <= mins <= 10 else -2 if mins > 15 and "mix" not in query else 0
+        pts -= 2 if any(w in title for w in BAD_MUSIC) else 0
+    else:
+        pts += min(3.0, math.log10(views + 1) / 2)
+    return pts
+
+
+def rank(items, kind, query=""):
+    channels = study_channels()
+    return sorted(items, key=lambda it: -score(it, kind, channels, query))
+
+
+def _open(item):
+    base = "https://music.youtube.com/watch?v=" if _state["music"] else "https://www.youtube.com/watch?v="
+    _browser(base + item["id"])
+
+
+def _announce(item):
+    who = f" by {item['channel']}" if item["channel"] else ""
+    return f"Playing {item['title']}{who}. Say next for another one."
+
+
+def asking():
+    return bool(_state["ask"]) and time.time() < _state["ask"]["until"]
+
+
+def answer(text):
+    """The reply to 'what should I play?': build the request from the kind we were asking about."""
+    kind = _state["ask"]["kind"]
+    _state["ask"] = None
+    return {"query": f"play {kind} on {text}" if kind == "learning" else f"play {text}", "_heard": True}
+
+
+def start(text, music_service=False):
+    kind, topic, music = parse(text)
+    if not topic:
+        _state["ask"] = {"kind": kind, "until": time.time() + ASK_SECONDS}
+        raise ToolError({"learning": "Sure. What topic should the video be on?",
+                         "video": "Sure. What kind of video?"}.get(kind, "Sure. Any language or artist in mind?"))
+    _state["ask"] = None
+    query = query_for(kind, topic)
+    items = rank(search(query), kind, query)
+    if not items:
+        raise ToolError("I could not find anything for that. Maybe the internet is acting up.")
+    _state.update(results=items, i=0, at=time.time(), kind=kind, topic=topic, music=music or music_service)
+    _open(items[0])
+    return _announce(items[0])
+
+
+def active():
+    return bool(_state["results"]) and time.time() - _state["at"] < SESSION_SECONDS
+
+
+@tool("play_next", 'args {} - play the next result of the last play request; for "next", "another one", "not this one"')
+def play_next(args):
+    if not active():
+        raise ToolError("There is nothing to skip. Tell me what to play.")
+    if _state["i"] + 1 >= len(_state["results"]):
+        raise ToolError(f"That was the last one I found for {_state['topic']}. Ask me for something else.")
+    _state["i"] += 1
+    _state["at"] = time.time()
+    item = _state["results"][_state["i"]]
+    _open(item)
+    return _announce(item)

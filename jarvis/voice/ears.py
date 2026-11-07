@@ -69,7 +69,7 @@ def strip_wake(text):
 
 
 def is_noise(text):
-    t = re.sub(r"[^a-z ]", "", text.lower()).strip()
+    t = re.sub(r"[^\w ]", "", text.lower()).strip()
     return len(t) < 2 or t in NOISE
 
 
@@ -188,6 +188,7 @@ class Ears:
         self.quiet = 0
 
     def _begin(self, now, phase, preroll=None):
+        state.update(touched_at=time.time())
         self.phase = phase
         self.t0 = now
         self.buf = list(preroll or [])
@@ -319,7 +320,7 @@ class Ears:
         raw = stt.transcribe(audio)
         t1 = time.time()
         text = strip_wake(raw)
-        bare = re.sub(r"[^a-z ]", "", text.lower()).strip()
+        bare = re.sub(r"[^\w ]", "", text.lower()).strip()
         named = any(is_name(w) or is_wake_word(w, 0.7) for w in raw.split()[:3])
         if not bare:
             if via_wake or named:

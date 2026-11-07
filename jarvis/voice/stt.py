@@ -1,4 +1,4 @@
-"""Speech to text: faster-whisper on this laptop, or Groq's hosted Whisper if JARVIS_STT=groq."""
+"""Speech to text: faster-whisper on this laptop, or Groq's hosted Whisper if STT=groq."""
 import io
 import threading
 import wave
@@ -6,11 +6,11 @@ import wave
 import numpy as np
 import requests
 
-from ..core import config
+from ..core import config, lang
 
 SR = 16000
 GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
-CLOUD = config.get("JARVIS_STT", "local").lower() == "groq"
+CLOUD = config.stt_cloud()
 _http = requests.Session()
 _whisper = [None]
 _lock = threading.Lock()
@@ -21,8 +21,17 @@ def _names():
     return ", ".join(w for w in dict.fromkeys(words) if w)
 
 
+PROMPTS = {"hi": "{names}. नमस्ते, कैसे हैं आप?", "kn": "{names}. ನಮಸ್ಕಾರ, ಹೇಗಿದ್ದೀರಿ?"}
 PROMPT = ("Names: " + _names() + ". Commands: open YouTube Music, send mom hi on WhatsApp, remind me in two "
           "minutes to stretch, take a screenshot, set the volume to forty percent.")
+
+
+def _prompt():
+    """A short prompt in the language being listened for, so the assistant's name and the user's name are spelled right."""
+    lg = lang.listening()
+    if lg in PROMPTS:
+        return PROMPTS[lg].format(names=_names())
+    return PROMPT if lg == "en" else "Names: " + _names() + "."
 
 
 def wav_bytes(audio):
@@ -45,7 +54,7 @@ def _model():
     with _lock:
         if _whisper[0] is None:
             from faster_whisper import WhisperModel
-            _whisper[0] = WhisperModel("base.en", device="cpu", compute_type="int8")
+            _whisper[0] = WhisperModel(config.get("STT_LOCAL_MODEL", "small"), device="cpu", compute_type="int8")
         return _whisper[0]
 
 
@@ -56,8 +65,8 @@ def warm():
 
 def _local(audio):
     segments, _ = _model().transcribe(
-        audio, language="en", vad_filter=True, vad_parameters={"threshold": 0.4},
-        initial_prompt=PROMPT, beam_size=1, condition_on_previous_text=False,
+        audio, language=lang.listening() or None, vad_filter=True, vad_parameters={"threshold": 0.4},
+        initial_prompt=_prompt(), beam_size=1, condition_on_previous_text=False,
         no_speech_threshold=0.6, without_timestamps=True)
     return " ".join(s.text.strip() for s in segments).strip()
 
@@ -67,12 +76,13 @@ def _groq(audio):
     if not key:
         return None
     try:
+        data = {"model": config.get("STT_MODEL", "whisper-large-v3"), "temperature": "0",
+                "response_format": "json", "prompt": _prompt()}
+        if lang.listening():
+            data["language"] = lang.listening()
         r = _http.post(
             GROQ_URL, headers={"Authorization": "Bearer " + key},
-            files={"file": ("command.wav", wav_bytes(audio), "audio/wav")},
-            data={"model": "whisper-large-v3-turbo", "language": "en", "temperature": "0",
-                  "response_format": "json", "prompt": PROMPT},
-            timeout=15)
+            files={"file": ("command.wav", wav_bytes(audio), "audio/wav")}, data=data, timeout=15)
         if r.status_code >= 400:
             print(f"  (cloud speech unavailable: HTTP {r.status_code})")
             return None

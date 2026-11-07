@@ -9,7 +9,8 @@ _base = Path(os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "stat
 PATH = _base / "jarvis" / "state.json"
 DEFAULTS = {"muted": False, "paused": False, "talk_request": 0.0,
             "activity": "idle", "activity_at": 0.0, "focus_until": 0.0, "break_until": 0.0, "guard": None,
-            "clipwatch": None, "command": "", "command_at": 0.0}
+            "clipwatch": None, "command": "", "command_at": 0.0,
+            "proactive": None, "quiet_until": 0.0, "touched_at": 0.0}
 _cache = {"t": 0.0, "data": dict(DEFAULTS)}
 
 
