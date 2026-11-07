@@ -1,5 +1,6 @@
 """Jarvis: puts the ears, the brain, the tools and the voice together."""
 import atexit
+import difflib
 import json
 import random
 import re
@@ -8,7 +9,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from ..actions import apps, clipwatch, files, mail, play, tools
+from ..actions import apps, clipwatch, files, mail, mpvctl, play, tools
 from ..brain import brain, companion
 from . import config, state
 from ..research import topic as research_topic
@@ -201,8 +202,15 @@ def _waiting():
 
 DIRECT = [
     (re.compile(r"^(.+)$"), "play_media", lambda m: play.answer(m.group(1)), play.asking),
-    (re.compile(r"^(?:please )?(?:next|next one|next video|next song|another one|another|not this one|something else|play (?:the )?next one)$", re.I),
+    (re.compile(r"^(?:please )?(?:next(?: one| video| song| track)?|another(?: one)?|not this one|something else|play (?:the )?next(?: one| video| song)?)$", re.I),
      "play_next", lambda m: {}, play.active),
+    (re.compile(r"^(?:please )?pause(?: it| the (?:video|music|song))?$", re.I), "player_control", lambda m: {"do": "pause"}, mpvctl.running),
+    (re.compile(r"^(?:please )?(?:resume|continue|unpause|play)(?: it| the (?:video|music|song))?$", re.I), "player_control", lambda m: {"do": "resume"}, mpvctl.running),
+    (re.compile(r"^(?:please )?stop (?:playing|playback|the (?:video|music|song))$", re.I), "player_control", lambda m: {"do": "stop"}, mpvctl.running),
+    (re.compile(r"^(?:please )?(?:volume up|louder|turn it up)$", re.I), "player_control", lambda m: {"do": "louder"}, mpvctl.running),
+    (re.compile(r"^(?:please )?(?:volume down|quieter|turn it down)$", re.I), "player_control", lambda m: {"do": "quieter"}, mpvctl.running),
+    (re.compile(r"^(?:please )?(?:skip|jump|go) (?:forward|ahead)(?: (?:by )?(?:30|thirty) seconds)?$", re.I), "player_control", lambda m: {"do": "forward"}, mpvctl.running),
+    (re.compile(r"^(?:please )?(?:go back|rewind|skip back)(?: (?:by )?(?:30|thirty) seconds)?$", re.I), "player_control", lambda m: {"do": "back"}, mpvctl.running),
     (re.compile(r"^(?:please )?play (?!pause\b)(.+)$", re.I), "play_media", lambda m: {"query": m.group(0), "_heard": True}),
     (re.compile(r"^(?:ok|okay|done|got it|thanks|thank you|i did it|noted|i(?:'| )m on it)$", re.I), "ack_reminder", lambda m: {}, _waiting),
     (re.compile(r"^snooze(?: it| this| that)?(?: for)?\s*(.*)$", re.I), "snooze_reminder", lambda m: {"for": m.group(1)}, _waiting),
@@ -310,6 +318,46 @@ DIRECT = [
 ]
 
 
+LOCAL_PHRASES = {
+    "be chattier": ("proactive_level", {"change": "more"}), "talk more": ("proactive_level", {"change": "more"}),
+    "be more talkative": ("proactive_level", {"change": "more"}),
+    "dont be chatty": ("proactive_level", {"change": "less"}), "be quiet": ("proactive_level", {"change": "less"}),
+    "be quieter": ("proactive_level", {"change": "less"}), "talk less": ("proactive_level", {"change": "less"}),
+    "change your voice": ("change_voice", {"which": "next"}),
+    "what voices do you have": ("list_voices", {}), "which voices do you have": ("list_voices", {}),
+    "list the voices": ("list_voices", {}),
+}
+LANGUAGES = ("hindi", "kannada", "english", "auto")
+STOP = re.compile(r"^(?:please )?(?:stop(?: talking| speaking| it)?|quiet|enough|shut up|bas|ruko|रुको|रुक|चुप(?: रहो| हो जाओ)?)$")
+
+
+def close(word, options, cutoff=0.75):
+    got = difflib.get_close_matches(word, list(options), 1, cutoff)
+    return got[0] if got else None
+
+
+def fuzzy(text):
+    """Control phrases that survive small mishearings, matched here without the brain."""
+    words = [w for w in re.sub(r"[^a-z ]", "", text.lower().replace("'", "")).split() if w != "please"]
+    plain = " ".join(words)
+    action = args = None
+    hit = close(plain, LOCAL_PHRASES, 0.82)
+    if hit:
+        action, args = LOCAL_PHRASES[hit]
+    elif len(words) >= 4 and close(" ".join(words[:2]), ["stop talking"], 0.8) and words[2] == "for":
+        action, args = "proactive_quiet", {"for": " ".join(words[3:])}
+    elif len(words) == 3 and words[1] == "in" and close(words[0], ["listen"], 0.8) and close(words[2], LANGUAGES, 0.7):
+        action, args = "set_language", {"mode": "listen", "language": close(words[2], LANGUAGES, 0.7)}
+    elif len(words) >= 3 and words[0] in ("use", "switch", "try") and words[-2] not in ("a", "an", "the") \
+            and close(words[-1], ["voice"], 0.8):
+        action, args = "change_voice", {"which": words[-2]}
+    if action not in tools.TOOLS:
+        return False
+    print("  [direct command]")
+    run_tool(action, args, "")
+    return True
+
+
 def direct(text):
     """Phrases that map straight to one tool, without asking the brain."""
     t = " ".join(text.strip().rstrip(".?!,").split())
@@ -322,7 +370,7 @@ def direct(text):
             print("  [direct command]")
             run_tool(action, args, "")
             return True
-    return False
+    return fuzzy(t)
 
 
 def fast_path(text):
@@ -406,6 +454,10 @@ def handle(text, via_wake=True):
 
 def _handle(text, via_wake=True):
     """Returns True when Jarvis expects an answer from you, so it keeps listening."""
+    if STOP.match(re.sub(r"[!-/:-@\[-`{-~।]", "", text.lower()).strip()) and (voice.SPEAKING.is_set() or not PENDING):
+        voice.stop()
+        PENDING.clear()
+        return False
     if check_pending(text):
         return bool(PENDING)
     if time.time() - _last_confirm[0] < 20 and _verdict(re.findall(r"[a-z]+", text.lower())) == "yes" \
@@ -465,7 +517,7 @@ def start(watch_reminders=True):
     atexit.register(brain.finish)
     if watch_reminders:
         reminders.watch(reminders.notify)
-        digest.watch(voice.say)
+        digest.watch(lambda text: voice.say(voice.Full(text)))
         monitor.watch()
     companion.start()
     proactive.start()

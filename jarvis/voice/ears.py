@@ -210,6 +210,9 @@ class Ears:
         where = "Groq" if stt.CLOUD else "this laptop"
         print(f"  listening for {config.wake_label().title()} (threshold {self.wake_thr}); "
               f"speech is transcribed on {where}. Ctrl+C to stop.")
+        print(f"  speech can be cut off by: the wake word while talking (threshold {min(0.95, self.wake_thr + 0.3):.2f}), "
+              "the spoken words stop / quiet / enough, the STOP button or Ctrl+. in the window, "
+              "or python -m jarvis.voice.voice --stop")
         try:
             while True:
                 try:
@@ -226,9 +229,12 @@ class Ears:
     def _step(self, block):
         now = time.time()
         st = state.read()
-        if st["paused"] or voice.SPEAKING.is_set():
+        if st["paused"]:
             self._drain()
             self._reset()
+            return
+        if voice.SPEAKING.is_set() and self.phase is None:
+            self._interrupt(block, now)
             return
         if now < self.deaf_until:
             return
@@ -245,6 +251,19 @@ class Ears:
             self._waiting(block, rms, now)
         else:
             self._recording(block, rms, now)
+
+    def _interrupt(self, block, now):
+        """While Jarvis talks only the wake word, at a higher threshold, can cut in ("Hey Jarvis, stop")."""
+        scores = self.oww.predict(block)
+        score = max(scores.values()) if scores else 0.0
+        if score > min(0.95, self.wake_thr + 0.3) and now > self.cool_until:
+            self.cool_until = now + 1.5
+            print(f"  (speech cut off by the wake word, score {score:.2f})")
+            voice.stop()
+            self._drain()
+            self._reset_wake()
+            self.via_wake = True
+            self._begin(now, "wait")
 
     def _idle(self, block, rms, now):
         self.noise.append(rms)

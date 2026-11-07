@@ -12,12 +12,15 @@ import wave
 
 from ..actions import events
 from ..core import config, lang, state
-from . import voices
+from . import speech, voices
 
 SPEAKING = threading.Event()
 LAST = [""]
 _queue = queue.Queue()
 _voice = [None, None]
+_gen = [0]
+_proc = [None]
+Full = speech.Full
 
 PRONOUNCE = [(r"\bVibe\b", "Vyb"), (r"\bVibeo\b", "Vybee")]
 PLAYERS = ("pw-play", "paplay", "aplay")
@@ -67,28 +70,55 @@ def player():
     return _player[0]
 
 
-def play(wav_path):
+def play(wav_path, gen):
+    """Play a file; stop() or the stop key cuts it off at once."""
     cmd = player()
     if cmd is None:
         return False
-    subprocess.run([cmd, wav_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    started = time.time()
+    proc = subprocess.Popen([cmd, wav_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _proc[0] = proc
+    while proc.poll() is None:
+        if gen != _gen[0]:
+            proc.kill()
+        elif float(state.get("stop_at") or 0) > started:
+            stop()
+        time.sleep(0.05)
     return True
+
+
+def stop():
+    """Cut the speech now and drop what is queued. Harmless when nothing is playing; True if something was cut."""
+    was = SPEAKING.is_set() or not _queue.empty()
+    _gen[0] += 1
+    while True:
+        try:
+            _queue.get_nowait()
+        except queue.Empty:
+            break
+    proc = _proc[0]
+    if proc is not None and proc.poll() is None:
+        proc.kill()
+    return was
 
 
 def _worker():
     wav = str(config.runtime_file(f"say_{os.getpid()}.wav"))
     atexit.register(config.discard, wav)
     while True:
-        text = _queue.get()
-        SPEAKING.set()
-        state.update(activity="speaking", activity_at=time.time())
+        gen, text = _queue.get()
+        if gen == _gen[0]:
+            SPEAKING.set()
+            state.update(activity="speaking", activity_at=time.time())
         try:
-            if synth(pronounce(text), wav):
-                play(wav)
+            for part in speech.sentences(pronounce(text)) if gen == _gen[0] else ():
+                if gen == _gen[0] and synth(part, wav) and gen == _gen[0]:
+                    play(wav, gen)
         except Exception as e:
             print(f"  (voice error: {type(e).__name__})")
         finally:
-            time.sleep(0.35)
+            if gen == _gen[0]:
+                time.sleep(0.35)
             if _queue.empty():
                 SPEAKING.clear()
                 state.update(activity="idle", activity_at=time.time())
@@ -105,7 +135,8 @@ def _no_kannada(text):
 
 
 def say(text):
-    """Print a line and speak it, unless Jarvis is muted."""
+    """Print a line and speak it, unless Jarvis is muted. Long or structured text stays on screen and is copied."""
+    full = isinstance(text, speech.Full)
     text = str(text).strip()
     if not text:
         return
@@ -115,10 +146,17 @@ def say(text):
     if lang.script(text) == "kn" and voices.for_language("kn") is None:
         _no_kannada(text)
         return
-    if state.get("muted") or voices.current_path() is None:
+    if full:
+        spoken = speech.clean(text)
+    elif speech.too_long(text):
+        from ..actions.screen import write_clip
+        spoken = speech.DONE if write_clip(text) else "Done, it's on your screen."
+    else:
+        spoken = speech.shorten(speech.clean(text))
+    if not spoken or state.get("muted") or voices.current_path() is None:
         return
     SPEAKING.set()
-    _queue.put(text)
+    _queue.put((_gen[0], spoken))
 
 
 def wait():
@@ -137,5 +175,8 @@ def warm():
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--stop"]:
+        state.update(stop_at=time.time())
+        sys.exit(0)
     say(" ".join(sys.argv[1:]) or "Hello, I am Jarvis. This is my fresh start.")
     wait()

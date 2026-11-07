@@ -10,7 +10,7 @@ from urllib.parse import quote
 from . import events
 from ..brain import brain
 from ..core import config
-from ..memory import memory
+from ..memory import memory, notes
 from ..scheduling import reminders
 
 HOME = Path.home()
@@ -56,14 +56,13 @@ TRIGGERS = {
     "read_aloud_file": "read aloud file text",
     "web_search": "search google look browse",
     "draft_text": "draft email letter write compose message application",
-    "build_project": "build create make write code script program website web app html page project",
+    "build_project": "build create make write code script program website web app html page project interface ui design",
     "edit_file": "edit change modify update add file code",
     "find_bugs": "bugs bug debug fix error check code file",
     "run_project": "run execute start program project code",
     "remember": "remember",
     "snooze_reminder": "snooze again later tonight",
     "stop_repeating": "stop repeating",
-    "ack_reminder": "okay done thanks",
     "move_reminder": "move reminder time",
     "morning_briefing": "morning briefing day today digest",
     "add_watch": "watch monitor changes change",
@@ -113,13 +112,15 @@ TRIGGERS = {
     "open_site": "open website site go",
     "change_voice": "voice change male female british accent",
     "what_voice": "voice using",
+    "list_voices": "voices installed",
+    "player_control": "pause resume stop playing louder quieter forward back skip",
     "proactive_level": "chattier quieter talk more less",
     "proactive_quiet": "stop talking quiet hours",
     "set_language": "listen reply language hindi kannada english",
 }
 ALWAYS = {"remember"}
-MAX_TOOLS = 5
-MAX_DOC = 300
+MAX_TOOLS = 3
+MAX_DOC = 200
 SMALL_TALK = ("hey", "hi", "hello", "good morning", "good afternoon", "good evening", "good night", "thanks", "thank you",
               "how are you", "how s it going", "how are things", "what s up", "who are you", "what is your name",
               "what s your name", "can you hear me", "do you hear me", "are you there", "are you awake",
@@ -137,8 +138,10 @@ def pick_tools(text):
     if small_talk(text):
         return []
     words = re.findall(r"[a-z0-9]+", str(text).lower())
-    if len(words) <= 6 and brain.RECENT:
-        # a short answer such as "seven pm" belongs to the sentence before it
+    from ..voice import voice
+    answering = voice.LAST[0].rstrip().endswith("?")
+    if len(words) <= 6 and brain.RECENT and answering:
+        # a short answer such as "seven pm" belongs to the sentence before it, but only when Jarvis asked something
         words += re.findall(r"[a-z0-9]+", brain.RECENT[-1].lower())
     score = {}
     for name, trig in TRIGGERS.items():
@@ -150,7 +153,7 @@ def pick_tools(text):
     if not score:
         return []
     last = brain.LAST_ACTION[0]
-    if last in TOOLS:
+    if answering and last in TOOLS:
         score.setdefault(last, 1)
     always = [n for n in sorted(ALWAYS) if n in TOOLS]
     ranked = [n for n in sorted(score, key=lambda n: -score[n]) if n not in always][:MAX_TOOLS - len(always)]
@@ -421,11 +424,17 @@ def web_search(args):
 
 
 # ---------- writing and code ----------
-@tool("draft_text", 'args {"title": "<2 to 4 words>", "text": "<the full draft>"} - write an email or message draft for the user to review; never sends anything')
+@tool("draft_text", 'args {"title": "<2 to 4 words>", "text": "<the full draft>", "to_notes": true only if asked to save it in notes} - write an email or message draft for the user to review; never sends anything')
 def draft_text(args):
     text = str(args.get("text", "")).strip()
     if not text:
         raise ToolError("There was nothing to draft.")
+    title = str(args.get("title") or "draft")
+    if args.get("to_notes") in (True, "true", "yes") or "in my notes" in " ".join(brain.RECENT).lower():
+        notes.save(title, text[:6000])
+        print("\n" + text + "\n")
+        events.emit("sys", text)
+        return f"I wrote the draft and saved it in your notes under {title}."
     folder = HOME / "Documents" / "drafts"
     folder.mkdir(parents=True, exist_ok=True)
     (folder / stamped_name(args.get("title", "draft"), "draft", ".txt")).write_text(text[:6000] + "\n")

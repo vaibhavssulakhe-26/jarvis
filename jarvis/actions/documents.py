@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ..brain import brain
 from . import events, files
+from ..voice.speech import Full
 from .tools import ToolError, tool
 
 CHUNK = 2500
@@ -199,4 +200,4 @@ def read_aloud_file(args):
     text = extract(path)
     if len(text) > READ_ALOUD_MAX:
         raise ToolError("That file is long. I can summarise it instead.")
-    return text
+    return Full(text)

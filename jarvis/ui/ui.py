@@ -377,6 +377,8 @@ class Window(QWidget):
         row.setSpacing(6)
         self.btn_talk = QPushButton("TALK")
         self.btn_talk.clicked.connect(self.talk)
+        self.btn_stop = QPushButton("STOP")
+        self.btn_stop.clicked.connect(lambda: state.update(stop_at=time.time()))
         self.btn_mute = QPushButton("MUTE")
         self.btn_mute.setCheckable(True)
         self.btn_mute.toggled.connect(lambda on: state.update(muted=bool(on)))
@@ -388,13 +390,14 @@ class Window(QWidget):
         self.btn_pin.toggled.connect(self.toggle_pin)
         self.btn_quit = QPushButton("QUIT")
         self.btn_quit.clicked.connect(self.quit_app)
-        for b in (self.btn_talk, self.btn_mute, self.btn_sleep, self.btn_pin, self.btn_quit):
+        for b in (self.btn_talk, self.btn_stop, self.btn_mute, self.btn_sleep, self.btn_pin, self.btn_quit):
             row.addWidget(b)
         pl.addLayout(row)
         root.addWidget(panel, 2)
 
         QShortcut(QKeySequence("F11"), self).activated.connect(self.toggle_full)
         QShortcut(QKeySequence("Esc"), self).activated.connect(self.leave_full)
+        QShortcut(QKeySequence("Ctrl+."), self).activated.connect(self.btn_stop.click)
         QShortcut(QKeySequence("Ctrl+M"), self).activated.connect(self.btn_mute.toggle)
         QShortcut(QKeySequence("Ctrl+Q"), self).activated.connect(self.quit_app)
 

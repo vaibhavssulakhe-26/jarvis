@@ -5,6 +5,7 @@ import threading
 import time
 
 from ..core import config
+from . import mpvctl
 from .tools import ToolError, _browser, tool
 
 RESULTS = 8
@@ -51,30 +52,38 @@ def query_for(kind, topic):
     return f"{topic} tutorial" if kind == "learning" else topic
 
 
-def search(query, n=RESULTS):
-    """Metadata only, no download. Returns [{id, title, channel, duration, views}] or []."""
+def _fetch(query, n):
+    import yt_dlp
+    opts = {"quiet": True, "no_warnings": True, "extract_flat": True, "skip_download": True, "socket_timeout": 8}
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(f"ytsearch{n}:{query}", download=False)
     found = []
+    for e in (info or {}).get("entries") or []:
+        vid = str((e or {}).get("id", ""))
+        if re.fullmatch(r"[A-Za-z0-9_-]{11}", vid):
+            found.append({"id": vid, "title": str(e.get("title") or ""),
+                          "channel": str(e.get("channel") or e.get("uploader") or ""),
+                          "duration": e.get("duration") or 0, "views": e.get("view_count") or 0})
+    return found
 
-    def go():
-        try:
-            import yt_dlp
-            opts = {"quiet": True, "no_warnings": True, "extract_flat": True, "skip_download": True,
-                    "socket_timeout": 8}
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(f"ytsearch{n}:{query}", download=False)
-            for e in (info or {}).get("entries") or []:
-                vid = str((e or {}).get("id", ""))
-                if re.fullmatch(r"[A-Za-z0-9_-]{11}", vid):
-                    found.append({"id": vid, "title": str(e.get("title") or ""),
-                                  "channel": str(e.get("channel") or e.get("uploader") or ""),
-                                  "duration": e.get("duration") or 0, "views": e.get("view_count") or 0})
-        except Exception as e:
-            print(f"  (video lookup failed: {type(e).__name__})")
 
-    worker = threading.Thread(target=go, daemon=True)
-    worker.start()
-    worker.join(15)
-    return list(found)
+def search(query, n=RESULTS):
+    """Metadata only, no download. Returns a list of {id, title, channel, duration, views}, or None when the network failed twice."""
+    for attempt in (1, 2):
+        out = []
+
+        def go():
+            try:
+                out.append(_fetch(query, n))
+            except Exception as e:
+                print(f"  (video lookup failed: {type(e).__name__})")
+
+        worker = threading.Thread(target=go, daemon=True)
+        worker.start()
+        worker.join(15)
+        if out:
+            return out[0]
+    return None
 
 
 def score(item, kind, channels, query=""):
@@ -105,6 +114,9 @@ def rank(items, kind, query=""):
 
 
 def _open(item):
+    if mpvctl.available():
+        mpvctl.load("https://www.youtube.com/watch?v=" + item["id"], audio=_state["kind"] == "music")
+        return
     base = "https://music.youtube.com/watch?v=" if _state["music"] else "https://www.youtube.com/watch?v="
     _browser(base + item["id"])
 
@@ -125,7 +137,12 @@ def answer(text):
     return {"query": f"play {kind} on {text}" if kind == "learning" else f"play {text}", "_heard": True}
 
 
+NEXT = re.compile(r"^(?:please )?(?:play )?(?:the )?(?:next|another|something else|not this)(?: one| video| song| track)?$")
+
+
 def start(text, music_service=False):
+    if NEXT.match(re.sub(r"[^\w\s]", "", text.lower()).strip()):
+        return play_next({})
     kind, topic, music = parse(text)
     if not topic:
         _state["ask"] = {"kind": kind, "until": time.time() + ASK_SECONDS}
@@ -133,9 +150,12 @@ def start(text, music_service=False):
                          "video": "Sure. What kind of video?"}.get(kind, "Sure. Any language or artist in mind?"))
     _state["ask"] = None
     query = query_for(kind, topic)
-    items = rank(search(query), kind, query)
+    found = search(query)
+    if found is None:
+        raise ToolError("I cannot reach YouTube right now. Check the internet and ask me again.")
+    items = rank(found, kind, query)
     if not items:
-        raise ToolError("I could not find anything for that. Maybe the internet is acting up.")
+        raise ToolError("I could not find anything for that one. Try other words?")
     _state.update(results=items, i=0, at=time.time(), kind=kind, topic=topic, music=music or music_service)
     _open(items[0])
     return _announce(items[0])
@@ -156,3 +176,22 @@ def play_next(args):
     item = _state["results"][_state["i"]]
     _open(item)
     return _announce(item)
+
+
+CONTROLS = {"pause": lambda: mpvctl.pause(True), "resume": lambda: mpvctl.pause(False), "stop": mpvctl.stop,
+            "louder": lambda: mpvctl.volume(10), "quieter": lambda: mpvctl.volume(-10),
+            "forward": lambda: mpvctl.seek(30), "back": lambda: mpvctl.seek(-30)}
+
+
+@tool("player_control", 'args {"do": "pause, resume, stop, louder, quieter, forward or back"} - control the video or music Jarvis is playing; for "pause", "resume", "stop playing", "skip forward", "go back"')
+def player_control(args):
+    which = str(args.get("do") or "").lower()
+    if which not in CONTROLS:
+        raise ToolError("I can pause, resume, stop, change the volume, skip forward or go back.")
+    if not mpvctl.running():
+        raise ToolError("Nothing is playing in my player right now.")
+    CONTROLS[which]()
+    if which == "stop":
+        _state["results"] = []
+    return {"pause": "Paused.", "resume": "Playing.", "stop": "Stopped.", "louder": "Louder.", "quieter": "Quieter.",
+            "forward": "Thirty seconds ahead.", "back": "Thirty seconds back."}[which]

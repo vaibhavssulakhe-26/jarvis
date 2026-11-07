@@ -4,9 +4,21 @@ from ..voice import voices
 from .tools import ToolError, tool
 
 
+def _names():
+    return ", ".join((n.split("-")[1] if "-" in n else n).replace("_", " ").title() for n in voices.installed()) or "none"
+
+
+@tool("list_voices", 'args {} - say which voices are installed; for "what voices do you have"')
+def list_voices(args):
+    return "My voices are " + _names() + "."
+
+
 @tool("change_voice", 'args {"which": "next, male, female, british, or a voice name"} - switch the speaking voice; for "change your voice", "use a male voice", "use the British voice"')
 def change_voice(args):
     which = str(args.get("which") or "next").strip().lower()
+    if which == "jarvis" and "jarvis" not in voices.installed():
+        raise ToolError("I do not have the Jarvis voice yet. Put it at models/voices/jarvis.onnx and models/voices/jarvis.onnx.json. "
+                        "The voices I found are " + _names() + ".")
     name = voices.next_name() if which in ("next", "") else voices.find(which)
     if name is None:
         if not voices.installed():

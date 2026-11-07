@@ -57,6 +57,7 @@ def say_phrase(text):
     del opened[:], spoken[:], asked[:]
     main._recent.clear()
     with mock.patch.object(play, "search", fake_search), \
+            mock.patch.object(play.mpvctl, "available", lambda: False), \
             mock.patch.object(play, "_browser", lambda url: opened.append(url)), \
             mock.patch.object(main.voice, "say", lambda t: spoken.append(t)), \
             mock.patch.object(main.brain, "think", lambda *a: asked.append(1)), \

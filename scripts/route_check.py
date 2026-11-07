@@ -1,5 +1,6 @@
 """Runs sample utterances through the real router with a mocked brain and prints the pass rate.
 Nothing is spoken, no tool runs, and all files go to a scratch folder. Run: python scripts/route_check.py"""
+import json
 import os
 import re
 import sys
@@ -19,7 +20,7 @@ from jarvis.brain import brain  # noqa: E402
 from jarvis.core import main  # noqa: E402
 
 CHAT_LIMIT = 400
-TOOL_LIMIT = 2000
+TOOL_LIMIT = 800
 SYSTEM_LIMIT = 300
 
 # (utterance, expected): "local" or "local:<tool>", "chat", "tool:<tool the brain should be offered>"
@@ -66,7 +67,27 @@ CASES = [
     ("message mom that I will be late", "tool:message_contact"),
     ("play some jazz on youtube", "local:play_media"),
     ("write a python script that renames my files", "local:build_project"),
+    ("be chattier", "local:proactive_level"),
+    ("be chatier", "local:proactive_level"),
+    ("don't be chatty", "local:proactive_level"),
+    ("be quiet", "local:proactive_level"),
+    ("talk less", "local:proactive_level"),
+    ("stop talking for two hours", "local:proactive_quiet"),
+    ("stop talking for an hour", "local:proactive_quiet"),
+    ("listen in Kannada", "local:set_language"),
+    ("listen in hindu", "local:set_language"),
+    ("use the jarvis voice", "local:change_voice"),
+    ("use the female voice", "local:change_voice"),
+    ("what voices do you have", "local:list_voices"),
+    ("play the next one", "local"),
+    # phrases from the live log: these used to cost 1100 to 1650 tokens
+    ("Yeah okay, this is good", "chat"),
+    ("This one", "chat"),
+    ("a web interface like WhatsApp and Instagram", "tool:build_project"),
 ]
+# what the log session had just done, so a short follow-up must not drag the old tools along
+BEFORE = ("draft an email to my professor about the deadline", "draft_text")
+LONG_LINE = "Dear Professor, I am writing about the project deadline and would like a short extension. " * 2
 
 calls = []
 
@@ -83,7 +104,10 @@ def classify(text):
     del calls[:]
     del done[:]
     main.PENDING.clear()
-    brain.LAST_ACTION[0] = None
+    brain.RECENT[:] = [BEFORE[0]]
+    brain.LAST_ACTION[0] = BEFORE[1]
+    history = [{"role": "user", "content": BEFORE[0]},
+               {"role": "assistant", "content": json.dumps({"action": "draft_text", "say": LONG_LINE})}] * 3
     if text in ("yes", "no"):
         main.PENDING.update({"action": "battery", "args": {}, "until": time.time() + 60})
     with mock.patch.object(brain, "route", fake_route), \
@@ -93,7 +117,7 @@ def classify(text):
             mock.patch.object(main.voice, "say", lambda *a, **k: None), \
             mock.patch.object(main.reminders, "active", return_value=None), \
             mock.patch.object(main.apps, "find_app", return_value="app"), \
-            mock.patch.object(main.brain, "_history", []):
+            mock.patch.object(main.brain, "_history", history):
         main._handle(text)
     if calls:
         c = calls[0]

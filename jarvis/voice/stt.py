@@ -63,30 +63,40 @@ def warm():
         threading.Thread(target=_model, daemon=True).start()
 
 
-def _local(audio):
-    segments, _ = _model().transcribe(
-        audio, language=lang.listening() or None, vad_filter=True, vad_parameters={"threshold": 0.4},
+def _local(audio, language=None):
+    language = lang.listening() if language is None else language
+    segments, info = _model().transcribe(
+        audio, language=language or None, vad_filter=True, vad_parameters={"threshold": 0.4},
         initial_prompt=_prompt(), beam_size=1, condition_on_previous_text=False,
         no_speech_threshold=0.6, without_timestamps=True)
-    return " ".join(s.text.strip() for s in segments).strip()
+    text = " ".join(s.text.strip() for s in segments).strip()
+    if not language and not lang.allowed(getattr(info, "language", "")):
+        print(f"  (heard {info.language}, trying English instead)")
+        return _local(audio, "en")
+    return text
 
 
-def _groq(audio):
+def _groq(audio, language=None):
     key = config.get("GROQ_API_KEY")
     if not key:
         return None
+    language = lang.listening() if language is None else language
     try:
         data = {"model": config.get("STT_MODEL", "whisper-large-v3"), "temperature": "0",
-                "response_format": "json", "prompt": _prompt()}
-        if lang.listening():
-            data["language"] = lang.listening()
+                "response_format": "json" if language else "verbose_json", "prompt": _prompt()}
+        if language:
+            data["language"] = language
         r = _http.post(
             GROQ_URL, headers={"Authorization": "Bearer " + key},
             files={"file": ("command.wav", wav_bytes(audio), "audio/wav")}, data=data, timeout=15)
         if r.status_code >= 400:
             print(f"  (cloud speech unavailable: HTTP {r.status_code})")
             return None
-        return str(r.json().get("text", "")).strip()
+        body = r.json()
+        if not language and not lang.allowed(body.get("language")):
+            print(f"  (heard {body.get('language')}, trying English instead)")
+            return _groq(audio, "en")
+        return str(body.get("text", "")).strip()
     except Exception as e:
         print(f"  (cloud speech unavailable: {type(e).__name__})")
         return None

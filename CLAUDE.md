@@ -25,8 +25,8 @@ All settings and keys come from `.env` (see `.env.example`), read in `jarvis/cor
 the `@tool` decorator; modules with their own tools are imported at the bottom of `tools.py`.
 
 ## Token budget
-- `tools.pick_tools` returns at most 5 tools, or none for small talk and unmatched text. None means `brain.chat`: plain
-  path, system prompt under 300 tokens, last 4 turns. Otherwise `brain.think` sends only those tools plus the rules
+- `tools.pick_tools` returns at most 3 tools, or none for small talk and unmatched text. None means `brain.chat`: plain
+  path, system prompt under 300 tokens, last 2 turns, each cut to 200 characters. Otherwise `brain.think` sends only those tools plus the rules
   that belong to them (`TOOL_RULES`).
 - `brain._sent` prints `[provider ~N tokens]` for every request (counts only) and warns above 2000. `route` keeps a
   rolling 60 second total per provider (`GROQ_TPM`, default 8000; `OPENROUTER_TPM`, default unlimited) and skips a
@@ -105,6 +105,28 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
   `scripts/proactive_check.py` runs on a fake clock.
 - Film voice: if `models/voices/jarvis.onnx` and `.onnx.json` exist it is listed as "jarvis". The json `dataset` field must match
   the file name. `models/voices/` and `*.onnx` are git-ignored.
+- Speech output: every spoken line goes through `voice/speech.py` (`clean`): no markdown, symbols, links (one "link on screen"),
+  addresses or emoji; `&` and `%` are spoken as words. Code, lists, tables, drafts and anything over five sentences or 450
+  characters stay on screen, are copied, and Jarvis says "Done, it's on your screen and copied." Four or five sentences are cut
+  to three. A tool that must be read in full returns `speech.Full(text)` (file read aloud, short clipboard, the digest).
+- Interrupting: `voice.stop()` kills the player process and drops the queue (a generation counter), and is harmless when
+  nothing is playing. Mechanisms: the spoken words stop / stop talking / quiet / enough / shut up / ruko / चुप (`main.STOP`);
+  the wake word at threshold + 0.3 while Jarvis talks (`Ears._interrupt`, logged as "speech cut off by the wake word"); the STOP
+  button or Ctrl+. in the window and `python -m jarvis.voice.voice --stop` (both set `stop_at` in the state file).
+  `scripts/stop_check.py` uses a fake process and a fake audio stream.
+- Player: `actions/mpvctl.py` runs ONE mpv (`PLAYER=mpv`, the default, when mpv is installed; `PLAYER=browser` or no mpv keeps the
+  browser) over an IPC socket in the runtime dir. Music is audio only, videos get a window. `next`, `play next`, `another one`
+  load the next saved result into the same mpv (`play.NEXT`, never a search). While mpv runs: pause, resume, stop playing,
+  louder, quieter, skip forward, go back (`player_control`). A search is retried once; two failures give one friendly line.
+  `scripts/player_check.py` uses a fake socket.
+- Languages: STT defaults to English (`STT_LANGUAGE=en`). In auto, only en, hi and kn are accepted; anything else is
+  re-transcribed once as English (`lang.allowed`). `reply_hint` always limits replies to English, Hindi or Kannada.
+- Local phrases: `main.fuzzy` matches control phrases (chattier, quieter, stop talking for X, listen in X, use the X voice, what
+  voices do you have) with difflib, no model call. A missing jarvis voice says where the files go.
+- Tokens: the tool path uses `PERSONA_SHORT`; history is the last 2 turns at 200 characters and holds the action plus a short
+  line, never arguments or drafts. Old tools are offered again only when Jarvis's last line was a question
+  (`pick_tools`). A tool's own line is spoken as it is; there is no second model call to phrase it. Draft and write requests
+  get `DRAFT_TOKENS`. After an `ask`, the prompt tells the brain not to ask again; build requests choose defaults.
 - Check scripts in `scripts/` run without a mic or accounts; each feature has its own `*_check.py`.
 
 ## Conventions

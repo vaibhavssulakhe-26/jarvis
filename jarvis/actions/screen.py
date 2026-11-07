@@ -5,6 +5,7 @@ import subprocess
 
 from ..brain import brain
 from ..core import config
+from ..voice.speech import Full
 from .tools import ToolError, capture_screen, tool
 
 MAX_WIDTH = 1600
@@ -94,7 +95,7 @@ def read_clipboard(args):
     if looks_secret(text):
         return "Your clipboard looks like a key or a password, so I will not read it out."
     if len(text.split()) <= SHORT_CLIP:
-        return "Your clipboard says: " + text
+        return Full("Your clipboard says: " + text)
     data = brain.ask_json(CLIP_SYSTEM, "<clipboard>\n" + text[:8000] + "\n</clipboard>")
     say = str((data or {}).get("say", "")).strip()
     if not say:

@@ -24,6 +24,8 @@ A personal voice assistant that runs locally on Linux. Talk to it, it listens, t
 - Command palette: a small box for typed commands ("open palette")
 - Play: "play a video on dsa", "play a lofi song" picks one itself; "next" or "another one" moves to the next result
 - Hindi and Kannada: "listen in Hindi", "reply in Kannada", "listen in auto". Hindi is spoken; Kannada is shown and copied
+- Say "stop", "quiet" or "enough" to cut Jarvis off; "Hey Jarvis, stop" works while it talks, and the window has a STOP button
+- With mpv installed, videos and music play in one player: "next", "pause", "resume", "stop playing", "louder", "skip forward", "go back"
 - Friendly chat, and optional check-ins when I have been quiet (`PROACTIVE`, "be chattier", "stop talking for two hours")
 
 ## Wake word
@@ -63,7 +65,9 @@ ui/ PyQt6 interface
   The local fallback is the multilingual `STT_LOCAL_MODEL` (default `small`).
 - Proactive chat sends nothing online by itself: lines come from a local list, plus at most one small brain call every four hours.
 - New `.env` keys: `VOICE` (first-run voice), `CODE_WORKSPACE`, `CODE_PROVIDER`, `CODE_MODEL`, `BROWSER`, `STUDY_CHANNELS`,
-  `STT_MODEL`, `STT_LOCAL_MODEL`, `STT_LANGUAGE`, `PROACTIVE`.
+  `STT_MODEL`, `STT_LOCAL_MODEL`, `STT_LANGUAGE` (default `en`), `PROACTIVE`, `PLAYER` (`mpv` or `browser`).
+- Long replies (drafts, code, lists) are shown on screen and copied instead of being read out. A KDE shortcut for
+  `.venv/bin/python -m jarvis.voice.voice --stop` gives a global stop key.
 - Checks: `python scripts/<name>_check.py` (no mic or accounts needed).
 
 ## Run
