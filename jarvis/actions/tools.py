@@ -103,6 +103,7 @@ TRIGGERS = {
     "research_topic": "research topic sources cited find out about",
     "open_sources": "sources links show open",
     "help_topic": "help how need topic understand learn",
+    "capabilities": "features abilities capable",
     "open_palette": "palette command box",
     "close_app": "close quit exit app window",
     "switch_app": "switch focus window app",
@@ -481,6 +482,6 @@ def restart(args):
 
 
 # these modules register their tools on import, so they must load after the registry above
-from . import (apps, briefing, clipwatch, coder, debug, documents, guard_tools, handoff, mail, media, messaging,  # noqa: E402,F401
+from . import (apps, briefing, capabilities, clipwatch, coder, debug, documents, guard_tools, handoff, mail, media, messaging,  # noqa: E402,F401
                notes, palette_tools, play, proactive_tools, recall, reminder_tools, screen, translate, voice_tools, watches)
 from ..research import research, topic  # noqa: E402,F401

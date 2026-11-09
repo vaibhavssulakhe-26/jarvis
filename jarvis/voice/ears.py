@@ -15,8 +15,9 @@ import numpy as np
 import sounddevice as sd
 from scipy.signal import lfilter
 
-from ..actions import events
+from ..actions import events, mpvctl
 from ..core import config, state
+from ..scheduling import reminders
 from . import stt, voice
 
 SR = stt.SR
@@ -27,6 +28,8 @@ FILLER = {"hey", "hi", "hello", "okay", "ok", "yo", "jarvis"}
 NAME_ALIASES = {"jarvis", "jarvas", "jarves", "jarvus", "jervis", "service", "jarvi"}
 NOISE = {"you", "thank you", "thanks", "thanks for watching", "bye", "okay", "ok",
          "yeah", "hmm", "mm", "uh", "um", "oh", "the", "so", "and"}
+END = re.compile(r"^(?:ok(?:ay)? )?(?:thanks|thank you|that(?:s| is) (?:all|it)|that will be all|bye|goodbye|good bye|stop listening|"
+                 r"never mind|nothing else)(?: jarvis| so much| a lot)?$")
 WAKE_WORDS = {n.split()[-1].lower() for n in config.wake_names()} or {"jarvis"}
 
 VERBS = {"open", "play", "pause", "stop", "resume", "send", "call", "remind", "mute", "unmute",
@@ -93,7 +96,18 @@ def play_chime(path):
     subprocess.Popen([player, path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def followup_seconds():
+    """How long Jarvis keeps listening after a reply without the wake word (FOLLOWUP_SECONDS, default 10)."""
+    try:
+        return max(0.0, float(config.get("FOLLOWUP_SECONDS", "10")))
+    except ValueError:
+        return 10.0
+
+
 def media_playing():
+    """Music or video is audible: Jarvis's own player, or anything that shows up on playerctl."""
+    if mpvctl.playing():
+        return True
     if shutil.which("playerctl") is None:
         return False
     try:
@@ -124,6 +138,7 @@ class Ears:
         self.awake_until = 0.0
         self.cool_until = 0.0
         self.deaf_until = 0.0
+        self.followup = followup_seconds()
         self.last_talk = state.read()["talk_request"]
         try:
             self.wake_thr = float(config.get("WAKE_THRESHOLD", "0.4"))
@@ -197,10 +212,11 @@ class Ears:
         self.chimed = False
 
     def _after(self, seconds):
+        """Open the window where the next command needs no wake word. Playback keeps it shut."""
         time.sleep(0.3)
         self._drain()
         self._reset_wake()
-        self.awake_until = time.time() + seconds
+        self.awake_until = 0.0 if seconds <= 0 or media_playing() else time.time() + seconds
 
     def run(self):
         stt.warm()
@@ -347,14 +363,22 @@ class Ears:
                 voice.say(random.choice(["Yes?", "I am here.", "Go ahead."]))
                 voice.wait()
                 self.expect = True
-                self._after(10)
+                self._after(max(self.followup, 10))
             else:
                 print(f"  (ignored: {repr(raw)})")
             return
         if re.fullmatch(OPENER, bare):
             print("  (waiting for the rest of the sentence)")
             self.expect = True
-            self._after(10)
+            self._after(max(self.followup, 10))
+            return
+        if END.match(bare) and reminders.active() is None:
+            print("  (conversation closed)")
+            events.emit("you", text)
+            voice.say(random.choice(["Anytime.", "Okay.", "Alright."]))
+            voice.wait()
+            self.expect = False
+            self._after(0)
             return
         if not self.expect:
             if is_noise(text):
@@ -370,7 +394,7 @@ class Ears:
         print(f"  [speech to text {t1 - t0:.1f}s, thinking and acting {time.time() - t2:.1f}s]")
         voice.wait()
         asked = voice.LAST[0].strip().endswith("?")
-        self._after(20 if (self.expect or asked) else 9)
+        self._after(max(self.followup, 20) if (self.expect or asked) else self.followup)
 
 
 def _demo(text, via_wake):

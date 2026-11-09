@@ -1,5 +1,6 @@
 """Speech to text: faster-whisper on this laptop, or Groq's hosted Whisper if STT=groq."""
 import io
+import re
 import threading
 import wave
 
@@ -21,9 +22,36 @@ def _names():
     return ", ".join(w for w in dict.fromkeys(words) if w)
 
 
+DEFAULT_HINTS = "Jarvis, Vibe, DSA, data structures and algorithms, LeetCode, mpv, Python, VS Code"
+MIN_SECONDS = 0.4
+MIN_LEVEL = 0.006
+HEARD_WHEN_SILENT = {"you", "thank you", "thanks for watching", "thank you for watching", "thanks for listening",
+                     "please subscribe", "like and subscribe", "see you next time", "see you in the next video"}
+HEARD_PARTS = ("amara.org", "subtitles by", "subtitled by", "captions by", "transcribed by", "subtitles made by", "subscribe to my", "subscribe to the channel")
+TAG = re.compile(r"^[\[\(\*♪#\s]*(?:music|applause|laughter|laughs|silence|noise|cheering|singing|blank audio|inaudible|"
+                 r"background music|upbeat music|soft music|no audio|\.*)[\]\)\*♪#\s.]*$", re.I)
+
+
+def hints():
+    """Words the recogniser should spell right: STT_HINTS from .env, else the defaults."""
+    return [w.strip() for w in config.get("STT_HINTS", DEFAULT_HINTS).split(",") if w.strip()]
+
+
+def is_hallucination(text):
+    """Phrases Whisper makes up for silence or background music."""
+    t = text.strip()
+    plain = re.sub(r"[^\w\s.]", "", t.lower()).replace(".", " ")
+    plain = " ".join(plain.split())
+    return (not plain or plain in HEARD_WHEN_SILENT or bool(TAG.match(t))
+            or any(part in t.lower() for part in HEARD_PARTS))
+
+
+def too_faint(audio):
+    """True for clips too short or too quiet to be speech."""
+    return len(audio) < int(MIN_SECONDS * SR) or float(np.percentile(np.abs(audio), 99)) < MIN_LEVEL
+
+
 PROMPTS = {"hi": "{names}. नमस्ते, कैसे हैं आप?", "kn": "{names}. ನಮಸ್ಕಾರ, ಹೇಗಿದ್ದೀರಿ?"}
-PROMPT = ("Names: " + _names() + ". Commands: open YouTube Music, send mom hi on WhatsApp, remind me in two "
-          "minutes to stretch, take a screenshot, set the volume to forty percent.")
 
 
 def _prompt():
@@ -31,7 +59,10 @@ def _prompt():
     lg = lang.listening()
     if lg in PROMPTS:
         return PROMPTS[lg].format(names=_names())
-    return PROMPT if lg == "en" else "Names: " + _names() + "."
+    words = "Names: " + _names() + ". Words: " + ", ".join(hints()) + "."
+    if lg != "en":
+        return words
+    return words + " Commands: open YouTube Music, remind me in two minutes to stretch, take a screenshot, set the volume to forty percent."
 
 
 def wav_bytes(audio):
@@ -103,6 +134,17 @@ def _groq(audio, language=None):
 
 
 def transcribe(audio):
+    if too_faint(audio):
+        return ""
+    text = _transcribe(audio)
+    if is_hallucination(text):
+        if text.strip():
+            print(f"  (ignored a made-up transcript: {text.strip()!r})")
+        return ""
+    return text
+
+
+def _transcribe(audio):
     level = float(np.percentile(np.abs(audio), 99))
     if 0.0005 < level < 0.3:
         audio = np.clip(audio * min(20.0, 0.4 / level), -1.0, 1.0)

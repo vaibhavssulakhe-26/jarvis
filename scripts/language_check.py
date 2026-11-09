@@ -6,6 +6,8 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
+import numpy as np
+
 scratch = tempfile.mkdtemp(prefix="jarvis-lang-")
 os.environ["JARVIS_DATA"] = scratch
 os.environ["XDG_STATE_HOME"] = scratch
@@ -124,4 +126,42 @@ with mock.patch.object(voices, "installed", lambda: {"en_US-ryan-medium": Path("
 check("kannada reply is copied to the clipboard", clips == ["ನಮಸ್ಕಾರ, ನಾನು ಜಾರ್ವಿಸ್"], str(clips))
 check("kannada notice is spoken in english", any("cannot speak Kannada" in t for t in queued), str(queued))
 check("kannada text itself is never sent to a voice", not any(lang.script(t) == "kn" for t in queued))
+
+from jarvis.actions import capabilities  # noqa: E402
+
+for phrase in ("Subtitles by the Amara.org community", "Thanks for watching!", "Thank you.", "you", "[Music]", "(applause)", "♪", "",
+               "Please subscribe to my channel"):
+    check(f"made-up transcript ignored: {phrase!r}", stt.is_hallucination(phrase))
+for phrase in ("open youtube", "thank you jarvis", "play music", "bye", "what is DSA"):
+    check(f"real speech kept: {phrase!r}", not stt.is_hallucination(phrase))
+loud = np.sin(np.linspace(0, 400, 16000)).astype(np.float32) * 0.2
+check("a quiet clip is too faint", stt.too_faint(loud * 0.01))
+check("a very short clip is too faint", stt.too_faint(loud[:2000]))
+check("normal speech level passes", not stt.too_faint(loud))
+with mock.patch.object(stt, "_transcribe", lambda a: "Subtitles by the Amara.org community"):
+    check("transcribe returns empty for a made-up transcript", stt.transcribe(loud) == "")
+with mock.patch.object(stt, "_transcribe", lambda a: "open youtube"):
+    check("transcribe keeps real speech", stt.transcribe(loud) == "open youtube")
+with mock.patch.object(stt, "_transcribe", lambda a: "hello"):
+    check("transcribe skips a faint clip without asking the recogniser", stt.transcribe(loud * 0.01) == "")
+with mock.patch.dict(os.environ, {}, clear=False):
+    os.environ.pop("STT_HINTS", None)
+    prompt = stt._prompt()
+check("default hints are in the prompt", all(w in prompt for w in ("DSA", "data structures and algorithms", "LeetCode", "mpv", "VS Code", "Vibe")), prompt)
+with mock.patch.dict(os.environ, {"STT_HINTS": "Zorblax, Quill"}):
+    check("STT_HINTS replaces the defaults", "Zorblax" in stt._prompt() and "LeetCode" not in stt._prompt())
+
+said_cap = []
+with mock.patch.object(main.voice, "say", lambda t: said_cap.append(str(t))), mock.patch.object(capabilities.events, "emit") as shown:
+    for phrase in ("what can you do", "what are your features", "help", "Help."):
+        del said_cap[:]
+        with mock.patch.object(main.brain, "think", side_effect=AssertionError("model used")), \
+                mock.patch.object(main.brain, "chat", side_effect=AssertionError("model used")):
+            main._handle(phrase)
+        check(f"{phrase!r} is answered locally", len(said_cap) == 1 and "full list" in said_cap[0], str(said_cap))
+listing = shown.call_args[0][1]
+check("the screen list covers every registered tool", all(n.replace("_", " ") in listing for n in capabilities.TOOLS), listing[:200])
+check("the screen list has no feature that is not registered", "weather forecast" not in listing.lower() and "phone call" not in listing.lower())
+check("the spoken summary names real categories", "reminders" in said_cap[0].lower() and "volume" in said_cap[0].lower(), said_cap[0])
+check("the spoken summary is short", len(said_cap[0]) < 250, str(len(said_cap[0])))
 sys.exit(1 if bad else 0)

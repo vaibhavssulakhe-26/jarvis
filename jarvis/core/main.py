@@ -9,7 +9,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from ..actions import apps, clipwatch, files, mail, mpvctl, play, tools
+from ..actions import apps, capabilities, clipwatch, files, mail, mpvctl, play, tools
 from ..brain import brain, companion
 from . import config, state
 from ..research import topic as research_topic
@@ -202,6 +202,7 @@ def _waiting():
 
 DIRECT = [
     (re.compile(r"^(.+)$"), "play_media", lambda m: play.answer(m.group(1)), play.asking),
+    (capabilities.ASK, "capabilities", lambda m: {}),
     (re.compile(r"^(?:please )?(?:next(?: one| video| song| track)?|another(?: one)?|not this one|something else|play (?:the )?next(?: one| video| song)?)$", re.I),
      "play_next", lambda m: {}, play.active),
     (re.compile(r"^(?:please )?pause(?: it| the (?:video|music|song))?$", re.I), "player_control", lambda m: {"do": "pause"}, mpvctl.running),

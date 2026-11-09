@@ -146,6 +146,84 @@ with mock.patch.object(voice, "stop", lambda: cuts.append(1) or True):
     e._step(blocks(0.9)[0])
     check("the wake word while speaking cuts the audio", len(cuts) == 1)
     check("and Jarvis starts listening for the command", e.phase == "wait" and e.via_wake)
+
+# follow-up window: no wake word needed for a while after a reply, closed by thanks / bye / silence, shut while media plays
+said_f, asked_f = [], []
+f = ears.Ears.__new__(ears.Ears)
+f.followup, f.expect, f.awake_until, f.via_wake = 10.0, False, 0.0, False
+f.q, f.oww = queue.Queue(), FakeOww()
+f.noise, f.pre = [], __import__("collections").deque(maxlen=3)
+f.buf, f.loud, f.quiet, f.n, f.thr, f.t0 = [], 0, 0, 0, 0.02, 0.0
+f.phase, f.cool_until, f.deaf_until, f.chimed, f.reported = None, 0.0, 0.0, False, True
+heard = {"text": "open youtube"}
+asked_f = []
+playing = {"on": False}
+real_after = ears.Ears._after
+f._reset_wake = lambda: None
+
+
+def run_hear(text, via=False):
+    heard["text"] = text
+    del said_f[:]
+    del asked_f[:]
+    f.awake_until = 0.0
+    with mock.patch.object(ears.stt, "transcribe", lambda a: heard["text"]), mock.patch.object(ears.time, "sleep", lambda s: None), \
+            mock.patch.object(ears.voice, "say", lambda t: said_f.append(str(t))), mock.patch.object(ears.voice, "wait", lambda: None), \
+            mock.patch.object(ears.voice, "LAST", ["Done."]), mock.patch.object(ears.mpvctl, "playing", lambda: playing["on"]), \
+            mock.patch.object(ears, "media_playing", lambda: playing["on"]), mock.patch.object(ears.events, "emit"), \
+            mock.patch.object(ears.reminders, "active", lambda: None):
+        f._handle(np.zeros(16000, dtype=np.float32), via)
+
+
+f.on_command = lambda text, via: asked_f.append(text) or False
+playing["on"] = False
+before = time.time()
+run_hear("open youtube", via=True)
+check("a reply opens a ten second follow-up window", 9 < f.awake_until - before < 11, str(f.awake_until - before))
+f.followup = 4.0
+run_hear("open youtube", via=True)
+check("the window length follows FOLLOWUP_SECONDS", 3 < f.awake_until - time.time() < 5)
+f.followup = 10.0
+with mock.patch.dict(os.environ, {"FOLLOWUP_SECONDS": "7"}):
+    check("FOLLOWUP_SECONDS is read from the environment", ears.followup_seconds() == 7.0)
+with mock.patch.dict(os.environ, {"FOLLOWUP_SECONDS": "x"}):
+    check("a bad FOLLOWUP_SECONDS falls back to ten", ears.followup_seconds() == 10.0)
+os.environ.pop("FOLLOWUP_SECONDS", None)
+check("the default is ten seconds", ears.followup_seconds() == 10.0)
+run_hear("what is the weather like today")
+check("a follow-up without the wake word is handled", asked_f == ["what is the weather like today"], str(asked_f))
+check("and it opens a fresh window", f.awake_until - time.time() > 9)
+for phrase in ("thanks", "That's all", "bye", "stop listening", "thank you jarvis", "okay thanks"):
+    run_hear(phrase)
+    check(f"{phrase!r} closes the window without a model call", f.awake_until == 0.0 and not asked_f and len(said_f) == 1, f"{f.awake_until} {asked_f} {said_f}")
+playing["on"] = True
+run_hear("play some lofi", via=True)
+check("no follow-up window while music or video plays", f.awake_until == 0.0)
+playing["on"] = False
+
+g = ears.Ears.__new__(ears.Ears)
+g.__dict__.update({k: v for k, v in f.__dict__.items()})
+g.thr, g.phase, g.loud, g.wake_thr = 0.02, None, 0, 0.4
+loud_block = np.full(1280, 3000, dtype=np.int16)
+silent_block = np.zeros(1280, dtype=np.int16)
+quiet_oww = FakeOww()
+g.oww = quiet_oww
+for kind, on, window, want in (("window open, nothing playing", False, 5.0, "record"),
+                               ("window open, media playing", True, 5.0, None),
+                               ("window closed", False, -1.0, None)):
+    g.phase, g.loud, g.awake_until = None, 0, time.time() + window
+    playing["on"] = on
+    with mock.patch.object(ears, "media_playing", lambda: playing["on"]), mock.patch.object(ears.events, "set_level"):
+        for _ in range(3):
+            g._idle(loud_block, 0.1, time.time())
+    check(f"speech without the wake word: {kind}", g.phase == want, str(g.phase))
+playing["on"] = False
+g.phase, g.loud, g.awake_until = None, 0, time.time() + 5
+with mock.patch.object(ears, "media_playing", lambda: False):
+    for _ in range(5):
+        g._idle(silent_block, 0.0, time.time())
+check("silence does not start a recording", g.phase is None)
+check("mpvctl.playing is false when mpv is not running", not ears.mpvctl.playing())
 voice.SPEAKING.clear()
 for p in patches:
     p.stop()

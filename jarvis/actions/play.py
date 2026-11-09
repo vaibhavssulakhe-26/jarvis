@@ -11,6 +11,7 @@ from .tools import ToolError, _browser, tool
 RESULTS = 8
 SESSION_SECONDS = 1800
 ASK_SECONDS = 30
+MPV_TRIES = 3
 DEFAULT_CHANNELS = "freeCodeCamp,Abdul Bari,take U forward,NeetCode,Apna College"
 MUSIC_WORDS = {"song", "songs", "music", "track", "tracks", "lofi", "playlist", "remix", "beats"}
 FILLER = {"a", "an", "the", "some", "any", "me", "one", "something", "anything", "video", "videos", "song", "songs",
@@ -63,7 +64,8 @@ def _fetch(query, n):
         if re.fullmatch(r"[A-Za-z0-9_-]{11}", vid):
             found.append({"id": vid, "title": str(e.get("title") or ""),
                           "channel": str(e.get("channel") or e.get("uploader") or ""),
-                          "duration": e.get("duration") or 0, "views": e.get("view_count") or 0})
+                          "duration": e.get("duration") or 0, "views": e.get("view_count") or 0,
+                          "live": bool(e.get("is_live")) or e.get("live_status") in ("is_live", "is_upcoming")})
     return found
 
 
@@ -91,6 +93,8 @@ def score(item, kind, channels, query=""):
     mins = (item["duration"] or 0) / 60
     views = item["views"] or 0
     pts = 0.0
+    if item.get("live"):
+        pts -= 30
     if 0 < mins < 1:
         pts -= 5
     if kind == "learning":
@@ -102,6 +106,7 @@ def score(item, kind, channels, query=""):
         official = "official" in title or "vevo" in channel or channel.endswith("- topic")
         pts += 2 if official else 0
         pts += 1 if 1.5 <= mins <= 10 else -2 if mins > 15 and "mix" not in query else 0
+        pts += 1 if "mix" in title and not item.get("live") else 0
         pts -= 2 if any(w in title for w in BAD_MUSIC) else 0
     else:
         pts += min(3.0, math.log10(views + 1) / 2)
@@ -114,11 +119,18 @@ def rank(items, kind, query=""):
 
 
 def _open(item):
+    """Open item and return what actually started. In mpv, a candidate that fails to start is replaced by the next saved one, up to three."""
     if mpvctl.available():
-        mpvctl.load("https://www.youtube.com/watch?v=" + item["id"], audio=_state["kind"] == "music")
-        return
+        results = _state["results"]
+        start = results.index(item) if item in results else _state["i"]
+        for pos in range(start, min(start + MPV_TRIES, len(results))):
+            if mpvctl.load("https://www.youtube.com/watch?v=" + results[pos]["id"], audio=_state["kind"] == "music"):
+                _state["i"] = pos
+                return results[pos]
+        raise ToolError(f"I could not get that to play. Details are in {mpvctl.log_path()}.")
     base = "https://music.youtube.com/watch?v=" if _state["music"] else "https://www.youtube.com/watch?v="
     _browser(base + item["id"])
+    return item
 
 
 def _announce(item):
@@ -157,8 +169,7 @@ def start(text, music_service=False):
     if not items:
         raise ToolError("I could not find anything for that one. Try other words?")
     _state.update(results=items, i=0, at=time.time(), kind=kind, topic=topic, music=music or music_service)
-    _open(items[0])
-    return _announce(items[0])
+    return _announce(_open(items[0]))
 
 
 def active():
@@ -174,8 +185,7 @@ def play_next(args):
     _state["i"] += 1
     _state["at"] = time.time()
     item = _state["results"][_state["i"]]
-    _open(item)
-    return _announce(item)
+    return _announce(_open(item))
 
 
 CONTROLS = {"pause": lambda: mpvctl.pause(True), "resume": lambda: mpvctl.pause(False), "stop": mpvctl.stop,

@@ -127,6 +127,14 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
   line, never arguments or drafts. Old tools are offered again only when Jarvis's last line was a question
   (`pick_tools`). A tool's own line is spoken as it is; there is no second model call to phrase it. Draft and write requests
   get `DRAFT_TOKENS`. After an `ask`, the prompt tells the brain not to ask again; build requests choose defaults.
+- Player crash: on this laptop mpv's default Vulkan renderer crashes (SIGTRAP inside libvulkan_radeon) on real video frames, so `mpvctl`
+  adds `MPV_ARGS` (default `--gpu-api=opengl`; set it empty to pass nothing). mpv's stderr goes to `<runtime dir>/mpv.log`, and a failed
+  start (up to three candidates) names that path in the one spoken line.
+- Follow-up window: after a reply `Ears._after` keeps listening for `FOLLOWUP_SECONDS` (default 10) with no wake word; thanks / that's all /
+  bye / stop listening close it. It stays shut while `mpvctl.playing()` or playerctl reports playback.
+- Speech recognition: `stt.transcribe` returns "" for clips under 0.4 s or too quiet and for known made-up transcripts (`is_hallucination`).
+  `STT_HINTS` words go into the prompt.
+- Capabilities: `actions/capabilities.py` answers "what can you do" / "help" from `TOOLS`; spoken summary, full list on screen.
 - Check scripts in `scripts/` run without a mic or accounts; each feature has its own `*_check.py`.
 
 ## Conventions

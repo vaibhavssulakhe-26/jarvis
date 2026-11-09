@@ -1,5 +1,7 @@
 """Checks the mpv player with a fake mpv socket: one process, next in the same window, voice controls, search retry.
 No real mpv, browser or network. Run: python scripts/player_check.py"""
+import contextlib
+import io
 import json
 import os
 import socket
@@ -53,14 +55,39 @@ def serve():
     threading.Thread(target=loop, daemon=True).start()
 
 
+class FakeProc:
+    def __init__(self, code=None):
+        self.code = code
+
+    def poll(self):
+        return self.code
+
+    def kill(self):
+        self.code = -9
+
+
+modes = {"exit": [], "silent": False}
+
+
+popen_kw = []
+
+
 def fake_popen(cmd, **kw):
     spawned.append(cmd)
-    serve()
-    return mock.Mock()
+    popen_kw.append(kw)
+    if modes["exit"]:
+        return FakeProc(modes["exit"].pop(0))
+    if not modes["silent"]:
+        serve()
+    return FakeProc()
 
 
 def item(i, title, channel, mins, views):
     return {"id": f"{i:011d}", "title": title, "channel": channel, "duration": mins * 60, "views": views}
+
+
+def live(i, title):
+    return dict(item(i, title, "Lofi Girl", 0, 9000000), live=True)
 
 
 RESULTS = [item(1, "Lofi beat - Official Audio", "Lofi Girl", 3, 5000000), item(2, "Lofi chill mix", "Chill", 4, 900000),
@@ -126,6 +153,61 @@ server["sock"].close()
 os.remove(str(mpvctl.socket_path()))
 out = say("pause")
 check("pause with no player is not sent anywhere", not commands)
+
+mix = item(20, "Lofi mix 1 hour", "Chill", 60, 300000)
+radio = live(21, "lofi hip hop radio - beats to relax/study to")
+order = play.rank([radio, mix, RESULTS[2]], "music", "lofi")
+check("music ranking puts the live stream last", order[-1] is radio and order[0] is not radio, str([i["id"] for i in order]))
+check("a long mix beats a live stream when it is the only normal result", play.rank([radio, mix], "music", "lofi")[0] is mix)
+check("a live stream is kept as the last resort", radio in order)
+
+RUN = [item(30, "Dead one", "A", 3, 1000), item(31, "Also dead", "B", 3, 900), item(32, "Works", "C", 3, 800), item(33, "Spare", "D", 3, 700)]
+
+
+def play_with(results, **mode):
+    modes.update(exit=list(mode.get("exit", [])), silent=mode.get("silent", False))
+    server["sock"] = None
+    if os.path.exists(str(mpvctl.socket_path())):
+        os.remove(str(mpvctl.socket_path()))
+    play._state.update(results=list(results), i=0, at=time.time(), kind="music", topic="x", music=False, ask=None)
+    del spawned[:]
+    lines = io.StringIO()
+    with mock.patch.object(mpvctl.subprocess, "Popen", fake_popen), mock.patch.object(mpvctl.shutil, "which", lambda n: "/usr/bin/" + n), \
+            mock.patch.object(mpvctl.time, "sleep", lambda s: None), contextlib.redirect_stdout(lines):
+        try:
+            got = play._announce(play._open(results[0]))
+        except tools.ToolError as e:
+            got = "ERR " + str(e)
+    return got, lines.getvalue()
+
+
+got, log = play_with(RUN, exit=[2])
+check("the safe graphics flag is on by default", "--gpu-api=opengl" in spawned[0], str(spawned[0]))
+check("mpv stderr goes to a log file in the runtime dir, not data", popen_kw[0]["stderr"].name == str(mpvctl.log_path())
+      and str(mpvctl.log_path()).startswith(scratch) and "data" not in Path(str(mpvctl.log_path())).parts, str(popen_kw[0]["stderr"]))
+check("mpv gets no terminal input", popen_kw[0]["stdin"] == mpvctl.subprocess.DEVNULL and "--input-terminal=no" in spawned[0])
+check("the log notes which url was started", "ytdl" in mpvctl.log_path().read_text() or "youtube.com" in mpvctl.log_path().read_text())
+with mock.patch.dict(os.environ, {"MPV_ARGS": "--vo=gpu --volume=0"}):
+    play_with(RUN)
+    check("MPV_ARGS replaces the default flags", "--vo=gpu" in spawned[0] and "--volume=0" in spawned[0] and "--gpu-api=opengl" not in spawned[0], str(spawned[0]))
+with mock.patch.dict(os.environ, {"MPV_ARGS": ""}):
+    play_with(RUN)
+    check("an empty MPV_ARGS passes nothing extra", not any(a.startswith("--gpu") for a in spawned[0]), str(spawned[0]))
+got, log = play_with(RUN, exit=[2])
+check("mpv launch uses force-ipv4 and the audio format for music", "--ytdl-raw-options=force-ipv4=" in spawned[0] and "--ytdl-format=bestaudio" in spawned[0], str(spawned[0]))
+check("a non-zero exit moves quietly to the next candidate", len(spawned) == 2 and "Also dead" in got and spawned[1][-1].endswith(RUN[1]["id"]), got)
+check("the exit code is logged once", log.count("exited with code 2") == 1, log)
+got, log = play_with(RUN, exit=[2, 1])
+check("two failures still reach the third candidate", len(spawned) == 3 and "Works" in got and play._state["i"] == 2, got)
+check("each failure logs its own code", "code 2" in log and "code 1" in log, log)
+got, log = play_with(RUN, exit=[2, 2, 2, 2])
+check("three failures stop with one friendly line", len(spawned) == 3 and got.startswith("ERR I could not get that to play"), got)
+check("the failure line names the log once", got.count(str(mpvctl.log_path())) == 1, got)
+check("the fourth candidate is never tried", all(not a[-1].endswith(RUN[3]["id"]) for a in spawned))
+got, log = play_with(RUN, silent=True)
+check("a silent socket counts as a failure and is retried", len(spawned) == 3 and got.startswith("ERR") and "did not answer" in log, got + log)
+got, log = play_with(RUN)
+check("a healthy start plays the first candidate", len(spawned) == 1 and "Dead one" in got and not log, got + log)
 
 del searches[:]
 calls = []
