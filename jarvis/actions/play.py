@@ -38,10 +38,10 @@ def parse(text):
     if re.search(r"\b(?:video|videos|something|anything|one)\s+(?:on|about|for)\b", t) or \
             re.search(r"\b(?:tutorial|lecture|course)\b", t):
         kind = "learning"
-    elif set(words) & MUSIC_WORDS or "song" in t:
-        kind = "music"
     elif re.search(r"\bvideos?\b", t):
         kind = "video"
+    elif set(words) & MUSIC_WORDS or "song" in t:
+        kind = "music"
     else:
         kind = "music"
     if kind == "music":
@@ -118,13 +118,17 @@ def rank(items, kind, query=""):
     return sorted(items, key=lambda it: -score(it, kind, channels, query))
 
 
+def music_video():
+    return config.get("MUSIC_VIDEO", "false").lower() in ("1", "true", "yes", "on")
+
+
 def _open(item):
     """Open item and return what actually started. In mpv, a candidate that fails to start is replaced by the next saved one, up to three."""
     if mpvctl.available():
         results = _state["results"]
         start = results.index(item) if item in results else _state["i"]
         for pos in range(start, min(start + MPV_TRIES, len(results))):
-            if mpvctl.load("https://www.youtube.com/watch?v=" + results[pos]["id"], audio=_state["kind"] == "music"):
+            if mpvctl.load("https://www.youtube.com/watch?v=" + results[pos]["id"], audio=_state["kind"] == "music" and not music_video()):
                 _state["i"] = pos
                 return results[pos]
         raise ToolError(f"I could not get that to play. Details are in {mpvctl.log_path()}.")

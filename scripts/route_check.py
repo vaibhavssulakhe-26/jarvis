@@ -34,6 +34,7 @@ CASES = [
     ("who are you", "chat"),
     ("I'm bored", "chat"),
     ("what is the capital of France", "chat"),
+    ("watch binary search", "local:play_media"),
     ("what can you do", "local:capabilities"),
     ("what are your features", "local:capabilities"),
     ("help", "local:capabilities"),

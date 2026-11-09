@@ -34,7 +34,7 @@ WAKE_WORDS = {n.split()[-1].lower() for n in config.wake_names()} or {"jarvis"}
 
 VERBS = {"open", "play", "pause", "stop", "resume", "send", "call", "remind", "mute", "unmute",
          "lock", "search", "find", "write", "create", "close", "show", "take", "turn", "set",
-         "volume", "what", "how", "when", "who", "where", "next", "skip", "save", "read",
+         "volume", "louder", "quieter", "softer", "what", "how", "when", "who", "where", "next", "skip", "save", "read",
          "draft", "message", "text"}
 
 
@@ -96,6 +96,14 @@ def play_chime(path):
     subprocess.Popen([player, path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+def barge_threshold(wake):
+    """Score the wake word needs to cut off speech: BARGE_THRESHOLD, else the wake threshold plus 0.3."""
+    try:
+        return min(0.99, float(config.get("BARGE_THRESHOLD", "")))
+    except ValueError:
+        return min(0.95, wake + 0.3)
+
+
 def followup_seconds():
     """How long Jarvis keeps listening after a reply without the wake word (FOLLOWUP_SECONDS, default 10)."""
     try:
@@ -144,6 +152,9 @@ class Ears:
             self.wake_thr = float(config.get("WAKE_THRESHOLD", "0.4"))
         except ValueError:
             self.wake_thr = 0.4
+        self.barge_thr = barge_threshold(self.wake_thr)
+        self.debug = config.get("WAKE_DEBUG", "").lower() in ("1", "true", "yes", "on")
+        self.debug_at = 0.0
         self.zi = np.zeros(1)
         try:
             self.gain = float(config.get("MIC_GAIN", "4"))
@@ -204,6 +215,7 @@ class Ears:
 
     def _begin(self, now, phase, preroll=None):
         state.update(touched_at=time.time())
+        mpvctl.duck()
         self.phase = phase
         self.t0 = now
         self.buf = list(preroll or [])
@@ -216,7 +228,13 @@ class Ears:
         time.sleep(0.3)
         self._drain()
         self._reset_wake()
-        self.awake_until = 0.0 if seconds <= 0 or media_playing() else time.time() + seconds
+        if seconds <= 0:
+            self.awake_until = 0.0
+        elif mpvctl.ducked() or mpvctl.playing():
+            mpvctl.duck()
+            self.awake_until = time.time() + seconds
+        else:
+            self.awake_until = 0.0 if media_playing() else time.time() + seconds
 
     def run(self):
         stt.warm()
@@ -226,7 +244,7 @@ class Ears:
         where = "Groq" if stt.CLOUD else "this laptop"
         print(f"  listening for {config.wake_label().title()} (threshold {self.wake_thr}); "
               f"speech is transcribed on {where}. Ctrl+C to stop.")
-        print(f"  speech can be cut off by: the wake word while talking (threshold {min(0.95, self.wake_thr + 0.3):.2f}), "
+        print(f"  speech can be cut off by: the wake word while talking (threshold {self.barge_thr:.2f}), "
               "the spoken words stop / quiet / enough, the STOP button or Ctrl+. in the window, "
               "or python -m jarvis.voice.voice --stop")
         try:
@@ -272,7 +290,7 @@ class Ears:
         """While Jarvis talks only the wake word, at a higher threshold, can cut in ("Hey Jarvis, stop")."""
         scores = self.oww.predict(block)
         score = max(scores.values()) if scores else 0.0
-        if score > min(0.95, self.wake_thr + 0.3) and now > self.cool_until:
+        if score > self.barge_thr and now > self.cool_until:
             self.cool_until = now + 1.5
             print(f"  (speech cut off by the wake word, score {score:.2f})")
             voice.stop()
@@ -294,8 +312,13 @@ class Ears:
                 if floor > 0.05:
                     print("  the background is loud; lowering the microphone helps: "
                           "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 0.5")
+        if mpvctl.ducked() and now >= self.awake_until:
+            mpvctl.unduck()
         scores = self.oww.predict(block)
         score = max(scores.values()) if scores else 0.0
+        if self.debug and score > 0.15 and now - self.debug_at > 0.4:
+            self.debug_at = now
+            print(f"  wake score {score:.2f} (threshold {self.wake_thr})")
         if score > self.wake_thr and now > self.cool_until:
             self.cool_until = now + 1.5
             print(f"  wake (score {score:.2f})")
@@ -307,7 +330,7 @@ class Ears:
                 self.loud += 1
                 if self.loud >= 2:
                     self.loud = 0
-                    if media_playing():
+                    if media_playing() and not mpvctl.ducked():
                         self.awake_until = 0.0
                     else:
                         self.via_wake = False

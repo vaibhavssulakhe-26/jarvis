@@ -316,6 +316,12 @@ DIRECT = [
     (re.compile(r"^leave me alone(?: for (.+))?$", re.I), "take_break", lambda m: {"for": m.group(1) or ""}),
     (re.compile(r"^(?:what s|what is|whats|what'?s) my screen time$|^how did i spend my time(?: today)?$", re.I), "screen_time", lambda m: {}),
     (re.compile(r"^what did we (?:talk|speak|chat|discuss)(?: about)?\s*(.*)$", re.I), "recall_day", lambda m: {"when": m.group(1)}),
+    (re.compile(r"^(?:please )?(?:watch|show me)(?: a| an| the)? (?:video|videos) (?:of|on|about|for) (.+)$", re.I), "play_media",
+     lambda m: {"query": "play a video on " + m.group(1), "_heard": True}),
+    (re.compile(r"^(?:please )?watch (?!the (?:sources|links)\b|my\b|this\b|that\b|it\b|out\b|for\b|every\b)(.+)$", re.I), "play_media",
+     lambda m: {"query": "play a video of " + m.group(1), "_heard": True}),
+    (re.compile(r"^(?:please )?show me (?!(?:the |my |all |some |any |me |what |how |where |when |why |which |a list|that|this|it\b|reminders?\b|notes?\b|e-?mails?\b|mail\b|files?\b|screen\b|unread\b|clipboard\b))(.+)$", re.I), "play_media",
+     lambda m: {"query": "play a video of " + m.group(1), "_heard": True}),
 ]
 
 
@@ -448,6 +454,20 @@ def execute(plan, addressed=False):
 _handle_lock = threading.Lock()
 
 
+def collapse_repeats(text):
+    """'Stop playing. Stop playing' and 'next next' become one phrase, so the direct command path still matches."""
+    parts = [p.strip() for p in re.split(r"(?<=[.!?,;])\s+", text.strip()) if p.strip()]
+    key = [re.sub(r"[^\w\s]", "", p.lower()).strip() for p in parts]
+    if len(parts) > 1 and len(set(key)) == 1 and key[0]:
+        return parts[0].rstrip(".!?,; ")
+    words = text.split()
+    plain = [re.sub(r"[^\w']", "", w.lower()) for w in words]
+    for size in range(1, min(4, len(words) // 2) + 1):
+        if len(words) % size == 0 and plain[:size] * (len(words) // size) == plain and all(plain[:size]):
+            return " ".join(words[:size]).rstrip(".!?,; ")
+    return text
+
+
 def handle(text, via_wake=True):
     with _handle_lock:
         return _handle(text, via_wake)
@@ -455,6 +475,7 @@ def handle(text, via_wake=True):
 
 def _handle(text, via_wake=True):
     """Returns True when Jarvis expects an answer from you, so it keeps listening."""
+    text = collapse_repeats(text)
     if STOP.match(re.sub(r"[!-/:-@\[-`{-~।]", "", text.lower()).strip()) and (voice.SPEAKING.is_set() or not PENDING):
         voice.stop()
         PENDING.clear()

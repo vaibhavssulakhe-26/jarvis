@@ -51,7 +51,9 @@ def serve():
             with conn:
                 data = json.loads(conn.makefile().readline() or "{}")
                 commands.append(data.get("command"))
-                conn.sendall(b'{"event":"idle"}\n{"error":"success","data":1}\n')
+                cmd = tuple((data.get("command") or [])[:2])
+                value = {("get_property", "volume"): 50, ("get_property", "pause"): False}.get(cmd, 1)
+                conn.sendall(b'{"event":"idle"}\n' + json.dumps({"error": "success", "data": value}).encode() + b"\n")
     threading.Thread(target=loop, daemon=True).start()
 
 
@@ -105,7 +107,7 @@ def say(text):
     del commands[:]
     with mock.patch.object(play, "search", fake_search), mock.patch.object(mpvctl.subprocess, "Popen", fake_popen), \
             mock.patch.object(mpvctl.shutil, "which", lambda n: "/usr/bin/" + n), mock.patch.object(mpvctl.time, "sleep", lambda s: None), \
-            mock.patch.object(play, "_browser", lambda url: opened.append(url)), \
+            mock.patch.object(play, "_browser", lambda url: opened.append(url)), mock.patch.object(mpvctl, "raise_window", lambda *a: None), \
             mock.patch.object(main.voice, "say", lambda t: spoken.append(str(t))), \
             mock.patch.object(main.brain, "think", lambda *a: searches.append("BRAIN")), \
             mock.patch.object(main.brain, "chat", lambda *a: searches.append("BRAIN")):
@@ -149,6 +151,68 @@ for phrase, expect in (("pause", ["set_property", "pause", True]), ("resume", ["
     say(phrase)
     check(f"{phrase!r} controls mpv", expect in commands, str(commands))
 
+
+play._state.update(results=RESULTS, i=0, at=time.time())
+mpvctl._state["restore"] = None
+del commands[:]
+check("duck turns mpv down to the duck level", mpvctl.duck() and ["set_property", "volume", 15] in commands and mpvctl.ducked(), str(commands))
+check("a second duck changes nothing", not mpvctl.duck())
+del commands[:]
+mpvctl.volume(10)
+check("louder while ducked changes the level to restore, not the ducked one", not sent("add") and mpvctl._state["restore"] == 60, str(commands))
+mpvctl.unduck()
+check("unduck restores the remembered level", ["set_property", "volume", 60] in commands and not mpvctl.ducked(), str(commands))
+del commands[:]
+mpvctl.unduck()
+check("unduck with nothing ducked sends nothing", not commands)
+check("playing is true for a loaded, unpaused file", mpvctl.playing())
+
+with mock.patch.dict(os.environ, {"MPV_VOLUME": "35"}):
+    check("MPV_VOLUME is read", mpvctl.start_volume() == 35)
+with mock.patch.dict(os.environ, {"MPV_VOLUME": "loud"}):
+    check("a bad MPV_VOLUME falls back to 50", mpvctl.start_volume() == 50)
+os.environ.pop("MPV_VOLUME", None)
+check("MPV_VOLUME defaults to 50", mpvctl.start_volume() == 50)
+with mock.patch.dict(os.environ, {"YT_FORMAT": "best[height<=360]"}):
+    check("YT_FORMAT replaces the video format", mpvctl.video_format() == "best[height<=360]")
+check("the video format defaults to the tested one", mpvctl.video_format() == mpvctl.VIDEO_FORMAT)
+
+window_calls = []
+with mock.patch.object(mpvctl.shutil, "which", lambda n: "/usr/bin/" + n), \
+        mock.patch.object(mpvctl, "_find_window", lambda: "{abc}"), \
+        mock.patch.object(mpvctl.subprocess, "run", lambda cmd, **kw: window_calls.append(cmd) or mock.Mock(stdout="")):
+    check("the video window is brought forward", mpvctl._bring_forward(1.0) and ["kdotool", "windowactivate", "{abc}"] in window_calls, str(window_calls))
+with mock.patch.object(mpvctl, "_find_window", lambda: None), mock.patch.object(mpvctl.time, "sleep", lambda s: None), \
+        mock.patch.object(mpvctl.time, "time", mock.Mock(side_effect=[0, 0, 5, 50])):
+    check("no window means no activation and no hang", not mpvctl._bring_forward(1.0))
+with mock.patch.object(mpvctl.shutil, "which", lambda n: None):
+    check("without kdotool nothing is attempted", mpvctl.raise_window() is None)
+
+check("music is audio only by default", not play.music_video())
+with mock.patch.dict(os.environ, {"MUSIC_VIDEO": "true"}):
+    check("MUSIC_VIDEO=true is read", play.music_video())
+for phrase in ("play a video of lofi beats", "watch the matrix trailer", "play a video on trees", "show me cat videos"):
+    kind = play.parse(phrase if phrase.startswith("play") else "play a video of " + phrase.split(" ", 1)[1])[0]
+    check(f"{phrase!r} is a video request", kind in ("video", "learning"), kind)
+check("a plain song request stays music", play.parse("play a lovely song")[0] == "music")
+loads = []
+with mock.patch.object(mpvctl, "available", lambda: True), mock.patch.object(mpvctl, "load", lambda url, audio=False: loads.append(audio) or True):
+    play._state.update(results=RESULTS, i=0, kind="music")
+    play._open(RESULTS[0])
+    with mock.patch.dict(os.environ, {"MUSIC_VIDEO": "1"}):
+        play._open(RESULTS[0])
+    play._state["kind"] = "video"
+    play._open(RESULTS[0])
+check("songs are audio only unless MUSIC_VIDEO, videos always open a window", loads == [True, False, False], str(loads))
+
+say("pause")
+del commands[:]
+for phrase in ("stop playing. Stop playing", "Stop playing, stop playing.", "stop playing stop playing"):
+    del commands[:]
+    before = len(searches)
+    say(phrase)
+    check(f"{phrase!r} goes to the direct command", ["quit"] in commands and len(searches) == before, str(commands) + str(searches[before:]))
+    serve()
 server["sock"].close()
 os.remove(str(mpvctl.socket_path()))
 out = say("pause")
@@ -173,7 +237,8 @@ def play_with(results, **mode):
     del spawned[:]
     lines = io.StringIO()
     with mock.patch.object(mpvctl.subprocess, "Popen", fake_popen), mock.patch.object(mpvctl.shutil, "which", lambda n: "/usr/bin/" + n), \
-            mock.patch.object(mpvctl.time, "sleep", lambda s: None), contextlib.redirect_stdout(lines):
+            mock.patch.object(mpvctl.time, "sleep", lambda s: None), mock.patch.object(mpvctl, "raise_window", lambda *a: None), \
+            contextlib.redirect_stdout(lines):
         try:
             got = play._announce(play._open(results[0]))
         except tools.ToolError as e:

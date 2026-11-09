@@ -69,16 +69,25 @@ def discard(path):
         pass
 
 
+BUNDLED_WAKE = ("alexa", "hey_jarvis", "hey_mycroft", "hey_rhasspy", "timer", "weather")
+
+
 def wake_files():
-    """The model named by WAKE_WORD: a path to an .onnx file, or a name matching a file in models/."""
-    wanted = get("WAKE_WORD", "alexa")
-    path = Path(wanted).expanduser()
-    if path.suffix == ".onnx" and path.is_file():
-        return [path]
+    """The models named by WAKE_WORD (comma separated; an .onnx path or a name matching a file in models/), plus any custom
+    wake model dropped into models/ that is not one of the bundled ones."""
     shared = {"embedding_model", "melspectrogram", "silero_vad"}
     files = sorted(p for p in MODELS.glob("*.onnx") if p.stem not in shared)
-    named = [p for p in files if p.stem.lower().startswith(wanted.lower())]
-    return named or files
+    chosen = []
+    for wanted in [w.strip() for w in get("WAKE_WORD", "alexa").split(",") if w.strip()]:
+        path = Path(wanted).expanduser()
+        if path.suffix == ".onnx" and path.is_file():
+            chosen.append(path)
+        else:
+            chosen += [p for p in files if p.stem.lower().startswith(wanted.lower())]
+    if not chosen:
+        return files
+    chosen += [p for p in files if not p.stem.lower().startswith(BUNDLED_WAKE)]
+    return list(dict.fromkeys(chosen))
 
 
 def wake_names():

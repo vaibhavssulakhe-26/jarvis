@@ -128,7 +128,7 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
   (`pick_tools`). A tool's own line is spoken as it is; there is no second model call to phrase it. Draft and write requests
   get `DRAFT_TOKENS`. After an `ask`, the prompt tells the brain not to ask again; build requests choose defaults.
 - Player crash: on this laptop mpv's default Vulkan renderer crashes (SIGTRAP inside libvulkan_radeon) on real video frames, so `mpvctl`
-  adds `MPV_ARGS` (default `--gpu-api=opengl`; set it empty to pass nothing). mpv's stderr goes to `<runtime dir>/mpv.log`, and a failed
+  adds `MPV_ARGS` (default `--gpu-api=opengl --hwdec=no`; set it empty to pass nothing). mpv's stderr goes to `<runtime dir>/mpv.log`, and a failed
   start (up to three candidates) names that path in the one spoken line.
 - Follow-up window: after a reply `Ears._after` keeps listening for `FOLLOWUP_SECONDS` (default 10) with no wake word; thanks / that's all /
   bye / stop listening close it. It stays shut while `mpvctl.playing()` or playerctl reports playback.
@@ -141,3 +141,9 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
 - No docstrings that restate the function name, no banner comments, no emoji.
 - Tools return one short sentence to speak, and raise `ToolError` with a speakable message on failure.
 - Do not edit `.env` or anything under `data/` by hand; test against a scratch copy of `reminders.FILE`.
+
+- Playback and wake (late additions): mpv runs at `MPV_VOLUME` (50); `Ears._begin` ducks it to 15 over IPC (`mpvctl.duck`) and `_idle` restores it
+  when the follow-up window ends, so the window stays open during mpv playback after a wake word. `MUSIC_VIDEO=true` makes songs open a video
+  window; "watch X", "show me X" and "play a video of X" always do. `main.collapse_repeats` turns "stop playing. stop playing" / "next next" into
+  one phrase before routing. `WAKE_DEBUG=1` prints wake scores above 0.15; `BARGE_THRESHOLD` is separate from `WAKE_THRESHOLD`; extra custom
+  `.onnx` wake models in `models/` load next to hey_jarvis. `python -m jarvis.actions.mpvctl --pause|--stop|--next` for keyboard shortcuts.

@@ -32,6 +32,16 @@ A personal voice assistant that runs locally on Linux. Talk to it, it listens, t
 
 The wake phrase is "Hey Jarvis" (`WAKE_WORD=hey_jarvis`).
 
+To see how well "Jarvis" or "hello Jarvis" is picked up, run with `WAKE_DEBUG=1`: the best wake score is printed whenever it passes 0.15,
+even below the threshold (`WAKE_THRESHOLD`, default 0.4). Interrupting speech uses its own level (`BARGE_THRESHOLD`, default threshold plus 0.3).
+
+A custom wake model goes in the `models/` folder. Any extra `.onnx` file there that is not one of the bundled ones (alexa, hey_jarvis,
+hey_mycroft, hey_rhasspy, timer, weather) or the shared helper models is loaded next to `hey_jarvis`, so both wake it.
+
+Keyboard shortcuts for the player: `python -m jarvis.actions.mpvctl --pause`, `--stop` and `--next`. In KDE System Settings, Shortcuts,
+Add New, Command or Script, use `/home/paradox/Documents/JARVIS/.venv/bin/python -m jarvis.actions.mpvctl --pause` (working folder: the repo),
+then pick a key for it. `--next` hands the request to the running Jarvis, so Jarvis must be running.
+
 ## Stack
 
 Python, PyQt6, faster-whisper, openWakeWord, Piper TTS, Ollama
