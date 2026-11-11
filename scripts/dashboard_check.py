@@ -71,6 +71,8 @@ def until(cond, seconds=3.0):
 
 
 app = QApplication.instance() or QApplication(sys.argv)
+import psutil as _ps  # noqa: E402
+mock.patch.object(_ps, "virtual_memory", lambda: mock.Mock(available=3 * 2 ** 30, percent=50)).start()
 
 # data the pages will show
 (tmp / "notes" / "graphs.md").write_text("Graph algorithms: breadth first search, depth first search, shortest paths and graph traversal.")

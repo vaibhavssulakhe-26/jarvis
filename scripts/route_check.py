@@ -97,6 +97,13 @@ CASES = [
     ("update your notes with the lab report is due friday", "local:append_to_note"),
     ("add to notes: buy a cable", "local:append_to_note"),
     ("build something cool", "local:build_project"),
+    # sentences from the live log
+    ("So what are your new features?", "local:capabilities"),
+    ("So can you now do it?", "local:capabilities"),
+    ("So in your notes, can you update the features which you have?", "local:append_to_note"),
+    ("So build your one and do it", "local:build_project"),
+    ("open Google Chrome and search Jarvis capabilities and features", "local:browse_search"),
+    ("Anyone which you can open like open GitHub and search Jarvis", "local:browse_search"),
 ]
 # what the log session had just done, so a short follow-up must not drag the old tools along
 BEFORE = ("draft an email to my professor about the deadline", "draft_text")
@@ -207,6 +214,70 @@ print(("ok   " if ok else "FAIL ") + "the next sentence becomes the spec")
 if not ok:
     bad.append(("spec", "", "", 0))
 
+# the log sentences in detail: arguments, answers and nothing started that should not be
+captured = []
+LOG = {
+    "So in your notes, can you update the features which you have?": ("append_to_note", {"topic": "jarvis features"}),
+    "open Google Chrome and search Jarvis capabilities and features": ("browse_search", {"query": "Jarvis capabilities and features", "site": ""}),
+    "Anyone which you can open like open GitHub and search Jarvis": ("browse_search", {"query": "Jarvis", "site": "github"}),
+}
+for text, (action, want_args) in LOG.items():
+    del captured[:]
+    with mock.patch.object(main, "run_tool", lambda a, args, sp: captured.append((a, args))), mock.patch.object(main.brain, "think", side_effect=AssertionError("brain")), \
+            mock.patch.object(main.brain, "chat", side_effect=AssertionError("brain")), mock.patch.object(main.browser, "ready", lambda: True):
+        main._handle(text)
+    got = captured[0] if captured else (None, {})
+    ok = got[0] == action and all(got[1].get(k) == v for k, v in want_args.items()) and got[0] != "remember"
+    print(("ok   " if ok else "FAIL ") + f"{text[:50]!r} -> {got[0]} {got[1] if len(str(got[1])) < 60 else ''}")
+    if not ok:
+        bad.append((text, action, got, 0))
+ok = len(captured) == 1
+print(("ok   " if ok else "FAIL ") + "and only one action runs for the last sentence")
+if not ok:
+    bad.append(("one action", "", captured, 0))
+
+with mock.patch.object(main, "run_tool", lambda a, args, sp: captured.append((a, args))), mock.patch.object(main.browser, "ready", lambda: False):
+    del captured[:]
+    main._handle("open Google Chrome and search Jarvis capabilities and features")
+ok = captured and captured[0][0] == "web_search" and "Jarvis capabilities" in captured[0][1]["query"]
+print(("ok   " if ok else "FAIL ") + "without Playwright the same sentence falls back to a web search")
+if not ok:
+    bad.append(("fallback", "", captured, 0))
+from jarvis.actions import browser as _browser  # noqa: E402
+ok = (_browser.search_url("Jarvis capabilities and features", "").startswith("https://duckduckgo.com/?q=Jarvis%20capabilities")
+      and _browser.search_url("Jarvis", "github") == "https://github.com/search?q=Jarvis")
+print(("ok   " if ok else "FAIL ") + "the default search address is DuckDuckGo and GitHub opens its own search")
+if not ok:
+    bad.append(("urls", "", "", 0))
+seen = []
+with mock.patch.object(_browser.W, "run", lambda fn, timeout=60: seen.append(1) or True):
+    try:
+        out = tools.TOOLS["browse_search"]["fn"]({"query": "Jarvis", "site": "github"})
+        ok = "Github" in out and "Jarvis" in out
+    except Exception as e:
+        ok = False
+        out = repr(e)
+print(("ok   " if ok else "FAIL ") + f"opening GitHub and searching does not crash: {out}")
+if not ok:
+    bad.append(("github", "", out, 0))
+
+for q in ("So can you now do it?", "So can you now do it", "can you do it"):
+    a = _cap.answer_can(q)
+    ok = _cap.CAN.match(q) is not None and a.startswith("Yes") and "can't" not in a.lower() and "cannot" not in a.lower() and "not able" not in a.lower()
+    print(("ok   " if ok else "FAIL ") + f"{q!r} never says it cannot run code: {a[:50]}")
+    if not ok:
+        bad.append((q, "yes", a, 0))
+with mock.patch.object(_coder.brain, "code", side_effect=AssertionError("plan loop started")):
+    try:
+        _coder.build_project({"request": "build your one and do it"})
+        ok = False
+    except AssertionError:
+        ok = False
+    except Exception as e:
+        ok = "What should it do" in str(e)
+print(("ok   " if ok else "FAIL ") + "'build your one and do it' asks what to build and starts no plan")
+if not ok:
+    bad.append(("build your one", "", "", 0))
 print(f"\npass rate: {len(CASES) - len(bad)}/{len(CASES)} ({100 * (len(CASES) - len(bad)) // len(CASES)}%)")
 print(f"largest chat request ~{worst['chat']} tokens (system prompt ~{worst['system']}), largest tool request ~{worst['tool']}")
 for text, want, got, tokens in bad:

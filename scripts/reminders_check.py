@@ -11,6 +11,9 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 tmp = Path(tempfile.mkdtemp(prefix="jarvis-reminders-"))
 os.environ["JARVIS_DATA"] = str(tmp)
+os.environ["XDG_STATE_HOME"] = str(tmp)
+os.environ["QUIET_START"] = ""
+os.environ["QUIET_END"] = ""
 
 from jarvis.actions import reminder_tools, tools  # noqa: E402,F401
 from jarvis.core import main as core  # noqa: E402
@@ -125,8 +128,7 @@ with mock.patch.object(reminders.config, "get", side_effect=lambda n, d="": quie
 # focus mode holds non-urgent reminders
 reminders.add("focus chore", datetime.now() - timedelta(seconds=1))
 with mock.patch.object(reminders.state, "get", return_value=time.time() + 600):
-    noon = datetime.now().replace(hour=12, minute=0)
-    check("focus mode holds reminders", reminders.take_due_items(noon) == [])
+    check("focus mode holds reminders", reminders.take_due_items(datetime.now()) == [])
 
 print(f"\n{sum(results)} of {len(results)} passed")
 sys.exit(0 if all(results) else 1)

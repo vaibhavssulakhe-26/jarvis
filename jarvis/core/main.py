@@ -241,6 +241,9 @@ DIRECT = [
     (re.compile(r"^(?:please )?remember ((?:my|i|i'm|i am|we|our)\b.+)$", re.I), "remember", lambda m: {"fact": m.group(1)}),
     (re.compile(r"^(?:please )?forget (?:about |that |what i said about )?(.+)$", re.I), "forget", lambda m: {"what": m.group(1)}),
     (re.compile(r"^what do you (?:know|remember) about me$", re.I), "what_do_you_know", lambda m: {}),
+    (re.compile(r"^in (?:your|my) notes,? (?:can you |could you |please )?(?:update|add|write|put|save) (?:the |that )?(.+)$", re.I),
+     "append_to_note", lambda m: {"topic": "jarvis features" if "feature" in m.group(1).lower() else "general",
+                                  "text": capabilities.full_list()[:1500] if "feature" in m.group(1).lower() else m.group(1)}),
     (re.compile(r"^(?:please )?(?:update|add to) (?:(?:your|my|the) )?notes?(?: (?:with|about|that|on))?\s*[:,-]?\s*(.+)$", re.I),
      "append_to_note", lambda m: {"topic": "general", "text": m.group(1)}),
     (re.compile(r"^(?:please )?(?:make|take|add|write|save) (?:me )?a note(?: (?:about|on|for) ([\w ]{1,30}?))?\s*[:,-]\s*(.+)$", re.I),
@@ -289,6 +292,14 @@ DIRECT = [
     (re.compile(r"^(?:please )?(turn on|turn off|enable|disable|start|stop) (?:the |my )?(?:distraction |focus )?guard$", re.I),
      "guard_switch", lambda m: {"on": m.group(1).lower() in ("turn on", "enable", "start")}),
     (re.compile(r"^(?:please )?turn it off$", re.I), "guard_switch", lambda m: {"on": False}, guard.enabled),
+    (re.compile(r"^(?:please )?open (?:google chrome|chrome|the browser|a browser|my browser|firefox) (?:and|then) (?:search|google|look up) (?:for )?(.+)$", re.I),
+     "browse_search", lambda m: {"query": m.group(1), "site": ""}, lambda: browser.ready()),
+    (re.compile(r"^(?:please )?open (?:google chrome|chrome|the browser|a browser|my browser|firefox) (?:and|then) (?:search|google|look up) (?:for )?(.+)$", re.I),
+     "web_search", lambda m: {"query": m.group(1)}),
+    (re.compile(r"^(?:.*?\b)?open (google|youtube|github|wikipedia) (?:and|then) search (?:for )?(.+)$", re.I), "browse_search",
+     lambda m: {"query": m.group(2), "site": m.group(1).lower()}, lambda: browser.ready()),
+    (re.compile(r"^(?:.*?\b)?open (google|youtube|github|wikipedia) (?:and|then) search (?:for )?(.+)$", re.I), "web_search",
+     lambda m: {"query": m.group(2) + " " + m.group(1)}),
     (re.compile(r"^(?:please )?search (.+?) on (duck ?duck ?go|google|youtube|github)$", re.I), "browse_search",
      lambda m: {"query": m.group(1), "site": m.group(2).lower().replace(" ", "")}, lambda: browser.ready()),
     (re.compile(r"^(?:please )?(?:browser search|search the browser|search in the browser) (?:for )?(.+)$", re.I), "browse_search",
@@ -440,6 +451,7 @@ def fuzzy(text):
 def direct(text):
     """Phrases that map straight to one tool, without asking the brain."""
     t = " ".join(text.strip().rstrip(".?!,").split())
+    t = re.sub(r"^(?:(?:so|well|okay|ok|now|and|then|alright|hey)\b[ ,]*)+", "", t, flags=re.I) or t
     for pattern, action, make, *guard in DIRECT:
         m = pattern.match(t)
         if m and action in tools.TOOLS and (not guard or guard[0]()):

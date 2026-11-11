@@ -26,8 +26,8 @@ ASK = re.compile(r"^(?:hey |ok |okay |so )?(?:please )?(?:help|what can you do(?
                  r"what are your (?:new |latest |current )?(?:features|abilities|skills|capabilities)|tell me (?:about )?your (?:new |latest )?(?:features|abilities|skills)|"
                  r"what(?:'s| is) new(?: with you)?|what can i (?:ask|say to) you|what are you capable of|how can you help(?: me)?|"
                  r"list (?:your )?(?:new )?(?:features|commands)|show (?:me )?your (?:new )?features|your (?:new )?features)\??$", re.I)
-CAN = re.compile(r"^(?:hey |ok |okay |so )?(?:please )?(?:can|could|are) you (?:also |even |really )?(?:able to )?"
-                 r"(build|code|program|write code|write programs|run code|run programs|create (?:an? )?(?:app|apps|program|website|project)|make (?:an? )?(?:app|apps|program|website)|"
+CAN = re.compile(r"^(?:hey |ok |okay |so )?(?:please )?(?:can|could|are) you (?:now |finally |also |even |really )*(?:able to )?"
+                 r"(do (?:it|that|this)(?: now)?|build|code|program|write code|write programs|run code|run programs|create (?:an? )?(?:app|apps|program|website|project)|make (?:an? )?(?:app|apps|program|website)|"
                  r"browse|surf|search the web|use (?:a|the) browser|open websites|control (?:a|the) browser)\b.*$", re.I)
 TOPICS = {
     "code": ("build_project run_project stop_project fix_last_error add_feature explain_file git_init_project find_bugs edit_file", "write, run and fix code"),
@@ -57,7 +57,8 @@ def answer_can(question):
     have = [n.replace("_", " ") for n in names.split() if n in TOOLS]
     if not have:
         return f"Not on this setup yet. The {kind} tools are not installed."
-    return f"Yes, I can {verb}. For example: " + ", ".join(have[:6]) + ". The full list is on your screen."
+    more = " Tell me what to build and I will start." if kind == "code" else ""
+    return f"Yes, I can {verb}. For example: " + ", ".join(have[:6]) + "." + more
 
 
 def summary():

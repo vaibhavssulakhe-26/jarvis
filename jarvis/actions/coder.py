@@ -404,7 +404,7 @@ def complete(folder, meta, request, count=None, backup=False):
 VAGUE_WORDS = {"build", "create", "make", "write", "me", "a", "an", "some", "the", "something", "anything", "cool", "nice", "new", "small", "simple",
                "python", "code", "program", "app", "apps", "application", "project", "thing", "stuff", "website", "web", "site", "page", "script",
                "please", "for", "my", "i", "want", "to", "you", "can", "could", "flask", "fastapi", "pyqt", "html", "javascript", "good", "awesome",
-               "it", "one", "of", "any", "kind", "sort", "something", "interesting", "fun", "useful", "software", "tool", "desktop", "gui", "and"}
+               "it", "one", "of", "your", "do", "now", "then", "any", "kind", "sort", "something", "interesting", "fun", "useful", "software", "tool", "desktop", "gui", "and"}
 _asking = {"until": 0.0}
 ASK_SPEC = "What should it do? For example, a flask app that shows the time, or a python script that renames my files."
 

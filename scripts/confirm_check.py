@@ -57,6 +57,16 @@ for phrase in ("no", "no don't", "cancel", "never mind"):
     main._handle(phrase)
     check(f"{phrase!r} cancels", not closed and not main.PENDING and sum("Say yes or no" in x for x in said) == 1, str(said))
 
+# the sentence from the log
+fresh()
+main._handle("close the current window")
+routed = []
+with mock.patch.object(main, "direct", lambda t: routed.append(("direct", t)) or True), mock.patch.object(main, "fast_path", lambda t: routed.append(("fast", t)) or True):
+    main._handle("Yes, close it, confirm it, I confirm close it")
+check("the log sentence closes the window once", closed == [1] and not main.PENDING, f"{closed} {said}")
+check("and routes nothing else", routed == [] and sum("Say yes or no" in x for x in said) == 1, f"{routed} {said}")
+check("and says only 'Closed it.' after the question", said[-1] == "Closed it." and len(said) == 2, str(said))
+
 fresh()
 main._handle("close the current window")
 main._handle("yes close it and open spotify")
