@@ -1,11 +1,12 @@
 """Notes kept in the database with the window they were written from, plus a readable copy per topic."""
 import re
+from pathlib import Path
 from datetime import date, datetime
 
 from ..core import config
 from . import memory, store
 
-NOTES_DIR = config.DATA / "notes"
+NOTES_DIR = Path(config.get("NOTES_DIR") or config.DATA / "notes").expanduser()
 TERMINALS = ("konsole", "terminal", "jarvis", "xterm", "kitty", "alacritty")
 TODAY_TOPICS = {"today", "todo", "to do", "tasks"}
 

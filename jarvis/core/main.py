@@ -4,17 +4,19 @@ import difflib
 import json
 import random
 import re
+import signal
 import sys
 import threading
 import time
 from datetime import datetime, timedelta
 
-from ..actions import apps, capabilities, clipwatch, files, mail, mpvctl, play, tools
+from ..actions import apps, browser, events, capabilities, clipwatch, coder, files, mail, mpvctl, play, procs, study, tools
 from ..brain import brain, companion
 from . import config, state
 from ..research import topic as research_topic
-from ..scheduling import digest, guard, monitor, proactive, reminders
-from ..voice import voice
+from ..memory import rag
+from ..scheduling import digest, guard, monitor, pomodoro, proactive, reminders
+from ..voice import dictate, voice
 
 PENDING = {}
 SLOW = re.compile(r"\b(and|then|also|after|before|remind|reminder|draft|email|write|note|find|search|"
@@ -184,6 +186,7 @@ def check_pending(text):
     PENDING.clear()
     _last_confirm[0] = time.time()
     if verdict == "no":
+        browser.forget_downloads()
         voice.say("Okay, cancelled.")
         return True
     do_tool(action, args)
@@ -223,9 +226,11 @@ DIRECT = [
     (re.compile(r"^what do you (?:know|remember) about me$", re.I), "what_do_you_know", lambda m: {}),
     (re.compile(r"^(?:please )?(?:make|take|add|write|save) (?:me )?a note(?: (?:about|on|for) ([\w ]{1,30}?))?\s*[:,-]\s*(.+)$", re.I),
      "take_note", lambda m: {"topic": m.group(1) or "", "text": m.group(2)}),
-    (re.compile(r"^what did i (?:note|write|save)(?: down)?(?: about| on) (.+)$", re.I), "read_notes", lambda m: {"topic": m.group(1)}),
+    (re.compile(r"^what did i (?:note|save)(?: down)?(?: about| on) (.+)$", re.I), "read_notes", lambda m: {"topic": m.group(1)}),
+    (re.compile(r"^what did i (?:write|wrote)(?: down)?(?: about| on) (.+)$", re.I), "search_docs", lambda m: {"query": m.group(1)}),
+    (re.compile(r"^(?:please )?re-?index (?:my )?(?:notes|documents|files)$", re.I), "reindex_notes", lambda m: {}),
     (re.compile(r"^(?:list|show|read)(?: out)? (?:my )?notes$", re.I), "list_notes", lambda m: {}),
-    (re.compile(r"^search (?:my )?notes for (.+)$", re.I), "search_notes", lambda m: {"query": m.group(1)}),
+    (re.compile(r"^search (?:my )?(?:notes|documents|pdfs) for (.+)$", re.I), "search_docs", lambda m: {"query": m.group(1)}),
     (re.compile(r"^(?:delete|remove) (?:my )?notes? (?:about|on) (.+)$", re.I), "delete_note", lambda m: {"topic": m.group(1)}),
     (re.compile(r"^what (?:does|did) (?:it|that|the file|the document|the pdf) say about (.+)$", re.I),
      "ask_about_file", lambda m: {"question": m.group(1), "path": ""}),
@@ -233,6 +238,14 @@ DIRECT = [
     (re.compile(r"^(?:please )?(?:summari[sz]e|summary of) (it|that|this)$", re.I), "summarise_file", lambda m: {"path": ""}),
     (re.compile(r"^(?:please )?(?:summari[sz]e|summary of) (?!what i copied|my clipboard|the clipboard|this page)(?:the |my )?(.+)$", re.I),
      "summarise_file", lambda m: {"path": m.group(1)}),
+    (re.compile(r"^(?:please )?quiz me(?: (?:on|about) (?:the )?(.+))?$", re.I), "quiz_me", lambda m: {"topic": m.group(1) or ""}),
+    (re.compile(r"^(?:another|next) question$", re.I), "quiz_me", lambda m: {"topic": study._last["topic"]}, lambda: bool(study._last["topic"])),
+    (re.compile(r"^(?:please )?teach me (?:about |how )?(.+)$", re.I), "teach_me", lambda m: {"topic": m.group(1)}),
+    (re.compile(r"^(?:what are |what'?s |what s |whats )?my (?:weak|weakest) (?:topics?|areas?|spots?)$|^where am i weak$", re.I), "study_progress", lambda m: {}),
+    (re.compile(r"^(?:what'?s|what s|what is|whats) next on my (?:roadmap|plan)$|^what should i (?:study|learn) next$|^next on my roadmap$", re.I), "roadmap_next", lambda m: {}),
+    (re.compile(r"^(?:please )?mark (.+?) (?:as )?(?:done|complete|completed|finished)$", re.I), "roadmap_done", lambda m: {"item": m.group(1)}),
+    (re.compile(r"^(?:please )?(?:log (?:today|my day)|daily check-?in)(?:[:,]? (.+))?$", re.I), "log_today", lambda m: {"text": m.group(1) or ""}),
+    (re.compile(r"^how was my week$|^(?:my )?weekly (?:summary|review)$|^week summary$", re.I), "week_summary", lambda m: {}),
     (re.compile(r"^(?:good morning,? )?(?:give me )?(?:my |the )?(?:morning (?:briefing|digest)|what s my day|what is my day|what'?s my day)$", re.I),
      "morning_briefing", lambda m: {}),
     (re.compile(r"^(?:watch|monitor) (?=.*\b(?:every|changes|for the word)\b)(.+?)(?: every (\d+|an?|one|two|five|ten|fifteen|thirty) ?(minutes?|mins?|hours?|hrs?))?"
@@ -257,6 +270,21 @@ DIRECT = [
     (re.compile(r"^(?:please )?(turn on|turn off|enable|disable|start|stop) (?:the |my )?(?:distraction |focus )?guard$", re.I),
      "guard_switch", lambda m: {"on": m.group(1).lower() in ("turn on", "enable", "start")}),
     (re.compile(r"^(?:please )?turn it off$", re.I), "guard_switch", lambda m: {"on": False}, guard.enabled),
+    (re.compile(r"^(?:please )?search (.+?) on (google|youtube|github)$", re.I), "browse_search",
+     lambda m: {"query": m.group(1), "site": m.group(2).lower()}, lambda: browser.ready()),
+    (re.compile(r"^(?:please )?(?:go to|browse to|browse|visit) ((?:google|youtube|github|wikipedia|stack ?overflow|[a-z0-9-]+(?:\.[a-z0-9-]+)+))$", re.I), "browse_open", lambda m: {"target": m.group(1)}),
+    (re.compile(r"^(?:please )?open ([a-z0-9-]+(?:\.[a-z0-9-]+)+)$", re.I), "browse_open", lambda m: {"target": m.group(1)}, lambda: browser.ready()),
+    (re.compile(r"^(?:please )?click (?:on )?(.+)$", re.I), "browse_click", lambda m: {"text": m.group(1)}, lambda: browser.active()),
+    (re.compile(r"^(?:please )?(?:type|enter) (.+?) (?:into|in) (?:the )?(.+?)(?: box| field)?$", re.I), "browse_type",
+     lambda m: {"text": m.group(1), "field": m.group(2)}, lambda: browser.active()),
+    (re.compile(r"^(?:please )?scroll (down|up)$", re.I), "browse_scroll", lambda m: {"direction": m.group(1).lower()}, lambda: browser.active()),
+    (re.compile(r"^(?:please )?(?:read|summari[sz]e) (?:this|the) (?:page|article|site|website)$", re.I), "browse_read", lambda m: {}, lambda: browser.active()),
+    (re.compile(r"^(?:please )?(?:go back|back)$|^browser back$|^go back a page$", re.I), "browse_back", lambda m: {},
+     lambda: browser.active() and not mpvctl.running()),
+    (re.compile(r"^(?:please )?(?:new|open a new) tab$", re.I), "new_tab", lambda m: {}, lambda: browser.ready()),
+    (re.compile(r"^(?:please )?close (?:the |this )?tab$", re.I), "close_tab", lambda m: {}, lambda: browser.active()),
+    (re.compile(r"^(?:please )?close (?:the )?browser$", re.I), "close_browser", lambda m: {}, lambda: browser.active()),
+    (re.compile(r"^(?:please )?(?:take a )?screenshot of (?:this|the) (?:page|browser|tab)$", re.I), "browse_screenshot", lambda m: {}, lambda: browser.active()),
     (re.compile(r"^(?:please )?close (?:the )?(.+?)(?: app| window)?$", re.I), "close_app", lambda m: {"name": m.group(1)}),
     (re.compile(r"^(?:please )?switch to (?!(?:a |an |the )?(?:male|female|british|english|american) voice)(?!.*\bvoice$)(?:the )?(.+?)(?: app| window)?$", re.I), "switch_app", lambda m: {"name": m.group(1)}),
     (re.compile(r"^(?:please )?minimi[sz]e(?: this| it| the window| this window)?$", re.I), "minimise_window", lambda m: {}),
@@ -297,6 +325,13 @@ DIRECT = [
     (re.compile(r"^(?:please )?add (.+?) to (?:the )?(?:file )?([\w./~-]+\.\w{1,5})$", re.I),
      "edit_file", lambda m: {"file": m.group(2), "change": "add " + m.group(1)}),
     (re.compile(r"^(?:please )?run (?:it|this|the (?:project|program|code|app|file))$", re.I), "run_project", lambda m: {}),
+    (re.compile(r"^(?:please )?fix (?:the |that |this )?(?:last )?error$", re.I), "fix_last_error", lambda m: {}),
+    (re.compile(r"^(?:please )?add (.+?) to (?:the |my )?([\w -]+?)(?: project| app| site| website)?$", re.I), "add_feature",
+     lambda m: {"feature": m.group(1), "project": m.group(2)} if coder.find_project(m.group(2)) else None),
+    (re.compile(r"^(?:please )?explain (?:this|the|that) (?:file|code)$", re.I), "explain_file", lambda m: {"file": ""}),
+    (re.compile(r"^(?:please )?explain ([\w./~-]+\.\w{1,5})$", re.I), "explain_file", lambda m: {"file": m.group(1)}),
+    (re.compile(r"^(?:please )?git init(?:iali[sz]e)?(?: this| the| my)?(?: project)?$|^initiali[sz]e git(?: here| for this project)?$", re.I),
+     "git_init_project", lambda m: {"project": ""}),
     (re.compile(r"^(?:please )?(?:build|create|make|write)(?: me)? "
                 r"(?!(?:a |an |some )?(?:note|reminder|message|e-?mail|letter|text|essay|paragraph|poem|story|joke|list|summary|draft|call|folder)\b)(?:a |an |some )?(.{6,})$", re.I),
      "build_project", lambda m: {"request": m.group(0)}),
@@ -310,6 +345,17 @@ DIRECT = [
      lambda: research_topic.has_sources()),
     (re.compile(r"^(?:i need help with|help me with|help me understand) (.+)$", re.I), "help_topic", lambda m: {"topic": m.group(1)}),
     (re.compile(r"^(how (?:do|can|should) (?:i|we) .+)$", re.I), "help_topic", lambda m: {"topic": m.group(1)}),
+    (re.compile(r"^(?:please )?start (?:a )?focus(?: timer| session)?(?: (?:for )?(\d{1,3}|(?:" + NUMW + r")(?: (?:" + NUMW + r"))?)(?: minutes?| mins?)?)?$", re.I), "start_focus",
+     lambda m: {"minutes": (find_number(m.group(1).lower()) or "") if m.group(1) else ""}),
+    (re.compile(r"^(?:please )?(?:(?:take|start) a )?break(?: (?:for )?(\d{1,2}|(?:" + NUMW + r")(?: (?:" + NUMW + r"))?)(?: minutes?| mins?)?)?$", re.I), "start_break",
+     lambda m: {"minutes": (find_number(m.group(1).lower()) or "") if m.group(1) else ""}),
+    (re.compile(r"^(?:please )?(?:stop|end|cancel) (?:the )?(?:focus|pomodoro|timer|focus timer|break)$", re.I), "stop_focus", lambda m: {}),
+    (re.compile(r"^how (?:long|much time) (?:is )?left$|^time left$", re.I), "focus_left", lambda m: {}, pomodoro.status),
+    (re.compile(r"^(?:please )?(?:change|set|switch) (?:the |my )?(?:dashboard )?(?:theme|colou?rs?) to ([a-z ]+)$", re.I), "change_theme", lambda m: {"theme": m.group(1)}),
+    (re.compile(r"^(?:please )?(next|random) (?:theme|colou?r)$", re.I), "change_theme", lambda m: {"theme": m.group(1)}),
+    (re.compile(r"^(?:show (?:me )?)?(?:jarvis )?stats$|^jarvis stats$", re.I), "jarvis_stats", lambda m: {}),
+    (re.compile(r"^good morning(?:,? jarvis)?$", re.I), "good_morning", lambda m: {}),
+    (re.compile(r"^note\s*[:,-]\s*(.+)$", re.I), "quick_note", lambda m: {"text": m.group(1)}),
     (re.compile(r"^(?:end|stop|turn off) focus mode$", re.I), "focus_mode", lambda m: {"end": True}),
     (re.compile(r"^(?:start |turn on )?focus mode(?: for (.+))?$", re.I), "focus_mode", lambda m: {"for": m.group(1) or ""}),
     (re.compile(r"^i(?:'m| m| am) on a break$", re.I), "take_break", lambda m: {}),
@@ -336,6 +382,9 @@ LOCAL_PHRASES = {
 }
 LANGUAGES = ("hindi", "kannada", "english", "auto")
 STOP = re.compile(r"^(?:please )?(?:stop(?: talking| speaking| it)?|quiet|enough|shut up|bas|ruko|रुको|रुक|चुप(?: रहो| हो जाओ)?)$")
+STOP_MUSIC = re.compile(r"^(?:please )?(?:stop(?: it| the (?:music|song|video|player))?|stop music|stop playing|"
+                        r"quiet|enough|shut up|bas|ruko|रुको|रुक|चुप(?: रहो| हो जाओ)?)$")
+PAUSE_MUSIC = re.compile(r"^(?:please )?pause(?: it| the (?:music|song|video|player)| music)?$")
 
 
 def close(word, options, cutoff=0.75):
@@ -375,6 +424,7 @@ def direct(text):
             if args is None:
                 continue
             print("  [direct command]")
+            events.emit("route", "direct " + action)
             run_tool(action, args, "")
             return True
     return fuzzy(t)
@@ -399,6 +449,8 @@ def fast_path(text):
         action = "screenshot"
     elif re.search(r"\bclipboard\b", t):
         action = "read_clipboard"
+    elif re.search(r"\b(read|what s on|what is on|whats on) (my |the )?screen\b", t):
+        action = "read_screen"
     elif re.search(r"\b(on|read|describe|at|see) (my |the )?screen\b", t):
         action = "describe_screen"
     elif re.search(r"\block\b", t) and re.search(r"\b(screen|laptop|computer)\b", t):
@@ -427,6 +479,7 @@ def fast_path(text):
     if action is None:
         return False
     print("  [quick command]")
+    events.emit("route", "quick " + action)
     do_tool(action, args)
     return True
 
@@ -473,15 +526,48 @@ def handle(text, via_wake=True):
         return _handle(text, via_wake)
 
 
+APP_STOP = re.compile(r"^(?:please )?(?:(?:stop|kill|close) (?:the (?:app|server|project|website|site))|stop running)$")
+APP_STOP_IT = re.compile(r"^(?:please )?(?:stop|kill) it$")
+
+
+def stop_media(plain):
+    """Stop or pause mpv for a stop word, whenever it is running. Returns True if the player was touched."""
+    pause = bool(PAUSE_MUSIC.match(plain)) or plain in ("quiet", "please quiet")
+    if not (pause or STOP_MUSIC.match(plain)) or not mpvctl.running():
+        return False
+    if pause:
+        if mpvctl.playing():
+            mpvctl.pause(True)
+    else:
+        mpvctl.stop()
+    return True
+
+
 def _handle(text, via_wake=True):
     """Returns True when Jarvis expects an answer from you, so it keeps listening."""
     text = collapse_repeats(text)
-    if STOP.match(re.sub(r"[!-/:-@\[-`{-~।]", "", text.lower()).strip()) and (voice.SPEAKING.is_set() or not PENDING):
+    plain = re.sub(r"[!-/:-@\[-`{-~।]", "", text.lower()).strip()
+    spoke = voice.SPEAKING.is_set()
+    if procs.alive() and (APP_STOP.match(plain) or (APP_STOP_IT.match(plain) and not spoke)):
+        do_tool("stop_project", {})
+        return False
+    if stop_media(plain):
+        if spoke:
+            voice.stop()
+        PENDING.clear()
+        state.update(touched_at=time.time())
+        return False
+    if STOP.match(plain) and (spoke or not PENDING):
         voice.stop()
         PENDING.clear()
+        study.cancel()
         return False
     if check_pending(text):
         return bool(PENDING)
+    reply = study.take(text)
+    if reply is not None:
+        voice.say(reply)
+        return study.waiting()
     if time.time() - _last_confirm[0] < 20 and _verdict(re.findall(r"[a-z]+", text.lower())) == "yes" \
             and not set(re.findall(r"[a-z]+", text.lower())) - EXTRA_FILLER:
         return False
@@ -496,11 +582,12 @@ def _handle(text, via_wake=True):
     state.update(activity="thinking", activity_at=time.time(), touched_at=time.time())
     try:
         if direct(text):
-            return bool(PENDING) or files.waiting() or play.asking()
+            return bool(PENDING) or files.waiting() or play.asking() or study.waiting()
         if fast_path(text):
             return False
         t0 = time.time()
         names = tools.pick_tools(text)
+        events.emit("route", "brain " + (",".join(names) if names else "chat"))
         plan = brain.think(text, tools.prompt(names), names) if names else brain.chat(text)
         print(f"  [brain {time.time() - t0:.1f}s ~{brain.take_tokens()} tokens]")
         if plan is None:
@@ -534,13 +621,23 @@ def greet():
     voice.say(line)
 
 
+def _on_signal(signum, frame):
+    sys.exit(0)
+
+
 def start(watch_reminders=True):
     state.update(paused=False)
     atexit.register(brain.finish)
+    atexit.register(mpvctl.stop)
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, _on_signal)
     if watch_reminders:
         reminders.watch(reminders.notify)
         digest.watch(lambda text: voice.say(voice.Full(text)))
         monitor.watch()
+    rag.start()
+    pomodoro.resume()
+    dictate.start(voice.say)
     companion.start()
     proactive.start()
     if guard.enabled():
@@ -551,12 +648,23 @@ def start(watch_reminders=True):
     voice.warm()
 
 
+def check_stop_key(seen):
+    """Kill mpv when the STOP button, Ctrl+. or voice --stop set a newer stop_at. Returns the newest stop_at seen."""
+    at = float(state.read()["stop_at"] or 0)
+    if at > seen:
+        mpvctl.stop()
+        return at
+    return seen
+
+
 def command_loop():
     """Runs commands typed into the palette, which sends them through the shared state file."""
     last = 0.0
+    stopped = float(state.get("stop_at") or 0)
     while True:
         time.sleep(0.5)
         st = state.read()
+        stopped = check_stop_key(stopped)
         if st["command"] and st["command_at"] > last:
             last, text = st["command_at"], st["command"]
             state.update(command="")
@@ -574,6 +682,9 @@ def listen():
 
 
 def main():
+    if "--text" not in sys.argv and "--no-ui" not in sys.argv:
+        from ..ui import dashboard
+        return dashboard.run()
     start()
     if "--text" in sys.argv:
         print("text mode: type a command, Ctrl+C to stop")

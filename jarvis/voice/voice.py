@@ -70,20 +70,40 @@ def player():
     return _player[0]
 
 
+def envelope(wav_path, step=0.05):
+    """Loudness of the file every 50 ms, 0 to 1, so the window can ripple with what is being said."""
+    try:
+        import numpy as np
+        with wave.open(wav_path, "rb") as f:
+            raw = np.frombuffer(f.readframes(f.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
+            size = max(1, int(f.getframerate() * step))
+        n = len(raw) // size
+        if n == 0:
+            return []
+        rms = np.sqrt((raw[: n * size].reshape(n, size) ** 2).mean(axis=1))
+        return [float(min(1.0, v * 6)) for v in rms]
+    except Exception:
+        return []
+
+
 def play(wav_path, gen):
     """Play a file; stop() or the stop key cuts it off at once."""
     cmd = player()
     if cmd is None:
         return False
     started = time.time()
+    env = envelope(wav_path)
     proc = subprocess.Popen([cmd, wav_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     _proc[0] = proc
     while proc.poll() is None:
+        i = int((time.time() - started) / 0.05)
+        events.set_out_level(env[i] if i < len(env) else 0.0)
         if gen != _gen[0]:
             proc.kill()
         elif float(state.get("stop_at") or 0) > started:
             stop()
         time.sleep(0.05)
+    events.set_out_level(0.0)
     return True
 
 
@@ -177,6 +197,8 @@ def warm():
 if __name__ == "__main__":
     if sys.argv[1:] == ["--stop"]:
         state.update(stop_at=time.time())
+        from ..actions import mpvctl
+        mpvctl.stop()
         sys.exit(0)
     say(" ".join(sys.argv[1:]) or "Hello, I am Jarvis. This is my fresh start.")
     wait()

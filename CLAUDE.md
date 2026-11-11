@@ -12,6 +12,7 @@ Groq as the brain, OpenRouter as the first fallback and Ollama as the offline fa
 - `requirements.txt`, plus `openwakeword` installed with `--no-deps`.
 - `psutil` for system status (memory, processor load, temperature).
 - No APScheduler: reminders, including repeating ones, run on the one-second polling thread in `jarvis/scheduling/reminders.py`.
+- `playwright` (browser control, uses Google Chrome). Optional system tools: `tesseract` (screen reading), `git`, `node`.
 - System tools: `wpctl` (volume), `spectacle` (screenshots), `wl-paste` / `wl-copy` (clipboard), `kdotool` (active window).
   `scrot`, `gnome-screenshot`, `xclip` and `xsel` are used only as fallbacks.
 
@@ -135,7 +136,46 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
 - Speech recognition: `stt.transcribe` returns "" for clips under 0.4 s or too quiet and for known made-up transcripts (`is_hallucination`).
   `STT_HINTS` words go into the prompt.
 - Capabilities: `actions/capabilities.py` answers "what can you do" / "help" from `TOOLS`; spoken summary, full list on screen.
-- Check scripts in `scripts/` run without a mic or accounts; each feature has its own `*_check.py`.
+- Stop control: `main._handle` first checks `procs.alive()` ("stop the app", "stop it" when nothing is speaking), then `stop_media` ("stop",
+  "stop music", "quiet", "enough" quit mpv, "pause" pauses it, only if `mpvctl.running()`), then the speech stop words. `mpvctl.stop` also kills a stuck
+  mpv and removes the socket; it runs from atexit, SIGTERM, the window's quit and the STOP key (`main.check_stop_key` polls `stop_at`). While media
+  plays `Ears._idle` never records without the wake word.
+- Nickname: `USER_NICKNAME` (default `USER_NAME`) becomes `config.PET_NAME`, which every greeting already uses.
+- Rate limits: when Groq and OpenRouter both answer 429 in one `brain.route`, it says so once and skips the cloud for `OFFLINE_SECONDS` (60).
+  `brain.log_usage` counts answered requests per provider and day in `data/usage.json` (counts only).
+- Notes search: `memory/rag.py` indexes `.md`, `.txt` and `.pdf` from `NOTES_DIR` (default `data/notes`) plus `RAG_FOLDERS` into `data/rag.db`
+  (FTS5, BM25). `actions/rag_tools.py`: `search_docs` sends the top 3 chunks (700 characters each) and appends the file names itself;
+  `reindex_notes`. `summarise_file` tries `rag.find` first. Startup reindexes in the background only when files changed.
+- Study: `actions/study.py`, data in `data/study.json` and `data/roadmap.md`. An open quiz or check-in question lives in `study._session`;
+  `main._handle` calls `study.take` right after `check_pending`, so the next sentence is the answer. Grading asks the model, with keyword
+  overlap and a built-in question bank as the offline fallback. `week_summary`, `streak` and `good_morning` use no model.
+- Focus: `scheduling/pomodoro.py` (state key `pomodoro`, a one-second thread only while a timer runs), tools in `actions/focus_tools.py`
+  (`start_focus`, `start_break`, `stop_focus`, `good_morning`, `quick_note` to `<NOTES_DIR>/inbox.md`). A finished session credits `study.add_minutes`.
+  `FOCUS_MUTE_NOTIFICATIONS=true` uses Plasma's notification Inhibit over QtDBus, which ends by itself if Jarvis exits.
+- Screen text: `screen.read_screen` captures (spectacle, grim fallback), runs tesseract, drops lines that look like secrets, and sends at most
+  3000 characters. Missing tesseract raises a ToolError that names `sudo dnf install tesseract`.
+- Dictation: `voice/dictate.py`, off unless `DICTATE_KEY` is set. It needs the input group; `python -m jarvis.voice.dictate --once` is the shortcut mode.
+  The state key `dictating` makes `Ears` ignore the mic meanwhile.
+- Stats and eval: `scripts/eval_phrases.py` writes `data/eval/<date>.json`; `actions/stats.py` (`jarvis_stats`) reads it and `data/usage.json`.
+- Coder loop: `build_project` detects the kind (`coder.detect_kind`: script, flask, fastapi, static, pyqt), writes `.jarvis.json` into the project,
+  then `check_and_fix` runs `verify` and `fix_once` up to `MAX_FIXES` (4). Flask and FastAPI get `<project>/.venv`; `install_deps` runs only after a
+  yes and only for plain names from `requirements.txt`. Generated code runs with `procs.clean_env()` (no API keys), never with sudo or rm -rf
+  (`UNSAFE`), and files are written through `write_project_file` (workspace only, one `.bak`). Child processes live in `actions/procs.py`
+  and die on exit. `run_project` starts servers and Qt apps in the background; `stop_project`, `fix_last_error`, `add_feature`, `explain_file`,
+  `git_init_project` are the other tools.
+- Browser: `actions/browser.py` (Playwright, profile `data/browser-profile`, one worker thread owns the browser, closed on exit and after
+  `BROWSER_IDLE_MINUTES`). The safety rules are in code: `refuse_typing`, `risky_click` with `_asked` (a risky click only runs after
+  `_describe_click` asked and a yes arrived), downloads cancelled until `confirm_download`, `safe_url` allows http and https only, and
+  `page_prompt` marks page text as data. "open <domain>" and "search X on Google" use it only when `browser.ready()`; otherwise the old
+  `open_site` / `web_search` run. `coder.open_web` uses it for "run it" on web apps.
+- Dashboard: `ui/dashboard/` (`python -m jarvis.main` opens it; `--no-ui` is headless, `--text` is typed). `themes.py` (no Qt: presets, hue, saving into
+  `data/settings.json` next to the voice choice) and `theme.py` (the live `Theme`: every colour and the whole stylesheet come from it, a change
+  fades 400 ms, glow sprites are cached per theme) are the only places with colour values. `widgets.py` holds the `Clock` (one timer, 30 fps, 15 in
+  low power, stopped while hidden), `Orb`, `RingGauge`, `Panel` and `MemoryGraph`, all QPainter, no graphics effects. `pages.py` has the eight pages
+  and the confirm bar; `window.py` the window, tray and `quit_all`. The voice loop is `ui.start_core`; the window gets lines through `events`
+  (`you`, `jarvis`, `sys`, plus `route` and `provider` from `main` and `brain.route`) and a Qt signal. `events.out_level` is the loudness of the
+  line being spoken (`voice.envelope`). Voice theme changes go through `theme_tools.change_theme`, which saves and sets the `theme_at` state key.
+- Check scripts in `scripts/` run without a mic or accounts; each feature has its own `*_check.py`. `scripts/all_checks.sh` runs them all.
 
 ## Conventions
 - No docstrings that restate the function name, no banner comments, no emoji.
@@ -143,7 +183,8 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
 - Do not edit `.env` or anything under `data/` by hand; test against a scratch copy of `reminders.FILE`.
 
 - Playback and wake (late additions): mpv runs at `MPV_VOLUME` (50); `Ears._begin` ducks it to 15 over IPC (`mpvctl.duck`) and `_idle` restores it
-  when the follow-up window ends, so the window stays open during mpv playback after a wake word. `MUSIC_VIDEO=true` makes songs open a video
+  when the follow-up window ends. While media plays the window no longer records without the wake word (music must not produce transcripts), so
+  each command during playback starts with the wake word, for example "Alexa, stop". `MUSIC_VIDEO=true` makes songs open a video
   window; "watch X", "show me X" and "play a video of X" always do. `main.collapse_repeats` turns "stop playing. stop playing" / "next next" into
   one phrase before routing. `WAKE_DEBUG=1` prints wake scores above 0.15; `BARGE_THRESHOLD` is separate from `WAKE_THRESHOLD`; extra custom
   `.onnx` wake models in `models/` load next to hey_jarvis. `python -m jarvis.actions.mpvctl --pause|--stop|--next` for keyboard shortcuts.

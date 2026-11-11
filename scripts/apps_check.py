@@ -76,7 +76,8 @@ with mock.patch.object(apps.shutil, "which", return_value=None):
         check("missing brightnessctl said plainly", "brightnessctl" in str(e))
 
 routes = {}
-with mock.patch.object(core, "run_tool", side_effect=lambda a, b, c: routes.update(last=(a, b))):
+with mock.patch.object(core, "run_tool", side_effect=lambda a, b, c: routes.update(last=(a, b))), \
+        mock.patch.object(core.browser, "ready", lambda: False):
     for text, want in (("close spotify", "close_app"), ("switch to chrome", "switch_app"), ("minimise this", "minimise_window"),
                        ("brightness down", "brightness"), ("open github.com", "open_site"), ("search python decorators", "web_search"),
                        ("open the folder resume", "open_path")):

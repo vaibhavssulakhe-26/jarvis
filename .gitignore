@@ -11,3 +11,4 @@ training/work/
 models/voices/
 *.onnx
 *.onnx.json
+.venv*/

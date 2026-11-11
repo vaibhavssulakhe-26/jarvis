@@ -265,7 +265,7 @@ playing["on"] = True
 with mock.patch.object(ears, "media_playing", lambda: True), mock.patch.object(ears.events, "set_level"):
     for _ in range(3):
         g._idle(loud_block, 0.1, time.time())
-check("speech in the window while mpv is turned down is recorded", g.phase == "record" and duck_state["on"], str(g.phase))
+check("sound in the window while music plays is not recorded without the wake word", g.phase is None and g.awake_until == 0.0, str(g.phase))
 g.phase, g.loud, g.awake_until = None, 0, time.time() - 1
 with mock.patch.object(ears.events, "set_level"):
     g._idle(silent_block, 0.0, time.time())
@@ -287,6 +287,118 @@ for flag, score, want in ((True, 0.2, True), (True, 0.1, False), (False, 0.3, Fa
         g._idle(np.full(1280, int(score * 100), dtype=np.int16), 0.0, time.time())
     check(f"WAKE_DEBUG={flag} score {score}: " + ("printed" if want else "silent"), ("wake score" in out.getvalue()) == want, out.getvalue())
 g.debug = False
+
+# ---- phase 1: mpv stop control, exit cleanup, nickname, rate-limit fallback ----
+calls = []
+fake_mpv = {"running": True, "playing": True}
+for phrase, want in (("stop", "quit"), ("Stop.", "quit"), ("stop music", "quit"), ("stop the music", "quit"), ("quiet", "pause"),
+                     ("pause", "pause"), ("pause the music", "pause")):
+    del calls[:]
+    with mock.patch.object(main.mpvctl, "running", lambda: fake_mpv["running"]), mock.patch.object(main.mpvctl, "playing", lambda: fake_mpv["playing"]), \
+            mock.patch.object(main.mpvctl, "stop", lambda: calls.append("quit")), mock.patch.object(main.mpvctl, "pause", lambda on=True: calls.append("pause")), \
+            mock.patch.object(main.brain, "think", side_effect=AssertionError("brain")), mock.patch.object(main.brain, "chat", side_effect=AssertionError("brain")):
+        main._handle(phrase)
+    check(f"{phrase!r} {want}s mpv while it runs, no brain", calls == [want], str(calls))
+del calls[:]
+fake_mpv["running"] = False
+with mock.patch.object(main.mpvctl, "running", lambda: False), mock.patch.object(main.mpvctl, "stop", lambda: calls.append("quit")), \
+        mock.patch.object(main.voice, "stop", lambda: True):
+    main._handle("stop")
+check("stop leaves mpv alone when it is not running", not calls, str(calls))
+
+seen = 0.0
+del calls[:]
+with mock.patch.object(main.mpvctl, "stop", lambda: calls.append("quit")):
+    seen = main.check_stop_key(state.read()["stop_at"])
+    check("an old stop key does not kill mpv again", not calls)
+    state.update(stop_at=time.time() + 5)
+    seen = main.check_stop_key(seen)
+    check("the stop key (button, Ctrl+. and --stop) kills mpv", calls == ["quit"], str(calls))
+    main.check_stop_key(seen)
+    check("one stop press kills it once", calls == ["quit"])
+
+from jarvis.actions import mpvctl as _mpv  # noqa: E402
+sock = _mpv.socket_path()
+sock.write_text("")
+killed = []
+
+
+class Child:
+    def wait(self, timeout=None):
+        raise _mpv.subprocess.TimeoutExpired("mpv", timeout)
+
+    def kill(self):
+        killed.append(1)
+
+
+_mpv._state["proc"] = Child()
+with mock.patch.object(_mpv, "send", lambda *a: None):
+    _mpv.stop()
+check("exit cleanup kills a stuck mpv", killed == [1])
+check("exit cleanup removes the IPC socket", not sock.exists())
+check("cleanup is registered for exit", any(getattr(f, "__name__", "") == "stop" for f in [_mpv.stop]) and
+      "atexit.register(stop)" in Path(_mpv.__file__).read_text())
+check("SIGTERM exits cleanly so atexit runs", "signal.SIGTERM" in Path(main.__file__).read_text())
+
+import importlib  # noqa: E402
+from jarvis.core import config as _config  # noqa: E402
+from jarvis.brain import brain as _brain  # noqa: E402
+os.environ["USER_NICKNAME"] = "Vib"
+os.environ["USER_NAME"] = "Vaibhav"
+importlib.reload(_config)
+check("USER_NICKNAME sets the name used in replies", _config.PET_NAME == "Vib" and _config.NICKNAME == "Vib")
+os.environ.pop("USER_NICKNAME")
+importlib.reload(_config)
+check("the nickname defaults to USER_NAME", _config.NICKNAME == "Vaibhav")
+os.environ["USER_NICKNAME"] = "Vib"
+importlib.reload(_config)
+heard_said = []
+with mock.patch.object(main.voice, "say", lambda t: heard_said.append(str(t))), mock.patch.object(main.config, "PET_NAME", "Vib"):
+    main.greet()
+check("the greeting uses Vib", "Vib" in " ".join(heard_said), str(heard_said))
+with mock.patch.object(_brain.config, "PET_NAME", "Vib"), mock.patch.object(_brain.memory, "context", lambda t: ""):
+    check("the chat prompt names Vib", "Vib" in _brain.chat_system("hello"))
+check("the voice says Vib as written", voice.pronounce("Hello Vib") == "Hello Vib")
+os.environ.pop("USER_NICKNAME")
+os.environ.pop("USER_NAME")
+importlib.reload(_config)
+
+said_b, tried = [], []
+
+
+def limited(name):
+    def call(messages, max_tokens, want_json):
+        tried.append(name)
+        return (None, 429) if name != "ollama" else ('{"action":"chat","say":"hi"}', 200)
+    return call
+
+
+_brain._busy.clear()
+_brain._offline_until[0] = 0.0
+msgs = [{"role": "user", "content": "hi"}]
+with mock.patch.object(_brain, "PROVIDERS", (("groq", limited("groq")), ("openrouter", limited("openrouter")), ("ollama", limited("ollama")))), \
+        mock.patch.object(voice, "say", lambda t: said_b.append(str(t))), mock.patch.object(_brain, "_room", lambda n, t: True):
+    out = _brain.route(msgs)
+    check("both clouds 429 -> the offline model answers", out[1] == "ollama", str(out))
+    check("the rate limit is announced once", len(said_b) == 1 and "rate limited" in said_b[0], str(said_b))
+    del tried[:]
+    _brain.route(msgs)
+    _brain.route(msgs)
+    check("the next turns go straight to the offline model", tried == ["ollama", "ollama"], str(tried))
+    check("and it is not announced again", len(said_b) == 1, str(said_b))
+    _brain._offline_until[0] = time.time() - 1
+    _brain._busy.clear()
+    del tried[:]
+    _brain.route(msgs)
+    check("after the minute the clouds are tried again", tried[:1] == ["groq"], str(tried))
+    _brain._busy.clear()
+    _brain._offline_until[0] = 0.0
+    del said_b[:], tried[:]
+    with mock.patch.object(_brain, "PROVIDERS", (("groq", limited("groq")), ("openrouter", lambda m, t, j: (None, 0)), ("ollama", limited("ollama")))):
+        _brain.route(msgs)
+    check("one cloud 429 alone does not switch to offline mode", not said_b and _brain._offline_until[0] == 0.0, str(said_b))
+_brain._busy.clear()
+_brain._offline_until[0] = 0.0
 voice.SPEAKING.clear()
 for p in patches:
     p.stop()

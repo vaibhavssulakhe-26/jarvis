@@ -3,6 +3,7 @@ import html
 import math
 import os
 import random
+import signal
 import subprocess
 import sys
 import threading
@@ -18,7 +19,7 @@ from PyQt6.QtGui import (QBrush, QColor, QFont, QIcon, QKeySequence, QLinearGrad
 from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QLineEdit, QPushButton,
                              QTextEdit, QVBoxLayout, QWidget)
 
-from ..actions import events
+from ..actions import browser, events, mpvctl, procs
 from ..brain import brain
 from ..core import config, main as core, state
 from ..voice import voice, voices
@@ -333,6 +334,14 @@ class Stage(QWidget):
         p.end()
 
 
+def shutdown_all():
+    """Kill mpv, the controlled browser and every child process, and save the conversation summary."""
+    mpvctl.stop()
+    procs.stop_all()
+    browser.shutdown()
+    brain.finish()
+
+
 class Bus(QObject):
     line = pyqtSignal(str, str)
 
@@ -378,7 +387,7 @@ class Window(QWidget):
         self.btn_talk = QPushButton("TALK")
         self.btn_talk.clicked.connect(self.talk)
         self.btn_stop = QPushButton("STOP")
-        self.btn_stop.clicked.connect(lambda: state.update(stop_at=time.time()))
+        self.btn_stop.clicked.connect(self.stop_all)
         self.btn_mute = QPushButton("MUTE")
         self.btn_mute.setCheckable(True)
         self.btn_mute.toggled.connect(lambda on: state.update(muted=bool(on)))
@@ -456,9 +465,13 @@ class Window(QWidget):
         if self.isFullScreen():
             self.showNormal()
 
+    def stop_all(self):
+        state.update(stop_at=time.time())
+        mpvctl.stop()
+
     def quit_app(self):
         state.update(activity="idle")
-        brain.finish()
+        shutdown_all()
         os._exit(0)
 
     def closeEvent(self, ev):
@@ -503,7 +516,13 @@ def main():
     win.show()
     win.add_line("sys", "Say " + config.wake_label().title() + ", then your command. Or type below. F11 toggles full screen.")
     start_core()
+    signal.signal(signal.SIGTERM, lambda *a: win.quit_app())
+    signal.signal(signal.SIGINT, lambda *a: win.quit_app())
+    ticker = QTimer()
+    ticker.start(500)
+    ticker.timeout.connect(lambda: None)
     code = app.exec()
+    mpvctl.stop()
     os._exit(code)
 
 

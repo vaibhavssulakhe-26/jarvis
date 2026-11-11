@@ -1,6 +1,8 @@
 """One mpv process, controlled over its IPC socket. Falls back to the browser when mpv is missing."""
 import argparse
+import atexit
 import json
+import os
 import shlex
 import shutil
 import socket
@@ -196,8 +198,27 @@ def pause(on=True):
 
 
 def stop():
+    """Quit mpv, kill it if it ignores the request, and remove its socket."""
     _state["restore"] = None
     send("quit")
+    proc = _state["proc"]
+    if proc is not None:
+        try:
+            proc.wait(timeout=1.0)
+        except (subprocess.TimeoutExpired, OSError):
+            try:
+                proc.kill()
+            except OSError:
+                pass
+        _state["proc"] = None
+    if not running():
+        try:
+            os.unlink(socket_path())
+        except OSError:
+            pass
+
+
+atexit.register(stop)
 
 
 def ducked():
@@ -252,7 +273,7 @@ def main(argv=None):
     if args.pause:
         send("cycle", "pause")
     else:
-        send("quit")
+        stop()
     return 0
 
 

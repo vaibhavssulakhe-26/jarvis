@@ -2,6 +2,7 @@
 Groq is the main brain. OpenRouter is the first backup, then Ollama on this laptop when Groq is busy or offline."""
 import base64
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -50,6 +51,9 @@ LAST_ACTION = [None]
 _busy = {}
 _cache = OrderedDict()
 _ollama_said = [0.0]
+_offline_until = [0.0]
+LIMITED = {"count": 0}
+OFFLINE_SECONDS = 60
 _spent = {}
 _turn_tokens = [0]
 NOTES = ""
@@ -363,22 +367,64 @@ def _try_ollama(messages, max_tokens, want_json):
 PROVIDERS = (("groq", _try_groq), ("openrouter", _try_openrouter), ("ollama", _try_ollama))
 
 
+def log_usage(name, messages, reply):
+    """Count one answered request per provider and day in data/usage.json: calls and estimated tokens, never any text."""
+    try:
+        path = config.DATA / "usage.json"
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            data = {}
+        row = data.setdefault(datetime.now().strftime("%Y-%m-%d"), {}).setdefault(name, {"calls": 0, "tokens": 0})
+        row["calls"] += 1
+        row["tokens"] += estimate(messages) + len(str(reply)) // 4
+        for old in sorted(data)[:-30]:
+            del data[old]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"usage.json.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(data))
+        os.replace(tmp, path)
+    except Exception as e:
+        print(f"  (could not record usage: {type(e).__name__})")
+
+
+def _go_offline():
+    """Both cloud brains are rate limited: say so once and use the offline model for a minute."""
+    if _offline_until[0] > time.time():
+        return
+    _offline_until[0] = time.time() + OFFLINE_SECONDS
+    _ollama_said[0] = time.time()
+    from ..voice import voice
+    voice.say("Both cloud brains are rate limited, so I will stay on the offline model for a minute.")
+
+
 def route(messages, max_tokens=PLAN_TOKENS, want_json=True, local=False):
     """Try each provider in order. Returns (reply text, provider name), or (None, None).
     local=True skips the cloud providers, for text that must stay on this laptop."""
     if local:
         _ollama_said[0] = time.time()
+    codes = {}
     for name, call in PROVIDERS:
-        if (local and name != "ollama") or _busy.get(name, 0) > time.time():
+        if name == "ollama" and not local and codes.get("groq") == 429 and codes.get("openrouter") == 429:
+            _go_offline()
+        if (local and name != "ollama") or _busy.get(name, 0) > time.time() or \
+                (name != "ollama" and _offline_until[0] > time.time()):
+            if _busy.get(name, 0) > time.time():
+                codes[name] = 429
             continue
         if not _room(name, estimate(messages) + max_tokens):
             print(f"  ({name} has no room left in its minute, trying the next brain)")
             continue
         text, code = call(messages, max_tokens, want_json)
+        codes[name] = code
         if code == 429:
             _busy[name] = time.time() + BUSY_SECONDS
+            LIMITED["count"] += 1
         if text and text.strip() and (not want_json or _extract_json(text) is not None):
             print(f"  [answered by {name}]")
+            from ..actions import events
+            events.emit("provider", name)
+            log_usage(name, messages, text)
             return text.strip(), name
     return None, None
 

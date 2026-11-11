@@ -49,6 +49,8 @@ TRIGGERS = {
     "read_notes": "note notes noted read",
     "list_notes": "notes list topics",
     "search_notes": "notes search",
+    "search_docs": "notes note search pdf wrote write written documents look find",
+    "reindex_notes": "reindex index notes",
     "append_to_note": "add append note",
     "delete_note": "delete remove note notes",
     "find_file": "find file where locate",
@@ -60,6 +62,22 @@ TRIGGERS = {
     "edit_file": "edit change modify update add file code",
     "find_bugs": "bugs bug debug fix error check code file",
     "run_project": "run execute start program project code",
+    "browse_open": "browse website site open go page",
+    "browse_search": "search google youtube github browser",
+    "browse_click": "click link button page browser",
+    "browse_type": "type enter box field browser",
+    "browse_scroll": "scroll page",
+    "browse_read": "read page article summarise website",
+    "browse_back": "back page browser",
+    "new_tab": "new tab browser",
+    "close_tab": "close tab browser",
+    "browse_screenshot": "screenshot page browser",
+    "stop_project": "stop kill server app project",
+    "fix_last_error": "fix error last project code",
+    "add_feature": "add feature project app",
+    "explain_file": "explain file code does",
+    "git_init_project": "git init repository project",
+    "install_deps": "install packages dependencies",
     "remember": "remember",
     "snooze_reminder": "snooze again later tonight",
     "stop_repeating": "stop repeating",
@@ -92,6 +110,7 @@ TRIGGERS = {
     "message_contact": "message send text whatsapp tell mom",
     "send_screenshot": "send screenshot whatsapp",
     "describe_screen": "screen see look showing",
+    "read_screen": "screen read text ocr onscreen",
     "read_clipboard": "clipboard copied copy paste",
     "summarise_file": "summarise summarize summary pdf file document read synopsis",
     "research": "research find out news latest hackathon search events",
@@ -118,6 +137,21 @@ TRIGGERS = {
     "proactive_level": "chattier quieter talk more less",
     "proactive_quiet": "stop talking quiet hours",
     "set_language": "listen reply language hindi kannada english",
+    "start_focus": "start focus pomodoro timer minutes",
+    "start_break": "break pomodoro rest",
+    "stop_focus": "stop focus timer pomodoro",
+    "focus_left": "left remaining focus timer",
+    "good_morning": "morning",
+    "quick_note": "note inbox quick",
+    "change_theme": "theme colour color change next random",
+    "jarvis_stats": "stats statistics pass rate tokens usage",
+    "quiz_me": "quiz question test dsa arrays trees graphs lists dp",
+    "teach_me": "teach explain learn lesson",
+    "study_progress": "weak topics progress study quiz",
+    "roadmap_next": "roadmap next plan",
+    "roadmap_done": "roadmap mark done finished complete",
+    "log_today": "log today check checkin sleep walk",
+    "week_summary": "week weekly summary how",
 }
 ALWAYS = {"remember"}
 MAX_TOOLS = 3
@@ -331,6 +365,7 @@ def screenshot(args):
 def capture_screen(path):
     # scrot and gnome-screenshot only work on X11 or GNOME, so they are fallbacks behind spectacle
     for cmd in (["spectacle", "-b", "-n", "-f", "-o", str(path)],
+                ["grim", str(path)],
                 ["gnome-screenshot", "-f", str(path)],
                 ["scrot", "-o", str(path)]):
         if shutil.which(cmd[0]):
@@ -482,6 +517,6 @@ def restart(args):
 
 
 # these modules register their tools on import, so they must load after the registry above
-from . import (apps, briefing, capabilities, clipwatch, coder, debug, documents, guard_tools, handoff, mail, media, messaging,  # noqa: E402,F401
-               notes, palette_tools, play, proactive_tools, recall, reminder_tools, screen, translate, voice_tools, watches)
+from . import (apps, briefing, browser, capabilities, clipwatch, coder, debug, documents, focus_tools, guard_tools, handoff, mail, media, messaging,  # noqa: E402,F401
+               notes, palette_tools, play, proactive_tools, rag_tools, recall, reminder_tools, screen, stats, study, theme_tools, translate, voice_tools, watches)
 from ..research import research, topic  # noqa: E402,F401

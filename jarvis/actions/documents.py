@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 
 from ..brain import brain
+from ..memory import rag
 from . import events, files
 from ..voice.speech import Full
 from .tools import ToolError, tool
@@ -146,7 +147,8 @@ def find_file(args):
 
 @tool("summarise_file", 'args {"path": "<file name as said, or empty for the last file>"} - read a PDF, text or Word file and speak a short summary; for "summarise this PDF", "what does this document say"')
 def summarise_file(args):
-    path = locate(args.get("path"), ("summarise_file", {}))
+    path = rag.find(args.get("path") or "") if str(args.get("path") or "").strip() else None
+    path = path or locate(args.get("path"), ("summarise_file", {}))
     text = extract(path)
     bullets = summarise_text(text)
     if not bullets:

@@ -17,3 +17,4 @@ pdfminer.six
 python-docx
 trafilatura==2.3.1
 openwakeword==0.3.0  # install with: pip install --no-deps openwakeword==0.3.0
+playwright

@@ -67,6 +67,9 @@ class FakeProc:
     def kill(self):
         self.code = -9
 
+    def wait(self, timeout=None):
+        return self.code
+
 
 modes = {"exit": [], "silent": False}
 

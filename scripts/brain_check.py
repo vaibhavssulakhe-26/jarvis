@@ -1,8 +1,11 @@
 """Checks provider fallbacks with mocked HTTP. Run: python scripts/brain_check.py"""
+import os
 import sys
+import tempfile
 from pathlib import Path
 from unittest import mock
 
+os.environ["JARVIS_DATA"] = tempfile.mkdtemp(prefix="jarvis-brain-")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from jarvis.brain import brain  # noqa: E402

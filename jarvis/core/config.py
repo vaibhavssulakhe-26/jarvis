@@ -45,7 +45,8 @@ def flag(name, default=False):
 
 
 ASSISTANT = get("ASSISTANT_NAME", "Jarvis")
-PET_NAME = get("USER_PET_NAME") or get("USER_NAME")
+NICKNAME = get("USER_NICKNAME") or get("USER_NAME")
+PET_NAME = get("USER_NICKNAME") or get("USER_PET_NAME") or get("USER_NAME")
 SHORT_NAME = get("USER_SHORT_NAME") or get("USER_NAME")
 FULL_NAME = get("USER_FULL_NAME") or SHORT_NAME
 GOD_NAME = get("USER_GOD_NAME")

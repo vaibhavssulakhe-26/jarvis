@@ -263,7 +263,7 @@ class Ears:
     def _step(self, block):
         now = time.time()
         st = state.read()
-        if st["paused"]:
+        if st["paused"] or st["dictating"]:
             self._drain()
             self._reset()
             return
@@ -330,7 +330,7 @@ class Ears:
                 self.loud += 1
                 if self.loud >= 2:
                     self.loud = 0
-                    if media_playing() and not mpvctl.ducked():
+                    if media_playing():
                         self.awake_until = 0.0
                     else:
                         self.via_wake = False

@@ -27,6 +27,27 @@ A personal voice assistant that runs locally on Linux. Talk to it, it listens, t
 - Say "stop", "quiet" or "enough" to cut Jarvis off; "Hey Jarvis, stop" works while it talks, and the window has a STOP button
 - With mpv installed, videos and music play in one player: "next", "pause", "resume", "stop playing", "louder", "skip forward", "go back"
 - Friendly chat, and optional check-ins when I have been quiet (`PROACTIVE`, "be chattier", "stop talking for two hours")
+- Stop control: "stop", "stop music" and "quiet" quit or pause mpv whenever it runs; the STOP button, Ctrl+. and `voice --stop` also kill it.
+  While music plays the mic only goes to speech recognition after the wake word. mpv is killed on exit.
+- Nickname: `USER_NICKNAME` (default `USER_NAME`) is what Jarvis calls me in greetings and replies
+- Notes and PDF search: "search my notes for X", "what did I write about X", "summarise <file>", "reindex my notes". SQLite FTS5, no embeddings;
+  three chunks go to the model and the answer names the file
+- Study buddy: "quiz me on trees" (arrays, linked lists, trees, graphs, DP), "teach me about recursion", "my weak topics",
+  "what's next on my roadmap", "mark arrays done", "log today", "how was my week"
+- Focus: "start focus 25", "break", "stop focus", "good morning" (date, reminders, next roadmap item, streak), "note: buy a cable"
+- Screen and dictation: "read my screen" (OCR with tesseract), hold-to-talk dictation into the focused window (`DICTATE_KEY`)
+- Coding agent: "build me a flask app" plans, writes, runs and fixes (4 tries) in `CODE_WORKSPACE/<name>`; "run it", "stop it",
+  "fix the last error", "add dark mode to <project>", "explain this file", "git init this project"
+- Browser control: "go to github", "search cats on YouTube", "click About us", "scroll down", "read this page", "go back", "new tab",
+  "close tab". Own profile, no typing into secret fields, risky clicks and downloads wait for a yes
+- Dashboard: `python -m jarvis.main` opens a dark glass HUD (sidebar with Home, Media, Code, Notes, Study, Web, Stats, Settings; a particle orb
+  that reacts to listening, thinking and speaking; gauges, a live feed, a today card, provider status, a memory graph of notes). The voice loop
+  runs in a background thread, so everything can also be typed and the window works with the mic off. `--no-ui` is the old headless mode,
+  `--text` is typed-only in the terminal. Close hides to the tray; Quit stops mpv, the browser and child processes.
+- Themes: Cyan, Green, Amber, Red, Purple, Pink, White or a custom hue (Settings), by the top bar button, or by voice: "change theme to red",
+  "next theme", "random theme". Optional state colours and hue cycling. The choice is saved in `data/settings.json`.
+- Low power mode (Settings, or automatic below 1.5 GB free): 15 fps, 40 points, no rings. Animation stops while the window is hidden or minimised.
+- "Jarvis stats": last test pass rate, average tokens and which brain answered how often
 
 ## Wake word
 
@@ -74,11 +95,29 @@ ui/ PyQt6 interface
 - Speech recognition with `STT=groq` uses `STT_MODEL` (default whisper-large-v3) and detects the language itself.
   The local fallback is the multilingual `STT_LOCAL_MODEL` (default `small`).
 - Proactive chat sends nothing online by itself: lines come from a local list, plus at most one small brain call every four hours.
-- New `.env` keys: `VOICE` (first-run voice), `CODE_WORKSPACE`, `CODE_PROVIDER`, `CODE_MODEL`, `BROWSER`, `STUDY_CHANNELS`,
+- New `.env` keys: `USER_NICKNAME`, `NOTES_DIR`, `RAG_FOLDERS`, `FOCUS_MUTE_NOTIFICATIONS`, `DICTATE_KEY`, `BROWSER_HEADLESS`, `BROWSER_LITE`,
+  `BROWSER_CHANNEL`, `BROWSER_IDLE_MINUTES`, `BROWSER_DOWNLOADS`. All are in `.env.example` with safe defaults.
+- Screen reading needs `sudo dnf install tesseract`. Without it Jarvis says so and "describe my screen" still uses the vision model.
+- Dictation reads the keyboard through evdev, which needs `sudo usermod -aG input $USER` (then log out and in). Without that, bind
+  `.venv/bin/python -m jarvis.voice.dictate --once` to a KDE shortcut: it records until you stop talking and pastes the text.
+- Browser control uses Playwright (`pip install playwright`) with Google Chrome; without Chrome run `playwright install chromium`.
+  Its profile is `data/browser-profile`, separate from your own.
+- Other new `.env` keys: `VOICE` (first-run voice), `CODE_WORKSPACE`, `CODE_PROVIDER`, `CODE_MODEL`, `BROWSER`, `STUDY_CHANNELS`,
   `STT_MODEL`, `STT_LOCAL_MODEL`, `STT_LANGUAGE` (default `en`), `PROACTIVE`, `PLAYER` (`mpv` or `browser`).
 - Long replies (drafts, code, lists) are shown on screen and copied instead of being read out. A KDE shortcut for
   `.venv/bin/python -m jarvis.voice.voice --stop` gives a global stop key.
 - Checks: `python scripts/<name>_check.py` (no mic or accounts needed).
+
+## How to test
+
+1. `scripts/all_checks.sh` runs every `*_check.py` that needs no microphone and prints one line each (`mic_check.py` is interactive).
+2. `python scripts/eval_phrases.py` sends 30 phrases through the router with a mocked brain and saves `data/eval/<date>.json`
+   (`--scratch` keeps the result out of `data/`). Then say or type "jarvis stats".
+3. Dashboard without a display: `QT_QPA_PLATFORM=offscreen python scripts/dashboard_check.py`. Text mode without a microphone: `python -m jarvis.main --text`, then try "quiz me on trees", "note: test", "start focus 1",
+   "search my notes for graphs", "go to example.com".
+4. With a microphone, use the list in `NOTES.md` ("Needs a real microphone").
+5. One feature at a time: `rag_check`, `study_check`, `focus_check`, `screen_check`, `coder_build_check` (needs network for the Flask
+   install), `browser_check` (needs Chrome and Playwright), `stop_check`, `stats_check`.
 
 ## Run
 
