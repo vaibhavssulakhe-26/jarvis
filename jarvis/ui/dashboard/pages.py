@@ -3,17 +3,18 @@ import time
 from datetime import datetime
 
 import psutil
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QPainter, QPen
 from PyQt6.QtWidgets import (QCheckBox, QColorDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPushButton, QSlider,
                              QSpinBox, QTextEdit, QVBoxLayout, QWidget)
 
-from ...actions import coder, mpvctl, play, procs, stats, study
+from ...actions import coder, events, mpvctl, play, procs, stats, study
 from ...brain import brain
 from ...core import config, state
 from ...memory import notes as notes_store, rag
 from ...scheduling import pomodoro, reminders
 from . import themes
+from .theme import alpha
 from .widgets import MemoryGraph, Orb, Panel, RingGauge, mono
 
 KEYS = ("GROQ_API_KEY", "OPENROUTER_API_KEY", "GMAIL_APP_PASSWORD", "GROQ_VISION_MODEL")
@@ -87,26 +88,84 @@ class Page(QWidget):
 
 
 def provider_states():
-    """[(name, label, level)] where level is ok, warn or bad."""
+    """[(name, label, level, seconds or None)] where level is ok, warn or bad."""
     now = time.time()
     out = []
-    for key, env in (("groq", "GROQ_API_KEY"), ("openrouter", "OPENROUTER_API_KEY")):
+    for key, env, name in (("groq", "GROQ_API_KEY", "Groq"), ("openrouter", "OPENROUTER_API_KEY", "OpenRouter")):
+        lat = brain.LATENCY.get(key)
         if not config.get(env):
-            out.append((key.title() if key == "groq" else "OpenRouter", "no key", "bad"))
+            out.append((name, "no key", "bad", None))
         elif brain._busy.get(key, 0) > now or brain._offline_until[0] > now:
-            out.append((key.title() if key == "groq" else "OpenRouter", "rate-limited", "warn"))
+            out.append((name, "rate-limited", "warn", lat))
         else:
-            out.append((key.title() if key == "groq" else "OpenRouter", "connected", "ok"))
+            out.append((name, "connected", "ok", lat))
     return out
 
 
+class Card(QWidget):
+    """One provider: a dot, the name, its state and the latency of its last answer."""
+
+    def __init__(self, theme, parent=None):
+        super().__init__(parent)
+        self.theme = theme
+        self.name = self.state = ""
+        self.level = "bad"
+        self.latency = None
+        self.setFixedHeight(46)
+        theme.changed.connect(self.update)
+
+    def set(self, name, state, level, latency):
+        self.name, self.state, self.level, self.latency = name, state, level, latency
+        self.update()
+
+    def paintEvent(self, ev):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        t = self.theme
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        p.setPen(QPen(alpha(t.accent, 60), 1))
+        p.setBrush(alpha(t.accent, 14))
+        p.drawRoundedRect(r, 6, 6)
+        colour = {"ok": t.ok, "warn": t.warn, "bad": t.bad}[self.level]
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(colour)
+        p.drawEllipse(QPointF(16, r.height() / 2 + 0.5), 4.5, 4.5)
+        p.setPen(t.text)
+        p.setFont(mono(10, True))
+        p.drawText(QRectF(30, 4, r.width() - 100, 20), Qt.AlignmentFlag.AlignVCenter, self.name)
+        p.setPen(colour)
+        p.setFont(mono(8))
+        p.drawText(QRectF(30, 23, r.width() - 40, 18), Qt.AlignmentFlag.AlignVCenter, self.state)
+        p.setPen(t.dim)
+        p.setFont(mono(9))
+        p.drawText(QRectF(r.width() - 80, 4, 72, 36), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                   f"{self.latency * 1000:.0f} ms" if self.latency else "no data")
+
+
+AGENTS = (("Coder", "coder"), ("Browser", "browser"), ("Research", "research"), ("Notes", "notes"), ("Study", "study"))
+
+
+def agent_running(key):
+    from ...actions import browser
+    if events.busy.get(key, 0) > 0:
+        return True
+    if key == "coder":
+        return procs.alive()
+    if key == "browser":
+        return browser.active()
+    return False
+
+
 class Home(Page):
+    FEED_ROWS = 12
+
     def __init__(self, ctx):
         super().__init__(ctx)
         t = ctx.theme
         row = QHBoxLayout()
         row.setSpacing(12)
         left = QVBoxLayout()
+        left.setSpacing(10)
         gauges = Panel(t, "System")
         g = QHBoxLayout()
         self.cpu, self.ram, self.disk = RingGauge(t, "CPU"), RingGauge(t, "RAM"), RingGauge(t, "DISK")
@@ -116,32 +175,46 @@ class Home(Page):
         self.up = value_label("")
         gauges.box.addWidget(self.up)
         prov = Panel(t, "Providers")
-        self.prov = value_label("")
-        self.prov.setTextFormat(Qt.TextFormat.RichText)
-        prov.box.addWidget(self.prov)
-        left.addWidget(gauges)
-        left.addWidget(prov)
-        left.addStretch(1)
+        self.cards = [Card(t) for _ in range(3)]
+        for c in self.cards:
+            prov.box.addWidget(c)
+        mem = Panel(t, "Memory")
+        self.mem = value_label("")
+        mem.box.addWidget(self.mem)
+        core = Panel(t, "Core")
+        self.core = value_label("")
+        self.core.setTextFormat(Qt.TextFormat.RichText)
+        core.box.addWidget(self.core)
+        core.box.addStretch(1)
+        for w in (gauges, prov, mem):
+            left.addWidget(w)
+        left.addWidget(core, 1)
         centre = QVBoxLayout()
         self.orb = Orb(t, ctx.clock)
         self.status = QLabel("")
         self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status.setObjectName("cap")
+        self.status.setObjectName("state")
         centre.addWidget(self.orb, 1)
         centre.addWidget(self.status)
         right = QVBoxLayout()
+        right.setSpacing(10)
         feed = Panel(t, "Live feed")
         self.feed = value_label("")
         self.feed.setTextFormat(Qt.TextFormat.RichText)
         self.feed.setAlignment(Qt.AlignmentFlag.AlignTop)
         feed.box.addWidget(self.feed, 1)
-        today = Panel(t, "Today")
+        agents = Panel(t, "Active agents")
+        self.agents = value_label("")
+        self.agents.setTextFormat(Qt.TextFormat.RichText)
+        agents.box.addWidget(self.agents)
+        mission = Panel(t, "Mission timeline")
         self.today = value_label("")
         self.today.setTextFormat(Qt.TextFormat.RichText)
-        today.box.addWidget(self.today)
+        mission.box.addWidget(self.today)
         right.addWidget(feed, 1)
-        right.addWidget(today)
-        for col, stretch in ((left, 2), (centre, 4), (right, 3)):
+        right.addWidget(agents)
+        right.addWidget(mission)
+        for col, stretch in ((left, 3), (centre, 6), (right, 3)):
             holder = QWidget()
             holder.setLayout(col)
             col.setContentsMargins(0, 0, 0, 0)
@@ -150,30 +223,49 @@ class Home(Page):
 
     def refresh(self):
         t = self.ctx.theme
+        dim, acc = t.dim.name(), t.accent.name()
         self.cpu.set_value(psutil.cpu_percent(None))
         self.ram.set_value(psutil.virtual_memory().percent)
         self.disk.set_value(psutil.disk_usage("/").percent)
-        free = psutil.virtual_memory().available / 2 ** 30
-        self.up.setText(f"free memory {free:.1f} GB")
+        self.up.setText(f"free memory {psutil.virtual_memory().available / 2 ** 30:.1f} GB")
         states = provider_states()
-        states.append(("Ollama", "connected" if self.ctx.ollama else "offline", "ok" if self.ctx.ollama else "bad"))
-        colour = {"ok": t.ok.name(), "warn": t.warn.name(), "bad": t.bad.name()}
-        self.prov.setText("<br>".join(f'<span style="color:{colour[lv]}">&#9679;</span> {n} <span style="color:{t.dim.name()}">{lab}</span>'
-                                      for n, lab, lv in states))
+        states.append(("Ollama", "connected" if self.ctx.ollama else "offline", "ok" if self.ctx.ollama else "bad",
+                       brain.LATENCY.get("ollama")))
+        for card, (name, label, level, lat) in zip(self.cards, states):
+            card.set(name, label, level, lat)
+        count = rag.count()
+        stamp = rag.last_indexed()
+        self.mem.setText(f"{count} notes and documents indexed<br>" + (
+            f'<span style="color:{dim}">last indexed {datetime.fromtimestamp(stamp):%d %b %H:%M}</span>' if stamp else
+            f'<span style="color:{dim}">not indexed yet: say "reindex my notes"</span>'))
+        from ...voice import voices
+        info = (("BRAIN", "Groq" if config.get("GROQ_API_KEY") else "offline only"), ("EARS", "Groq Whisper" if config.stt_cloud() else "this laptop"),
+                ("WAKE", config.wake_label().title()), ("VOICE", voices.current_name()), ("FALLBACK", "OpenRouter, then Ollama"))
+        self.core.setText("<br>".join(f'<span style="color:{dim}">{k:<9}</span>{v}' for k, v in info))
         rows = []
-        for r in self.ctx.feed[-7:][::-1]:
-            rows.append(f'<span style="color:{t.dim.name()}">{r["time"]}</span> {r["heard"][:34]}<br>'
-                        f'&nbsp;&nbsp;<span style="color:{t.accent.name()}">{r["route"] or "..."}</span> '
-                        f'<span style="color:{t.dim.name()}">{r["provider"]}</span>')
-        self.feed.setText("<br>".join(rows) or f'<span style="color:{t.dim.name()}">nothing heard yet</span>')
-        today = []
+        for r in self.ctx.feed[-self.FEED_ROWS:][::-1]:
+            rows.append(f'<span style="color:{dim}">{r["time"]}</span> {r["heard"][:40]}<br>'
+                        f'&nbsp;&nbsp;<span style="color:{acc}">{r["route"] or "..."}</span> <span style="color:{dim}">{r["provider"]}</span>')
+        self.feed.setText("<br><br>".join(rows) or
+                          f'<span style="color:{dim}">Nothing heard yet.<br><br>Say "{config.wake_label().title()}" and ask for the time, '
+                          f'or type a command below. Every command shows up here with how it was routed and which brain answered.</span>')
+        lines = []
+        for name, key in AGENTS:
+            on = agent_running(key)
+            colour = t.ok.name() if on else dim
+            lines.append(f'<span style="color:{colour}">&#9679;</span> {name:<9}<span style="color:{colour}">{"running" if on else "idle"}</span>')
+        self.agents.setText("<br>".join(lines))
         now = datetime.now()
-        mine = [r for r in reminders.pending() if datetime.fromisoformat(r["due"]).date() == now.date()]
-        today.append(f"reminders {len(mine)}" + (": " + mine[0]["text"][:28] if mine else ""))
+        todo = sorted((r for r in reminders.pending() if datetime.fromisoformat(r["due"]).date() == now.date()), key=lambda r: r["due"])
+        out = [f'<span style="color:{acc}">&#9679;</span> {datetime.fromisoformat(r["due"]):%H:%M} {r["text"][:30]}' for r in todo[:3]]
+        out = out or [f'<span style="color:{dim}">&#9675; no reminders today: say "remind me to ... at 7 pm"</span>']
         cur = pomodoro.status()
-        today.append(f"focus {pomodoro.left() / 60:.0f} min left ({cur['kind']})" if cur else "focus timer off")
-        today.append("next: " + (study.next_item() or "no roadmap")[:34])
-        self.today.setText("<br>".join(today))
+        out.append(f'<span style="color:{acc}">&#9679;</span> focus {pomodoro.left() / 60:.0f} min left ({cur["kind"]})' if cur else
+                   f'<span style="color:{dim}">&#9675; no focus timer: say "start focus 25"</span>')
+        nxt = study.next_item()
+        out.append(f'<span style="color:{acc}">&#9679;</span> next: {nxt[:34]}' if nxt else
+                   f'<span style="color:{dim}">&#9675; no roadmap yet: add data/roadmap.md</span>')
+        self.today.setText("<br>".join(out))
         self.status.setText(self.ctx.mode.upper())
 
 

@@ -38,13 +38,17 @@ A personal voice assistant that runs locally on Linux. Talk to it, it listens, t
 - Screen and dictation: "read my screen" (OCR with tesseract), hold-to-talk dictation into the focused window (`DICTATE_KEY`)
 - Coding agent: "build me a flask app" plans, writes, runs and fixes (4 tries) in `CODE_WORKSPACE/<name>`; "run it", "stop it",
   "fix the last error", "add dark mode to <project>", "explain this file", "git init this project"
+- Confirmations take loose answers ("yes close it", "confirm") and drop the rest of the sentence. Searches use DuckDuckGo (`BROWSER_SEARCH`); a captcha stops the
+  command and Jarvis offers the normal browser. "What can you do" and "can you code" are answered from the tool list, never guessed.
 - Browser control: "go to github", "search cats on YouTube", "click About us", "scroll down", "read this page", "go back", "new tab",
   "close tab". Own profile, no typing into secret fields, risky clicks and downloads wait for a yes
 - Dashboard: `python -m jarvis.main` opens a dark glass HUD (sidebar with Home, Media, Code, Notes, Study, Web, Stats, Settings; a particle orb
   that reacts to listening, thinking and speaking; gauges, a live feed, a today card, provider status, a memory graph of notes). The voice loop
   runs in a background thread, so everything can also be typed and the window works with the mic off. `--no-ui` is the old headless mode,
   `--text` is typed-only in the terminal. Close hides to the tray; Quit stops mpv, the browser and child processes.
-- Themes: Cyan, Green, Amber, Red, Purple, Pink, White or a custom hue (Settings), by the top bar button, or by voice: "change theme to red",
+- Home shows system gauges, provider cards with last latency, memory, a large core with the J.A.R.V.I.S title, a live feed, active agents,
+  a mission timeline and a voice waveform strip. The window size is remembered. Below 1 GB free memory a LOW RAM chip appears and low power is on.
+- Themes: Cyan (default), Green, Amber, Red, Purple, Pink, Ice, White or a custom hue (Settings), by the top bar button, or by voice: "change theme to red",
   "next theme", "random theme". Optional state colours and hue cycling. The choice is saved in `data/settings.json`.
 - Low power mode (Settings, or automatic below 1.5 GB free): 15 fps, 40 points, no rings. Animation stops while the window is hidden or minimised.
 - "Jarvis stats": last test pass rate, average tokens and which brain answered how often

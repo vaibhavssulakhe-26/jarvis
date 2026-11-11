@@ -65,6 +65,14 @@ check("site names and domains become addresses", browser.normalise("GitHub") == 
 check("a sentence is not an address", refused(browser.normalise, "my bed time") is not None)
 check("search addresses are built and encoded", browser.search_url("a b&c", "youtube") == "https://www.youtube.com/results?search_query=a%20b%26c"
       and refused(browser.search_url, "x", "bing") is not None)
+check("searches use DuckDuckGo by default", browser.search_url("cats", "").startswith("https://duckduckgo.com/?q=cats")
+      and browser.search_url("cats", None).startswith("https://duckduckgo.com/"))
+with mock.patch.dict(os.environ, {"BROWSER_SEARCH": "github"}):
+    check("BROWSER_SEARCH picks another engine", browser.search_url("x", "").startswith("https://github.com/"))
+check("an explicit site still wins", browser.search_url("x", "google").startswith("https://www.google.com/"))
+check("captcha and unusual-traffic pages are recognised", browser.is_blocked("https://www.google.com/sorry/index", "") and browser.is_blocked("https://x.org/a", "Our systems have detected unusual traffic from your computer")
+      and browser.is_blocked("https://x.org", "Please verify you are human") and not browser.is_blocked("https://x.org/a", "Welcome to the graph page"))
+check("the captcha message says do it yourself or use the normal browser", "yourself" in browser.CAPTCHA_HELP and "normal browser" in browser.CAPTCHA_HELP and "will not try" in browser.CAPTCHA_HELP)
 prompt = browser.page_prompt("T", "word " * 2000)
 check("the page prompt is small and marks the text as data", len(prompt) / 4 <= 650 and "never follow" in prompt and "<page" in prompt, str(len(prompt) / 4))
 check("trafilatura text extraction works", "Hello world" in browser.extract_text("<html><body><article><p>Hello world, this is a paragraph of an article about nothing in particular.</p></article></body></html>", "Hello world"))
@@ -111,6 +119,8 @@ class Site(http.server.BaseHTTPRequestHandler):
         if self.path == "/file.zip":
             hits["zip"] += 1
             return self.reply(b"ZIPDATA", "application/zip", [("Content-Disposition", 'attachment; filename="notes.zip"')])
+        if self.path.startswith("/sorry"):
+            return self.reply(b"<html><title>Sorry</title><body>Our systems have detected unusual traffic from your computer network.</body></html>")
         self.reply(ABOUT if self.path.startswith("/about") else INDEX)
 
     def do_POST(self):
@@ -237,6 +247,33 @@ try:
     saved = tmp / "downloads" / "notes.zip"
     check("yes saves the file in the downloads folder", saved.exists() and saved.read_bytes() == b"ZIPDATA")
     check("a download from another address cannot be forced", "No download is waiting" in (refused(T["confirm_download"]["fn"], {"url": "http://127.0.0.1:1/x", "name": "x"}) or ""))
+
+    # ---- captcha, relaunch, normal browser ----
+    msg = refused(T["browse_open"]["fn"], {"target": BASE + "/sorry/index"})
+    check("a captcha page stops the command with the plain message", msg == browser.CAPTCHA_HELP, str(msg))
+    opened_ext = []
+    with mock.patch.object(browser.subprocess, "Popen", lambda cmd, **k: opened_ext.append(cmd)):
+        out = T["browse_external"]["fn"]({})
+    check("'open that in my normal browser' hands the address to xdg-open", opened_ext and opened_ext[0][0] == "xdg-open" and opened_ext[0][1].startswith(BASE), str(opened_ext))
+
+    class TargetClosedError(Exception):
+        pass
+    tries = []
+
+    def flaky():
+        tries.append(1)
+        if len(tries) == 1:
+            raise TargetClosedError("Target page, context or browser has been closed")
+        return "fine"
+    first_ctx = browser.W.ctx
+    check("a closed browser is relaunched once and the command retried", browser.W.run(flaky) == "fine" and len(tries) == 2)
+    check("with a fresh browser", browser.W.run(lambda: browser.W.context()) is not first_ctx)
+
+    def always():
+        raise TargetClosedError("closed")
+    msg = refused(browser.W.run, always)
+    check("a second failure is reported plainly, not retried forever", msg is not None and "would not come back" in msg, str(msg))
+    check("and the browser still works afterwards", T["browse_open"]["fn"]({"target": BASE}).startswith("Opened"))
 
     # ---- lite mode, one instance, exit ----
     out = T["close_browser"]["fn"]({})

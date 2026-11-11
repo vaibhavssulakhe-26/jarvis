@@ -179,3 +179,11 @@ def find(name):
         return Path(contains[0])
     best = difflib.get_close_matches(want, [s for _, s in rows], 1, 0.8)
     return next((Path(p) for p, s in rows if best and s == best[0]), None)
+
+
+def last_indexed():
+    """When the index file was last written, or None if there is no index yet."""
+    try:
+        return DB.stat().st_mtime
+    except OSError:
+        return None

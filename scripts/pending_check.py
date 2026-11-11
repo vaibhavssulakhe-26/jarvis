@@ -48,7 +48,7 @@ with mock.patch.object(main.voice, "say", side_effect=said.append), \
     check("no", ask("no")[1] == [] and not main.PENDING)
     check("don't", ask("don't")[1] == [])
     h = ask("yes, save this as a note and open downloads")
-    check("yes with extra", h[1][0] == "take_note" and h[1][1].startswith("new:open downloads"))
+    check("yes with extra words is used up and the rest is dropped", h[1] == ["take_note"])
     check("unrelated cancels", ask("what time is it")[:2] == (False, []))
 print("failures:", fails)
 sys.exit(1 if fails else 0)

@@ -122,6 +122,10 @@ def _patterns(label, path):
     return [stem, re.sub(r"[^a-z0-9]", "", label.lower())]
 
 
+THIS_WINDOW = ("", "this", "it", "that", "this window", "the window", "current", "the current", "current window", "the current window",
+               "active", "active window", "focused", "focused window")
+
+
 def _app_windows(name):
     found = find_app(name)
     if found is None:
@@ -132,8 +136,10 @@ def _app_windows(name):
 
 def _describe_close(args):
     name = str(args.get("name", "")).strip().lower()
-    if name in ("", "this", "it", "that", "this window", "the window"):
-        return "Close the current window?"
+    if name in THIS_WINDOW:
+        win = windows.active_window(max_age=0)
+        title = (win[1] if win and win[1] else win[0] if win else "").strip()
+        return f"Close {title[:60]}?" if title else "Close the current window?"
     label, ids = _app_windows(name)
     if not ids:
         raise ToolError(f"{label} does not seem to be open.")
@@ -144,7 +150,7 @@ def _describe_close(args):
       risk="confirm", describe=_describe_close)
 def close_app(args):
     name = str(args.get("name", "")).strip().lower()
-    if name in ("", "this", "it", "that", "this window", "the window"):
+    if name in THIS_WINDOW:
         windows.close_active()
         return "Closed it."
     label, ids = _app_windows(name)

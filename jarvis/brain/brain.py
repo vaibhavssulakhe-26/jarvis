@@ -53,6 +53,7 @@ _cache = OrderedDict()
 _ollama_said = [0.0]
 _offline_until = [0.0]
 LIMITED = {"count": 0}
+LATENCY = {}
 OFFLINE_SECONDS = 60
 _spent = {}
 _turn_tokens = [0]
@@ -415,8 +416,11 @@ def route(messages, max_tokens=PLAN_TOKENS, want_json=True, local=False):
         if not _room(name, estimate(messages) + max_tokens):
             print(f"  ({name} has no room left in its minute, trying the next brain)")
             continue
+        started = time.time()
         text, code = call(messages, max_tokens, want_json)
         codes[name] = code
+        if text:
+            LATENCY[name] = time.time() - started
         if code == 429:
             _busy[name] = time.time() + BUSY_SECONDS
             LIMITED["count"] += 1

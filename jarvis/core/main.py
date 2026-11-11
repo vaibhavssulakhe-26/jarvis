@@ -110,6 +110,21 @@ def dedupe(plans):
     return out
 
 
+AGENTS = {
+    "coder": ("build_project", "run_project", "fix_last_error", "add_feature", "edit_file", "find_bugs", "explain_file", "git_init_project",
+              "install_deps", "apply_edit"),
+    "research": ("research", "research_topic", "help_topic", "open_sources"),
+    "notes": ("search_docs", "reindex_notes", "take_note", "quick_note", "read_notes", "append_to_note", "summarise_file", "ask_about_file", "search_notes"),
+    "study": ("quiz_me", "teach_me", "study_progress", "roadmap_next", "roadmap_done", "log_today", "week_summary"),
+}
+
+
+def agent_of(action):
+    if action.startswith("browse") or action in ("new_tab", "close_tab", "confirm_download"):
+        return "browser"
+    return next((g for g, names in AGENTS.items() if action in names), "")
+
+
 def do_tool(action, args, spoken=""):
     if action in LAUNCH:
         key = (action, json.dumps({k: v for k, v in args.items() if not str(k).startswith("_")},
@@ -118,6 +133,8 @@ def do_tool(action, args, spoken=""):
             voice.say("That one is already open.")
             return
         _recent[key] = time.time()
+    group = agent_of(action)
+    events.agent_start(group)
     try:
         result = tools.TOOLS[action]["fn"](args)
     except tools.ToolError as e:
@@ -127,6 +144,8 @@ def do_tool(action, args, spoken=""):
         print(f"  (tool failed: {type(e).__name__})")
         voice.say("Oops, that did not work. Something broke on my side.")
         return
+    finally:
+        events.agent_end(group)
     voice.say(result or spoken or "Done.")
 
 
@@ -147,7 +166,7 @@ def run_tool(action, args, spoken):
                 return
             PENDING.clear()
             PENDING.update({"action": action, "args": args, "until": time.time() + 60})
-            voice.say(question + " Say yes to confirm, or no to cancel.")
+            voice.say(question + " Say yes or no.")
             return
     do_tool(action, args, spoken)
 
@@ -178,6 +197,9 @@ def check_pending(text):
         return False
     words = re.findall(r"[a-z]+", text.lower())
     verdict = _verdict(words)
+    verb = str(PENDING.get("action", "")).split("_")[0]
+    if verdict is None and verb and verb in words[:3] and not set(words) - {verb, "it", "this", "that", "window", "the", "please", "now", "do"}:
+        verdict = "yes"
     if verdict is None:
         PENDING.clear()
         print("  (the pending action was cancelled)")
@@ -190,12 +212,6 @@ def check_pending(text):
         voice.say("Okay, cancelled.")
         return True
     do_tool(action, args)
-    rest = [w for w in words if w not in EXTRA_FILLER and w != "go"]
-    if rest:
-        tail = re.sub(r"^(?:\W*(?:yes|yeah|yep|yup|sure|ok|okay|go ahead|please|and)\b)+\W*", "", text.strip(), flags=re.I)
-        tail = re.sub(r"^save (?:this|it|that)(?: as a note)?\W*(?:and\W*)?", "", tail, flags=re.I).strip()
-        if tail:
-            _handle(tail)
     return True
 
 
@@ -206,6 +222,7 @@ def _waiting():
 DIRECT = [
     (re.compile(r"^(.+)$"), "play_media", lambda m: play.answer(m.group(1)), play.asking),
     (capabilities.ASK, "capabilities", lambda m: {}),
+    (capabilities.CAN, "capabilities", lambda m: {"question": m.group(0)}),
     (re.compile(r"^(?:please )?(?:next(?: one| video| song| track)?|another(?: one)?|not this one|something else|play (?:the )?next(?: one| video| song)?)$", re.I),
      "play_next", lambda m: {}, play.active),
     (re.compile(r"^(?:please )?pause(?: it| the (?:video|music|song))?$", re.I), "player_control", lambda m: {"do": "pause"}, mpvctl.running),
@@ -224,6 +241,8 @@ DIRECT = [
     (re.compile(r"^(?:please )?remember ((?:my|i|i'm|i am|we|our)\b.+)$", re.I), "remember", lambda m: {"fact": m.group(1)}),
     (re.compile(r"^(?:please )?forget (?:about |that |what i said about )?(.+)$", re.I), "forget", lambda m: {"what": m.group(1)}),
     (re.compile(r"^what do you (?:know|remember) about me$", re.I), "what_do_you_know", lambda m: {}),
+    (re.compile(r"^(?:please )?(?:update|add to) (?:(?:your|my|the) )?notes?(?: (?:with|about|that|on))?\s*[:,-]?\s*(.+)$", re.I),
+     "append_to_note", lambda m: {"topic": "general", "text": m.group(1)}),
     (re.compile(r"^(?:please )?(?:make|take|add|write|save) (?:me )?a note(?: (?:about|on|for) ([\w ]{1,30}?))?\s*[:,-]\s*(.+)$", re.I),
      "take_note", lambda m: {"topic": m.group(1) or "", "text": m.group(2)}),
     (re.compile(r"^what did i (?:note|save)(?: down)?(?: about| on) (.+)$", re.I), "read_notes", lambda m: {"topic": m.group(1)}),
@@ -270,8 +289,12 @@ DIRECT = [
     (re.compile(r"^(?:please )?(turn on|turn off|enable|disable|start|stop) (?:the |my )?(?:distraction |focus )?guard$", re.I),
      "guard_switch", lambda m: {"on": m.group(1).lower() in ("turn on", "enable", "start")}),
     (re.compile(r"^(?:please )?turn it off$", re.I), "guard_switch", lambda m: {"on": False}, guard.enabled),
-    (re.compile(r"^(?:please )?search (.+?) on (google|youtube|github)$", re.I), "browse_search",
-     lambda m: {"query": m.group(1), "site": m.group(2).lower()}, lambda: browser.ready()),
+    (re.compile(r"^(?:please )?search (.+?) on (duck ?duck ?go|google|youtube|github)$", re.I), "browse_search",
+     lambda m: {"query": m.group(1), "site": m.group(2).lower().replace(" ", "")}, lambda: browser.ready()),
+    (re.compile(r"^(?:please )?(?:browser search|search the browser|search in the browser) (?:for )?(.+)$", re.I), "browse_search",
+     lambda m: {"query": m.group(1), "site": ""}, lambda: browser.ready()),
+    (re.compile(r"^(?:please )?(?:open (?:that|this|the page) in my (?:normal|real|main) browser|open (?:that|this) externally)$", re.I), "browse_external", lambda m: {},
+     lambda: browser.active()),
     (re.compile(r"^(?:please )?(?:go to|browse to|browse|visit) ((?:google|youtube|github|wikipedia|stack ?overflow|[a-z0-9-]+(?:\.[a-z0-9-]+)+))$", re.I), "browse_open", lambda m: {"target": m.group(1)}),
     (re.compile(r"^(?:please )?open ([a-z0-9-]+(?:\.[a-z0-9-]+)+)$", re.I), "browse_open", lambda m: {"target": m.group(1)}, lambda: browser.ready()),
     (re.compile(r"^(?:please )?click (?:on )?(.+)$", re.I), "browse_click", lambda m: {"text": m.group(1)}, lambda: browser.active()),
@@ -568,6 +591,10 @@ def _handle(text, via_wake=True):
     if reply is not None:
         voice.say(reply)
         return study.waiting()
+    spec = coder.take_spec(text)
+    if spec:
+        run_tool("build_project", {"request": "build me " + spec}, "")
+        return False
     if time.time() - _last_confirm[0] < 20 and _verdict(re.findall(r"[a-z]+", text.lower())) == "yes" \
             and not set(re.findall(r"[a-z]+", text.lower())) - EXTRA_FILLER:
         return False
@@ -582,7 +609,7 @@ def _handle(text, via_wake=True):
     state.update(activity="thinking", activity_at=time.time(), touched_at=time.time())
     try:
         if direct(text):
-            return bool(PENDING) or files.waiting() or play.asking() or study.waiting()
+            return bool(PENDING) or files.waiting() or play.asking() or study.waiting() or coder.asking()
         if fast_path(text):
             return False
         t0 = time.time()

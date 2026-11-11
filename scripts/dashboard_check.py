@@ -26,10 +26,15 @@ root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root))
 
 problems = []
-sys.excepthook = lambda t, v, tb: problems.append("".join(traceback.format_exception(t, v, tb)))
+def _hook(t, v, tb):
+    problems.append("".join(traceback.format_exception(t, v, tb)))
+    traceback.print_exception(t, v, tb)
+
+
+sys.excepthook = _hook
 
 from PyQt6.QtCore import QCoreApplication, QPointF, Qt  # noqa: E402
-from PyQt6.QtGui import QImage  # noqa: E402
+from PyQt6.QtGui import QColor, QImage  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QLabel, QTextEdit  # noqa: E402
 
@@ -180,7 +185,7 @@ check("the Settings buttons change the theme", th.name == "green")
 before = th.name
 win.theme_btn.click()
 until(lambda: th.name != before, 1)
-check("the top bar theme button goes to the next one", th.name == themes.ORDER[(themes.ORDER.index(before) + 1) % 7])
+check("the top bar theme button goes to the next one", th.name == themes.ORDER[(themes.ORDER.index(before) + 1) % len(themes.ORDER)])
 
 # ---- typed commands, buttons ----
 seen = []
@@ -200,10 +205,10 @@ with mock.patch.object(core, "handle", lambda text, via_wake=True: seen.append(t
     win.pages["Home"].refresh()
     check("the feed panel shows the row", "quick time_date" in win.pages["Home"].feed.text())
     del seen[:]
-    quick = [b for b in win.findChildren(type(win.stop_btn)) if b.text() == "start focus 25"][0]
-    quick.click()
+    quick = [a for a in win.quick.menu().actions() if a.text() == "start focus 25"][0]
+    quick.trigger()
     until(lambda: seen, 2)
-    check("a quick command button sends its command", seen == ["start focus 25"])
+    check("a quick command from the popover sends its command", seen == ["start focus 25"])
     del seen[:]
     win.cmd.setText("   ")
     win.cmd.returnPressed.emit()
@@ -348,6 +353,96 @@ import psutil  # noqa: E402
 rss = psutil.Process().memory_info().rss / 2 ** 20
 print(f"     (this process: {rss:.0f} MB with the window open)")
 check("the window process stays under 180 MB at idle", rss < 180, f"{rss:.0f} MB")
+
+
+# ---- redesign ----
+check("the presets include Amber and Ice, with Cyan first", "amber" in themes.PRESETS and "ice" in themes.PRESETS and themes.ORDER[0] == "cyan")
+red = QColor(themes.PRESETS["red"]["accent"])
+check("red is less saturated than before", red.hsvSaturation() < QColor("#ff3b4e").hsvSaturation(), str(red.hsvSaturation()))
+check("a fresh install starts on Cyan", (lambda: (os.remove(themes.voices.SETTINGS) if themes.voices.SETTINGS.exists() else None, themes.load()[0])[1])() == "cyan")
+check("the default window is 1280 by 760", themes.load_window() == (1280, 760))
+win.resize(1100, 700)
+pump(1.0)
+check("the window size is remembered", themes.load_window() == (1100, 700), str(themes.load_window()))
+check("and used the next time", window.Dashboard().size().width() == 1100)
+win.resize(1280, 760)
+pump(1.0)
+home = win.pages["Home"]
+win.go("Home")
+orb = home.orb
+check("the core is large: about 55% of the centre area", 0.5 <= (orb.core_radius() * 2) / min(orb.width(), orb.height()) <= 0.6, str((orb.core_radius() * 2) / min(orb.width(), orb.height())))
+check("the core carries its title and subtitle", orb.TITLE == "J.A.R.V.I.S" and orb.SUBTITLE == "AI CORE")
+check("the core is at least 380 px wide in the default window", orb.width() >= 380 and orb.height() >= 380, str(orb.size()))
+check("the three providers are cards with a state", len(home.cards) == 3 and all(c.name for c in home.cards), str([c.name for c in home.cards]))
+check("providers show Groq, OpenRouter and Ollama", [c.name for c in home.cards] == ["Groq", "OpenRouter", "Ollama"])
+window.pages.brain.LATENCY["groq"] = 0.42
+home.refresh()
+check("a provider card shows the last latency", home.cards[0].latency == 0.42)
+check("the memory panel counts notes and says when it was indexed", "indexed" in home.mem.text())
+for name in ("Coder", "Browser", "Research", "Notes", "Study"):
+    check(f"the {name} agent is listed", name in home.agents.text())
+check("agents start idle", home.agents.text().count("idle") == 5, home.agents.text())
+window.events.agent_start("research")
+home.refresh()
+check("a running agent shows as running", home.agents.text().count("running") == 1 and "Research" in home.agents.text())
+window.events.agent_end("research")
+check("the timeline and the feed have placeholders, not empty panels", "no reminders today" in home.today.text() and "Nothing heard yet" in home.feed.text() or home.ctx.feed)
+for k in range(15):
+    win.ctx.feed.append(dict(time="10:%02d" % k, heard=f"command number {k}", route="direct x", provider="groq"))
+home.refresh()
+check("the feed lists the newest first", home.feed.text().index("command number 14") < home.feed.text().index("command number 10"))
+check("the feed is capped to what fits", "command number 2<" not in home.feed.text())
+check("the waveform strip sits in the bottom bar", win.wave.width() == 220 and win.wave.parent() is win)
+window.events.set_level(0.2)
+for _ in range(40):
+    win.wave.advance()
+check("the waveform follows the mic level", max(win.wave.values) > 0.3 and len(win.wave.values) == 40)
+window.events.set_level(0.0)
+check("quick commands live in a popover", win.quick.menu() is not None and len(win.quick.menu().actions()) == len(window.pages.QUICK))
+check("the sidebar has an icon and a label per page", all(not b.icon().isNull() and b.text().strip() for b in win.nav.values()))
+with mock.patch.object(window.psutil, "virtual_memory", lambda: mock.Mock(available=0.8 * 2 ** 30, percent=95)):
+    win._ticks = 9
+    win.tick()
+check("under 1 GB free: low power turns on and the low RAM chip shows", win.low_auto and win.clock.interval >= 66 and not win.ram_chip.isHidden())
+with mock.patch.object(window.psutil, "virtual_memory", lambda: mock.Mock(available=1.2 * 2 ** 30, percent=80)):
+    win._ticks = 9
+    win.tick()
+check("between 1 and 1.5 GB low power stays on without the chip", win.low_auto and win.ram_chip.isHidden())
+with mock.patch.object(window.psutil, "virtual_memory", lambda: mock.Mock(available=3 * 2 ** 30, percent=40)):
+    win._ticks = 9
+    win.tick()
+check("with enough memory both go away", not win.low_auto and win.ram_chip.isHidden())
+
+# a preview of Home in every theme
+previews = root / "data" / "ui-previews"
+previews.mkdir(parents=True, exist_ok=True)
+for old in previews.glob("home-*.png"):
+    old.unlink()
+win.resize(1280, 760)
+win.show()
+win.ctx.feed[:] = [dict(time="10:41", heard="what time is it", route="quick time_date", provider=""),
+                   dict(time="10:42", heard="start focus 25", route="direct start_focus", provider=""),
+                   dict(time="10:44", heard="research solar panels", route="direct research_topic", provider="groq"),
+                   dict(time="10:46", heard="hello there", route="brain chat", provider="openrouter")]
+window.pages.brain.LATENCY.update(groq=0.38, openrouter=0.91)
+win.ctx.ollama = True
+win.go("Home")
+orb.set_mode("listening")
+window.events.set_level(0.08)
+for name in themes.ORDER + ["custom"]:
+    win.set_theme(name) if name != "custom" else win.set_hue(300)
+    pump(0.6)
+    for _ in range(6):
+        orb.advance()
+    home.refresh()
+    img = win.grab()
+    path = previews / f"home-{name}.png"
+    img.save(str(path))
+    check(f"Home renders in {name} and the preview is saved", path.exists() and path.stat().st_size > 20000 and img.width() >= 1000, str(path))
+window.events.set_level(0.0)
+win.set_theme("cyan")
+pump(0.5)
+print(f"     previews: {previews}")
 
 # ---- close to tray, quit kills everything ----
 class FakeTray:

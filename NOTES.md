@@ -55,3 +55,11 @@ Nothing was skipped. Parts that could not be fully exercised here:
 - The old window (`python -m jarvis.ui.ui`) is still there and unchanged apart from sharing `shutdown_all`.
 - Needs your eyes: how the orb and panels look at your resolution, the tray icon on Plasma, smoothness of the colour fade, and that closing
   to the tray and then "Quit" from the tray leaves no mpv, Chrome or project processes running.
+
+## Phase 11
+- The confirmation phrases in `scripts/confirm_check.py` and `route_check.py` are my best reconstruction (I did not have your log text), so add the
+  exact sentences from the log to those two scripts if any of them still misbehaves.
+- "update your notes" maps to the existing `append_to_note` tool (there is no `append_note`).
+- `scripts/reminders_check.py` has a time-of-day dependency ("third snooze returns a suggested time") and fails in the afternoon; it does not touch
+  anything changed here.
+- Previews: `data/ui-previews/home-<theme>.png`, rendered offscreen at 1280 by 760.

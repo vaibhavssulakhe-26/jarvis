@@ -22,8 +22,17 @@ CATEGORIES = [
     ("Focus", "start_focus start_break stop_focus focus_left quick_note good_morning guard_switch focus_mode take_break screen_time morning_briefing"),
     ("Voice and chat", "change_theme jarvis_stats list_voices change_voice what_voice set_language proactive_level proactive_quiet"),
 ]
-ASK = re.compile(r"^(?:please )?(?:help|what can you do|what do you do|what are your (?:features|abilities|skills)|what are you able to do|"
-                 r"what can i (?:ask|say to) you|what are you capable of|how can you help(?: me)?|list (?:your )?(?:features|commands))$", re.I)
+ASK = re.compile(r"^(?:hey |ok |okay |so )?(?:please )?(?:help|what can you do(?: now| for me)?|what do you do|what are you able to do|"
+                 r"what are your (?:new |latest |current )?(?:features|abilities|skills|capabilities)|tell me (?:about )?your (?:new |latest )?(?:features|abilities|skills)|"
+                 r"what(?:'s| is) new(?: with you)?|what can i (?:ask|say to) you|what are you capable of|how can you help(?: me)?|"
+                 r"list (?:your )?(?:new )?(?:features|commands)|show (?:me )?your (?:new )?features|your (?:new )?features)\??$", re.I)
+CAN = re.compile(r"^(?:hey |ok |okay |so )?(?:please )?(?:can|could|are) you (?:also |even |really )?(?:able to )?"
+                 r"(build|code|program|write code|write programs|run code|run programs|create (?:an? )?(?:app|apps|program|website|project)|make (?:an? )?(?:app|apps|program|website)|"
+                 r"browse|surf|search the web|use (?:a|the) browser|open websites|control (?:a|the) browser)\b.*$", re.I)
+TOPICS = {
+    "code": ("build_project run_project stop_project fix_last_error add_feature explain_file git_init_project find_bugs edit_file", "write, run and fix code"),
+    "browse": ("browse_open browse_search browse_click browse_scroll browse_read browse_back new_tab close_tab", "browse the web"),
+}
 
 
 def groups():
@@ -40,6 +49,17 @@ def groups():
     return out
 
 
+def answer_can(question):
+    """A yes or no from the tool registry, never a guess: it names what is actually installed."""
+    t = str(question).lower()
+    kind = "browse" if re.search(r"browse|surf|web|website|browser", t) else "code"
+    names, verb = TOPICS[kind]
+    have = [n.replace("_", " ") for n in names.split() if n in TOOLS]
+    if not have:
+        return f"Not on this setup yet. The {kind} tools are not installed."
+    return f"Yes, I can {verb}. For example: " + ", ".join(have[:6]) + ". The full list is on your screen."
+
+
 def summary():
     return ("I can help with " + ", ".join(t.lower() for t, _ in groups()[:8]) + ", and more. "
             "The full list is on your screen. Ask me for any of them by name.")
@@ -52,8 +72,11 @@ def full_list():
     return "\n".join(lines)
 
 
-@tool("capabilities", 'args {} - say what Jarvis can do; for "what can you do", "what are your features", "help"')
+@tool("capabilities", 'args {"question": "optional"} - say what Jarvis can do; for "what can you do", "what are your features", "help"')
 def capabilities(args):
+    q = str(args.get("question") or "")
+    if CAN.match(q):
+        return answer_can(q)
     text = "What I can do:\n" + full_list()
     print(text)
     events.emit("jarvis", text)

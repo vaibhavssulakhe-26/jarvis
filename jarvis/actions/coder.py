@@ -401,11 +401,40 @@ def complete(folder, meta, request, count=None, backup=False):
     return line + (f" Opened in {opened}." if opened else "")
 
 
+VAGUE_WORDS = {"build", "create", "make", "write", "me", "a", "an", "some", "the", "something", "anything", "cool", "nice", "new", "small", "simple",
+               "python", "code", "program", "app", "apps", "application", "project", "thing", "stuff", "website", "web", "site", "page", "script",
+               "please", "for", "my", "i", "want", "to", "you", "can", "could", "flask", "fastapi", "pyqt", "html", "javascript", "good", "awesome",
+               "it", "one", "of", "any", "kind", "sort", "something", "interesting", "fun", "useful", "software", "tool", "desktop", "gui", "and"}
+_asking = {"until": 0.0}
+ASK_SPEC = "What should it do? For example, a flask app that shows the time, or a python script that renames my files."
+
+
+def is_vague(request):
+    words = re.findall(r"[a-z]+", str(request).lower())
+    return not [w for w in words if w not in VAGUE_WORDS]
+
+
+def asking():
+    return time.time() < _asking["until"]
+
+
+def take_spec(text):
+    """After the build question, the next sentence is the spec. Returns it, or None if no question is open or it is not an answer."""
+    if time.time() > _asking["until"]:
+        return None
+    _asking["until"] = 0.0
+    t = " ".join(str(text).split()).strip(" .")
+    if not t or is_vague(t) or re.match(r"^(?:no|never mind|cancel|stop|forget it)\b", t, re.I):
+        return None
+    return t
+
+
 @tool("build_project", 'args {"request": "<what to build, in words>"} - build a small project (Python script, Flask or FastAPI app, static web page, PyQt app): plan the files, write them in the code workspace, run them and fix errors; for "build me a ...", "create a ...", "write a ..."')
 def build_project(args):
     request = str(args.get("request") or "").strip()
-    if not request:
-        raise ToolError("What should I build?")
+    if not request or is_vague(request):
+        _asking["until"] = time.time() + 45
+        raise ToolError(ASK_SPEC)
     kind = detect_kind(request)
     note = KIND_NOTES[kind]
     plan = brain.code(f"Project: {request}", 300, system=PLAN_SYSTEM.format(n=MAX_FILES) + " " + note)

@@ -88,6 +88,15 @@ CASES = [
     ("Yeah okay, this is good", "chat"),
     ("This one", "chat"),
     ("a web interface like WhatsApp and Instagram", "tool:build_project"),
+    ("what are your new features", "local:capabilities"),
+    ("your features", "local:capabilities"),
+    ("what's new", "local:capabilities"),
+    ("can you build apps", "local:capabilities"),
+    ("can you code", "local:capabilities"),
+    ("can you browse the web", "local:capabilities"),
+    ("update your notes with the lab report is due friday", "local:append_to_note"),
+    ("add to notes: buy a cable", "local:append_to_note"),
+    ("build something cool", "local:build_project"),
 ]
 # what the log session had just done, so a short follow-up must not drag the old tools along
 BEFORE = ("draft an email to my professor about the deadline", "draft_text")
@@ -156,6 +165,47 @@ for text, want in CASES:
     if not ok:
         bad.append((text, want, got, tokens))
     print(("ok   " if ok else "FAIL ") + f"{text!r:55} {got}" + (f"  ~{tokens} tokens" if tokens else ""))
+
+# the picker offers remember only when the sentence says remember, note or save
+for text, want in (("find my resume file", False), ("where did I save my thesis", True), ("what hackathons are happening this month", False),
+                   ("remember that my locker is 42", True), ("draft an email to my professor about the deadline", False)):
+    names = classify(text)[1]
+    ok = ("remember" in names) == want
+    print(("ok   " if ok else "FAIL ") + f"remember {'offered' if want else 'not offered'} for {text!r}")
+    if not ok:
+        bad.append((text, "remember", names, 0))
+
+import tempfile as _t  # noqa: E402
+from jarvis.actions import capabilities as _cap, coder as _coder  # noqa: E402
+
+can = {q: _cap.answer_can(q) for q in ("can you build apps", "can you code", "can you run code", "can you browse the web")}
+for q, a in can.items():
+    ok = a.startswith("Yes") and "can't" not in a.lower() and "cannot" not in a.lower()
+    print(("ok   " if ok else "FAIL ") + f"{q!r} is answered from the registry: {a[:60]}")
+    if not ok:
+        bad.append((q, "yes", a, 0))
+ok = "build project" in can["can you code"] and "run project" in can["can you run code"] and "browse open" in can["can you browse the web"]
+print(("ok   " if ok else "FAIL ") + "the answers name real tools")
+if not ok:
+    bad.append(("tools", "named", can, 0))
+vague = ["build something cool", "build me an app", "make a flask app", "create a project", "write me some code", "build something", "make a website please"]
+specific = ["build me a todo app in python", "make a flask app that shows the time", "write a python script that renames my files", "create a calculator"]
+ok = all(_coder.is_vague(v) for v in vague) and not any(_coder.is_vague(v) for v in specific)
+print(("ok   " if ok else "FAIL ") + "vague build requests are told apart from real ones")
+if not ok:
+    bad.append(("vague", "", [v for v in vague if not _coder.is_vague(v)] + [v for v in specific if _coder.is_vague(v)], 0))
+try:
+    _coder.build_project({"request": "build something cool"})
+    ok = False
+except Exception as e:
+    ok = "What should it do" in str(e) and _coder.asking()
+print(("ok   " if ok else "FAIL ") + "a vague build asks one question and starts no plan")
+if not ok:
+    bad.append(("ask", "", "", 0))
+ok = _coder.take_spec("a python script that renames my files") == "a python script that renames my files" and _coder.take_spec("another one") is None
+print(("ok   " if ok else "FAIL ") + "the next sentence becomes the spec")
+if not ok:
+    bad.append(("spec", "", "", 0))
 
 print(f"\npass rate: {len(CASES) - len(bad)}/{len(CASES)} ({100 * (len(CASES) - len(bad)) // len(CASES)}%)")
 print(f"largest chat request ~{worst['chat']} tokens (system prompt ~{worst['system']}), largest tool request ~{worst['tool']}")

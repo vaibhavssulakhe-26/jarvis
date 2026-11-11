@@ -20,3 +20,14 @@ def set_level(value):
 def set_out_level(value):
     global out_level
     out_level = value
+
+
+busy = {}
+
+
+def agent_start(group):
+    busy[group] = busy.get(group, 0) + 1
+
+
+def agent_end(group):
+    busy[group] = max(0, busy.get(group, 0) - 1)

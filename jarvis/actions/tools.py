@@ -51,7 +51,7 @@ TRIGGERS = {
     "search_notes": "notes search",
     "search_docs": "notes note search pdf wrote write written documents look find",
     "reindex_notes": "reindex index notes",
-    "append_to_note": "add append note",
+    "append_to_note": "add append note update notes",
     "delete_note": "delete remove note notes",
     "find_file": "find file where locate",
     "ask_about_file": "file document pdf says about",
@@ -68,6 +68,7 @@ TRIGGERS = {
     "browse_type": "type enter box field browser",
     "browse_scroll": "scroll page",
     "browse_read": "read page article summarise website",
+    "browse_external": "open normal browser external",
     "browse_back": "back page browser",
     "new_tab": "new tab browser",
     "close_tab": "close tab browser",
@@ -78,7 +79,7 @@ TRIGGERS = {
     "explain_file": "explain file code does",
     "git_init_project": "git init repository project",
     "install_deps": "install packages dependencies",
-    "remember": "remember",
+    "remember": "remember note save",
     "snooze_reminder": "snooze again later tonight",
     "stop_repeating": "stop repeating",
     "move_reminder": "move reminder time",
@@ -153,7 +154,7 @@ TRIGGERS = {
     "log_today": "log today check checkin sleep walk",
     "week_summary": "week weekly summary how",
 }
-ALWAYS = {"remember"}
+ALWAYS = set()
 MAX_TOOLS = 3
 MAX_DOC = 200
 SMALL_TALK = ("hey", "hi", "hello", "good morning", "good afternoon", "good evening", "good night", "thanks", "thank you",

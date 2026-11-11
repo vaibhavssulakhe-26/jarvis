@@ -175,6 +175,13 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
   and the confirm bar; `window.py` the window, tray and `quit_all`. The voice loop is `ui.start_core`; the window gets lines through `events`
   (`you`, `jarvis`, `sys`, plus `route` and `provider` from `main` and `brain.route`) and a Qt signal. `events.out_level` is the loudness of the
   line being spoken (`voice.envelope`). Voice theme changes go through `theme_tools.change_theme`, which saves and sets the `theme_at` state key.
+- Confirmations: `check_pending` accepts a loose yes (the pending tool's own verb with filler, such as "close it") and never routes the rest of the sentence
+  again. `apps.THIS_WINDOW` words name the focused window in the question. `capabilities.ASK` / `CAN` answer from `TOOLS` (`answer_can`). `tools.ALWAYS` is
+  empty: `remember` is offered only for remember, note or save. `coder.is_vague` makes `build_project` ask one question (`take_spec` takes the answer).
+  Browser: `BROWSER_SEARCH` (default duckduckgo), `is_blocked` stops at captcha pages (`browse_external` hands the URL to xdg-open), `_Worker.run` relaunches
+  once on `TargetClosedError`.
+- Home page extras: `events.busy` (set in `main.do_tool` through `agent_of`) drives the Active agents panel, `brain.LATENCY` the provider cards,
+  `rag.last_indexed` the memory panel; the window size is saved by `themes.save_window`. `scripts/dashboard_check.py` saves previews to `data/ui-previews/`.
 - Check scripts in `scripts/` run without a mic or accounts; each feature has its own `*_check.py`. `scripts/all_checks.sh` runs them all.
 
 ## Conventions

@@ -16,7 +16,7 @@ LOW_FPS = 15
 POINTS = 120
 LOW_POINTS = 40
 SPIN = {"idle": 0.12, "listening": 0.3, "thinking": 1.1, "speaking": 0.45}
-BRIGHT = {"idle": 0.4, "listening": 0.85, "thinking": 0.75, "speaking": 0.9}
+BRIGHT = {"idle": 0.55, "listening": 0.9, "thinking": 0.8, "speaking": 0.95}
 
 
 def mono(size=9, bold=False):
@@ -88,12 +88,12 @@ class Panel(QFrame):
         p.drawRoundedRect(r, 8, 8)
         g = self.theme.glow_strength
         p.setBrush(Qt.BrushStyle.NoBrush)
-        for width, a in ((4.0, 14), (2.5, 30)):
+        for width, a in ((4.0, 10), (2.5, 22)):
             p.setPen(QPen(alpha(self.theme.accent, a * g), width))
             p.drawRoundedRect(r, 8, 8)
-        p.setPen(QPen(alpha(self.theme.accent, 150 * g), 1))
+        p.setPen(QPen(alpha(self.theme.accent, 95 * g), 1))
         p.drawRoundedRect(r, 8, 8)
-        tick = alpha(self.theme.accent, 220)
+        tick = alpha(self.theme.accent, 240)
         p.setPen(QPen(tick, 2))
         x0, y0, x1, y1 = r.left(), r.top(), r.right(), r.bottom()
         for (x, y, dx, dy) in ((x0, y0, 1, 1), (x1, y0, -1, 1), (x0, y1, 1, -1), (x1, y1, -1, -1)):
@@ -150,7 +150,10 @@ def neighbours(pts, per=3):
 
 
 class Orb(QWidget):
-    """About 120 points joined by faint lines, turning slowly in 3D, with rings behind and ripples when it speaks."""
+    """The core: about 120 points joined by faint lines, turning in 3D, with a title in the middle, two thin rotating rings, a soft glow
+    behind it and ripples when it speaks."""
+    TITLE = "J.A.R.V.I.S"
+    SUBTITLE = "AI CORE"
 
     def __init__(self, theme, clock, parent=None):
         super().__init__(parent)
@@ -164,7 +167,7 @@ class Orb(QWidget):
         self.last = time.monotonic()
         self.low = False
         self.sets = {}
-        self.setMinimumSize(280, 280)
+        self.setMinimumSize(380, 380)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
         self._build(POINTS)
         clock.tick.connect(self.advance)
@@ -201,31 +204,40 @@ class Orb(QWidget):
         self.ripples = [t for t in self.ripples if now - t < 1.6]
         self.update()
 
+    def core_radius(self):
+        """The sphere's radius: its diameter is about 55% of the smaller side of this widget."""
+        return min(self.width(), self.height()) * 0.275
+
     def paintEvent(self, ev):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = self.width(), self.height()
         cx, cy = w / 2, h / 2
-        base = min(w, h) * 0.30
+        base = self.core_radius()
         t = self.theme
         p.fillRect(self.rect(), t.bg)
         bright = BRIGHT[self.mode]
         g = t.glow_strength
+        halo = t.glow(128, 1.0)
+        span = base * 3.6
+        p.setOpacity(min(1.0, (0.22 + 0.25 * bright) * g))
+        p.drawPixmap(QRectF(cx - span / 2, cy - span / 2, span, span), halo, QRectF(halo.rect()))
+        p.setOpacity(1.0)
         if not self.low:
-            for k, (scale, dash) in enumerate(((1.45, 8), (1.75, 3))):
-                pen = QPen(alpha(t.accent, (38 - k * 14) * g), 1)
-                pen.setStyle(Qt.PenStyle.DashLine if k == 0 else Qt.PenStyle.DotLine)
+            for k, (scale, direction) in enumerate(((1.42, 1), (1.68, -1))):
+                pen = QPen(alpha(t.accent, (95 - k * 35) * g), 1)
+                pen.setDashPattern([7, 11] if k == 0 else [2, 9])
+                pen.setDashOffset(self.angle * 30 * direction)
                 p.setPen(pen)
                 p.drawEllipse(QPointF(cx, cy), base * scale, base * scale)
-            arc = QPen(alpha(t.secondary, 120 * g), 2)
-            p.setPen(arc)
-            r = QRectF(cx - base * 1.45, cy - base * 1.45, base * 2.9, base * 2.9)
+            p.setPen(QPen(alpha(t.secondary, 150 * g), 2))
+            r = QRectF(cx - base * 1.42, cy - base * 1.42, base * 2.84, base * 2.84)
             p.drawArc(r, int(-self.angle * 900) % (360 * 16), 70 * 16)
             p.drawArc(r, int(-self.angle * 900 + 180 * 16) % (360 * 16), 40 * 16)
         now = time.monotonic()
         for born in self.ripples:
             age = (now - born) / 1.6
-            p.setPen(QPen(alpha(t.accent, 140 * (1 - age) * g), 2))
+            p.setPen(QPen(alpha(t.accent, 160 * (1 - age) * g), 2))
             rad = base * (1.0 + age * 0.9)
             p.drawEllipse(QPointF(cx, cy), rad, rad)
         spread = 1.0
@@ -247,21 +259,57 @@ class Orb(QWidget):
         for i, j in self.pairs:
             a, b = proj[i], proj[j]
             (front if a[2] + b[2] > 0 else back).append(QLineF(a[0], a[1], b[0], b[1]))
-        p.setPen(QPen(alpha(t.accent, 45 * bright), 1))
+        p.setPen(QPen(alpha(t.accent, 70 * bright), 1))
         p.drawLines(back)
-        p.setPen(QPen(alpha(t.accent, 120 * bright), 1))
+        p.setPen(QPen(alpha(t.accent, 170 * bright), 1))
         p.drawLines(front)
-        size = 22 if not self.low else 26
+        size = (24 if not self.low else 28) * max(0.8, base / 130)
         sprite = t.glow(32, 1.0)
-        p.setOpacity(min(1.0, bright))
+        p.setOpacity(min(1.0, bright + 0.1))
         for x, y, z in proj:
             s = size * (0.6 + 0.4 * (z + 1) / 2) * (0.7 + 0.3 * g)
             p.drawPixmap(QRectF(x - s / 2, y - s / 2, s, s), sprite, QRectF(sprite.rect()))
         p.setOpacity(1.0)
-        core = t.glow(64, 1.0)
-        c = base * 0.9 * (0.8 + 0.4 * bright)
-        p.setOpacity(0.25 + 0.3 * bright)
-        p.drawPixmap(QRectF(cx - c, cy - c, c * 2, c * 2), core, QRectF(core.rect()))
+        title = mono(max(10, int(base / 7.5)), True)
+        title.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, max(1.5, base / 50))
+        p.setFont(title)
+        p.setPen(alpha(t.text, 245))
+        p.drawText(QRectF(0, cy - base * 0.22, w, base * 0.3), Qt.AlignmentFlag.AlignCenter, self.TITLE)
+        sub = mono(max(8, int(base / 13)))
+        sub.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, max(3.0, base / 30))
+        p.setFont(sub)
+        p.setPen(alpha(t.accent, 230))
+        p.drawText(QRectF(0, cy + base * 0.1, w, base * 0.2), Qt.AlignmentFlag.AlignCenter, self.SUBTITLE)
+
+
+class Waveform(QWidget):
+    """A strip of bars that follows the microphone while it listens and Jarvis's own voice while it speaks."""
+    BARS = 40
+
+    def __init__(self, theme, clock, parent=None):
+        super().__init__(parent)
+        self.theme = theme
+        self.values = [0.0] * self.BARS
+        self._n = 0
+        self.setFixedSize(220, 44)
+        clock.tick.connect(self.advance)
+
+    def advance(self):
+        self._n += 1
+        if self._n % 2:
+            return
+        level = max(min(1.0, events.level * 6), min(1.0, events.out_level))
+        self.values = self.values[1:] + [level * random.uniform(0.7, 1.0)]
+        self.update()
+
+    def paintEvent(self, ev):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        step = w / self.BARS
+        for i, v in enumerate(self.values):
+            bar = max(2.0, v * (h - 6))
+            p.fillRect(QRectF(i * step + 1, (h - bar) / 2, step - 2, bar), alpha(self.theme.accent, 70 + 160 * v))
 
 
 STOPWORDS = {"the", "and", "for", "that", "this", "with", "have", "from", "are", "was", "were", "you", "your", "not", "but", "can", "will",

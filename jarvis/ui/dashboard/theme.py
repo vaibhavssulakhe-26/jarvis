@@ -190,9 +190,18 @@ QWidget {{ color: {t}; font-family: "JetBrains Mono", "DejaVu Sans Mono", "Noto 
 QLabel {{ background: transparent; }}
 QLabel#cap {{ color: {d}; font-size: 8pt; letter-spacing: 2px; }}
 QLabel#big {{ color: {a}; font-size: 20pt; }}
+QLabel#brand {{ color: {a}; font-size: 12pt; font-weight: bold; letter-spacing: 3px; }}
+QLabel#clock {{ color: {t}; font-size: 17pt; letter-spacing: 2px; }}
+QLabel#state {{ color: {a}; font-size: 11pt; letter-spacing: 6px; padding: 4px; }}
+QMenu {{ background: {self.cur['bg'].name()}; border: 1px solid {a_soft}; padding: 4px; }}
+QMenu::item {{ padding: 6px 18px; }}
+QMenu::item:selected {{ background: {a_soft}; }}
 QPushButton {{ background: {field}; border: 1px solid {a_soft}; border-radius: 6px; padding: 6px 12px; color: {t}; }}
 QPushButton:hover {{ background: {a_hover}; border: 1px solid {a}; }}
 QPushButton:checked {{ background: {a_soft}; border: 1px solid {a}; }}
+QToolButton {{ background: {field}; border: 1px solid {a_soft}; border-radius: 6px; padding: 6px 12px; color: {t}; }}
+QToolButton:hover {{ background: {a_hover}; border: 1px solid {a}; }}
+QToolButton::menu-indicator {{ image: none; }}
 QPushButton#nav {{ text-align: left; padding: 10px 14px; border: none; border-left: 2px solid transparent; border-radius: 0; background: transparent; }}
 QPushButton#nav:checked {{ border-left: 2px solid {a}; background: {a_hover}; color: {a}; }}
 QPushButton#stop {{ border: 1px solid {self.bad.name()}; color: {self.bad.name()}; }}

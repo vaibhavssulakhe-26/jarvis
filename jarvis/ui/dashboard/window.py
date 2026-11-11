@@ -8,22 +8,23 @@ import traceback
 from datetime import datetime
 
 import psutil
-from PyQt6.QtCore import QObject, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QSize, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
 from PyQt6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QStackedWidget,
-                             QSystemTrayIcon, QVBoxLayout, QWidget)
+                             QSystemTrayIcon, QToolButton, QVBoxLayout, QWidget)
 
 from ...actions import events, mpvctl
 from ...core import config, state
-from . import pages, themes
+from . import icons, pages, themes
 from .theme import Theme
-from .widgets import Clock
+from .widgets import Clock, Waveform
 
 NAV = (("Home", pages.Home), ("Media", pages.Media), ("Code", pages.Code), ("Notes", pages.Notes), ("Study", pages.Study),
        ("Web", pages.Web), ("Stats", pages.Stats), ("Settings", pages.Settings))
 POLL_MS = 500
 PAGE_MS = 2000
 LOW_RAM_GB = 1.5
+CHIP_RAM_GB = 1.0
 OK_RAM_GB = 2.0
 ERROR_SECONDS = 5
 
@@ -51,8 +52,11 @@ class Dashboard(QWidget):
     def __init__(self, theme=None):
         super().__init__()
         self.setWindowTitle("JARVIS")
-        self.resize(1280, 780)
+        self.resize(*themes.load_window())
         self.setMinimumSize(980, 640)
+        self._size_timer = QTimer(self)
+        self._size_timer.setSingleShot(True)
+        self._size_timer.timeout.connect(lambda: themes.save_window(self.width(), self.height()))
         self.theme = theme or Theme()
         self.clock = Clock()
         self.ctx = pages.Context(self.theme, self.clock, self.run_command)
@@ -106,19 +110,21 @@ class Dashboard(QWidget):
     # ---------- building ----------
     def _sidebar(self):
         side = QWidget()
-        side.setFixedWidth(150)
+        side.setFixedWidth(176)
         box = QVBoxLayout(side)
         box.setContentsMargins(0, 14, 0, 14)
         title = QLabel("J.A.R.V.I.S")
-        title.setObjectName("big")
-        title.setContentsMargins(14, 0, 0, 14)
+        title.setObjectName("brand")
+        title.setContentsMargins(16, 4, 8, 16)
+        title.setMinimumHeight(40)
         box.addWidget(title)
         self.group = QButtonGroup(self)
         self.group.setExclusive(True)
         self.nav = {}
         for name, _ in NAV:
-            b = QPushButton(name.upper())
+            b = QPushButton("  " + name.upper())
             b.setObjectName("nav")
+            b.setIconSize(QSize(20, 20))
             b.setCheckable(True)
             b.clicked.connect(lambda _=False, n=name: self.go(n))
             self.group.addButton(b)
@@ -130,7 +136,11 @@ class Dashboard(QWidget):
     def _topbar(self):
         row = QHBoxLayout()
         self.clock_label = QLabel("")
-        self.clock_label.setObjectName("cap")
+        self.clock_label.setObjectName("clock")
+        self.ram_chip = QLabel("LOW RAM")
+        self.ram_chip.setObjectName("cap")
+        self.ram_chip.setContentsMargins(10, 2, 10, 2)
+        self.ram_chip.setVisible(False)
         self.search = QLineEdit()
         self.search.setPlaceholderText("search notes")
         self.search.setMaximumWidth(280)
@@ -143,33 +153,45 @@ class Dashboard(QWidget):
         row.addWidget(self.clock_label)
         row.addStretch(1)
         row.addWidget(self.search)
+        row.addWidget(self.ram_chip)
         row.addWidget(self.chip)
         row.addWidget(self.theme_btn)
         return row
 
     def _bottombar(self):
         row = QHBoxLayout()
+        row.setSpacing(8)
+        self.wave = Waveform(self.theme, self.clock)
         self.talk_btn = QPushButton("Talk to Jarvis")
         self.talk_btn.setObjectName("talk")
         self.talk_btn.clicked.connect(self.talk)
         self.cmd = QLineEdit()
         self.cmd.setPlaceholderText("type a command, or say " + config.wake_label().title() + " ...")
         self.cmd.returnPressed.connect(self.send)
+        self.quick = QToolButton()
+        self.quick.setText("Quick commands")
+        self.quick.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu = QMenu(self.quick)
+        for text in pages.QUICK:
+            act = QAction(text, menu)
+            act.triggered.connect(lambda _=False, c=text: self.run_command(c))
+            menu.addAction(act)
+        self.quick.setMenu(menu)
         self.stop_btn = QPushButton("STOP")
         self.stop_btn.setObjectName("stop")
         self.stop_btn.clicked.connect(self.stop_all)
-        row.addWidget(self.talk_btn)
+        for w in (self.wave, self.talk_btn):
+            row.addWidget(w)
         row.addWidget(self.cmd, 1)
-        for text in pages.QUICK:
-            b = QPushButton(text)
-            b.clicked.connect(lambda _=False, c=text: self.run_command(c))
-            row.addWidget(b)
+        row.addWidget(self.quick)
         row.addWidget(self.stop_btn)
         return row
 
     # ---------- theme ----------
     def restyle(self):
         self.setStyleSheet(self.theme.qss())
+        for name, button in self.nav.items():
+            button.setIcon(icons.make(name, self.theme.accent if button.isChecked() else self.theme.text))
         self.update()
 
     def set_theme(self, name):
@@ -220,6 +242,7 @@ class Dashboard(QWidget):
     # ---------- navigation and refresh ----------
     def go(self, name):
         self.nav[name].setChecked(True)
+        self.restyle()
         self.stack.setCurrentWidget(self.pages[name])
         self.refresh_page()
 
@@ -259,6 +282,8 @@ class Dashboard(QWidget):
             self.theme.reload_saved()
         if self._ticks % 10 == 0:
             free = psutil.virtual_memory().available / 2 ** 30
+            self.ram_chip.setVisible(free < CHIP_RAM_GB)
+            self.ram_chip.setStyleSheet(f"color: {self.theme.bad.name()}; border: 1px solid {self.theme.bad.name()}; border-radius: 9px;")
             if free < LOW_RAM_GB and not self.low_auto:
                 self.low_auto = True
                 self.apply_low_power()
@@ -322,6 +347,10 @@ class Dashboard(QWidget):
         state.update(stop_at=time.time())
         mpvctl.stop()
 
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._size_timer.start(800)
+
     def toggle_full(self):
         self.showNormal() if self.isFullScreen() else self.showFullScreen()
 
@@ -365,6 +394,7 @@ class Dashboard(QWidget):
         """Kill mpv, the browser and every child process, then leave."""
         from .. import ui
         self.quitting = True
+        themes.save_window(self.width(), self.height())
         state.update(activity="idle")
         ui.shutdown_all()
         if self._listener in events.listeners:
