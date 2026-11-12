@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 from datetime import date, datetime
 
+from .. import redact
 from ..core import config
 from . import memory, store
 
@@ -50,7 +51,7 @@ def _write_copy(topic):
 
 def save(topic, text, with_window=True):
     memory._boot()
-    text = " ".join(str(text or "").split())[:2000]
+    text = redact.mask(" ".join(str(text or "").split())[:2000])
     if not text:
         raise ValueError("empty note")
     topic = " ".join(str(topic or "").split())[:40] or "general"

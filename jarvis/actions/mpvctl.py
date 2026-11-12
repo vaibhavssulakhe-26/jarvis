@@ -12,6 +12,7 @@ import threading
 import time
 from pathlib import Path
 
+from .. import platform
 from ..core import config
 
 VIDEO_FORMAT = "bestvideo[height<=720]+bestaudio/best[height<=720]/best"
@@ -151,8 +152,8 @@ def load(url, audio=False):
 
 
 def _find_window():
-    out = subprocess.run(["kdotool", "search", "--class", "mpv"], capture_output=True, text=True, timeout=3).stdout.split()
-    return out[-1] if out else None
+    ids = platform.window_find(["mpv"])
+    return ids[-1] if ids else None
 
 
 def _bring_forward(wait):
@@ -162,17 +163,17 @@ def _bring_forward(wait):
         try:
             win = _find_window()
             if win:
-                subprocess.run(["kdotool", "windowactivate", win], capture_output=True, timeout=3)
+                platform.window_activate(win)
                 return True
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, subprocess.SubprocessError, platform.Unsupported):
             return False
         time.sleep(0.5)
     return False
 
 
 def raise_window(wait=20.0):
-    """Put the mpv video window in front of the other windows (kdotool); does nothing without it."""
-    if shutil.which("kdotool") is None:
+    """Put the mpv video window in front of the other windows; does nothing where windows cannot be controlled."""
+    if not platform.windows_ok():
         return None
     thread = threading.Thread(target=_bring_forward, args=(wait,), daemon=True)
     thread.start()

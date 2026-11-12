@@ -2,10 +2,10 @@
 import difflib
 import re
 import shutil
-import subprocess
 import time
 from pathlib import Path
 
+from .. import platform
 from ..core import config
 from . import windows
 from .tools import HOME, ToolError, _launch, tool
@@ -170,8 +170,6 @@ def switch_app(args):
 
 @tool("minimise_window", 'args {} - minimise the current window; for "minimise this"')
 def minimise_window(args):
-    if not shutil.which("kdotool"):
-        raise ToolError("I need kdotool to minimise windows.")
     windows.minimise_active()
     return "Minimised."
 
@@ -186,34 +184,31 @@ def open_path(args):
             return open_folder({"name": key})
         from .documents import locate
         given = str(locate(name, ("open_path", {})))
-    _launch(["xdg-open", given])
+    platform.open_target(given)
     return f"Opening {Path(given).name}."
 
 
-def _brightness_cmd(text):
+def _brightness_change(text):
+    """('change', +/- percent) or ('set', percent) from what was said, or None."""
     t = text.lower()
     n = re.search(r"\b(\d{1,3})\b", t)
-    step = n.group(1) if n else "10"
+    step = int(n.group(1)) if n else 10
     if re.search(r"\b(up|increase|raise|brighter)\b", t):
-        return ["brightnessctl", "set", f"{step}%+"]
+        return "change", step
     if re.search(r"\b(down|decrease|lower|reduce|dim|dimmer)\b", t):
-        return ["brightnessctl", "set", f"{step}%-"]
+        return "change", -step
     if n and re.search(r"\bto\b|\bset\b", t):
-        return ["brightnessctl", "set", f"{min(int(step), 100)}%"]
+        return "set", min(step, 100)
     return None
 
 
 @tool("brightness", 'args {"text": "<what was said, such as brightness up or set brightness to 40>"} - change the screen brightness')
 def brightness(args):
-    cmd = _brightness_cmd(str(args.get("text", "")))
-    if cmd is None:
+    change = _brightness_change(str(args.get("text", "")))
+    if change is None:
         raise ToolError("Say brightness up, brightness down, or set brightness to a number.")
-    if not shutil.which("brightnessctl"):
-        raise ToolError("I need brightnessctl for that. Install it with dnf and try again.")
-    r = subprocess.run(cmd, capture_output=True, timeout=5)
-    if r.returncode:
-        raise ToolError("I could not change the brightness.")
-    return "Done."
+    (platform.brightness_change if change[0] == "change" else platform.brightness_set)(change[1])
+    return True
 
 
 @tool("open_site", 'args {"site": "<website as said, for example github.com or youtube>"} - open a website the user named in the browser')

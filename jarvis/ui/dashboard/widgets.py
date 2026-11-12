@@ -5,7 +5,7 @@ import re
 import time
 
 from PyQt6.QtCore import QLineF, QObject, QPointF, QRectF, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen
+from PyQt6.QtGui import QFont, QPainter, QPen
 from PyQt6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
 from ...actions import events

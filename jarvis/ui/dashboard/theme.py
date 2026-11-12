@@ -35,7 +35,6 @@ class Theme(QObject):
         self.state_colours = flags["state_colours"]
         self.cycle = flags["cycle"]
         self.mode = "idle"
-        self.version = 0
         self._glow = {}
         base = themes.preset(self.name, self.hue)
         self.cur = {k: QColor(base[k]) for k in KEYS}
@@ -118,7 +117,6 @@ class Theme(QObject):
         self._finish()
 
     def _finish(self):
-        self.version += 1
         self._glow.clear()
         self.changed.emit()
 

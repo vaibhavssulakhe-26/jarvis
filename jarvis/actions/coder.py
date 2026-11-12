@@ -11,6 +11,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from .. import platform
 from ..brain import brain
 from ..core import config
 from . import events, procs
@@ -79,8 +80,8 @@ def open_in_editor(path):
         if shutil.which(exe):
             _launch([exe, str(path)])
             return "VS Code" if exe == "code" else exe
-    if shutil.which("xdg-open"):
-        _launch(["xdg-open", str(path)])
+    if platform.open_ok():
+        platform.open_target(path)
         return "your default app"
     return None
 
@@ -203,10 +204,6 @@ def needs_install(folder, meta):
     if pkgs and (not (Path(folder) / ".venv" / "bin" / "python").exists() or sorted(meta.get("installed", [])) != sorted(pkgs)):
         return pkgs
     return []
-
-
-def top_module(name):
-    return re.sub(r"[^a-z0-9]", "", name.split("[")[0].split("=")[0].split("<")[0].split(">")[0].split("~")[0].split("!")[0].lower())
 
 
 def missing_package(output, folder):

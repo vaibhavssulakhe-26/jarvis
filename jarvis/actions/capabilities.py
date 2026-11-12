@@ -1,7 +1,6 @@
 """What Jarvis can do, read from the tool registry so the answer never drifts from the code."""
 import re
 
-from ..voice import voice
 from . import events
 from .tools import TOOLS, tool
 
@@ -15,12 +14,15 @@ CATEGORIES = [
     ("Web and research", "web_search research research_topic open_sources open_url help_topic add_watch list_watches pause_watch resume_watch remove_watch"),
     ("Browser", "browse_open browse_search browse_click browse_type browse_scroll browse_read browse_back new_tab close_tab close_browser browse_screenshot"),
     ("Notes and memory", "take_note read_notes list_notes search_notes search_docs reindex_notes append_to_note delete_note draft_text remember forget what_do_you_know recall_day"),
-    ("Email and messages", "check_email check_spam open_email rate_sender message_contact send_screenshot send_to_device"),
+    ("Email and messages", "check_email draft_reply check_spam open_email rate_sender message_contact send_screenshot send_to_device"),
+    ("Routines and calendar", "morning_briefing calendar_today list_routines add_routine run_routine"),
+    ("Health and stats", "run_diagnostics show_failures which_model run_benchmark jarvis_stats"),
+    ("Job search", "add_job update_job jobs_this_week jobs_follow_up analyse_job draft_followup draft_cover_letter job_mail_updates practice_interview interview_weak_areas"),
     ("Files", "find_file summarise_file ask_about_file read_aloud_file"),
     ("Coding", "build_project edit_file apply_edit find_bugs run_project stop_project fix_last_error add_feature explain_file git_init_project install_deps debug_clipboard"),
     ("Study", "quiz_me teach_me study_progress roadmap_next roadmap_done log_today week_summary"),
-    ("Focus", "start_focus start_break stop_focus focus_left quick_note good_morning guard_switch focus_mode take_break screen_time morning_briefing"),
-    ("Voice and chat", "change_theme jarvis_stats list_voices change_voice what_voice set_language proactive_level proactive_quiet"),
+    ("Focus", "start_focus start_break stop_focus focus_left quick_note good_morning guard_switch focus_mode take_break screen_time"),
+    ("Voice and chat", "change_theme list_voices change_voice what_voice set_language proactive_level proactive_quiet"),
 ]
 ASK = re.compile(r"^(?:hey |ok |okay |so )?(?:please )?(?:help|what can you do(?: now| for me)?|what do you do|what are you able to do|"
                  r"what are your (?:new |latest |current )?(?:features|abilities|skills|capabilities)|tell me (?:about )?your (?:new |latest )?(?:features|abilities|skills)|"

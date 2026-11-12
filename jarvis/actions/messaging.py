@@ -1,14 +1,13 @@
 """WhatsApp messages and screenshots to saved contacts, sent through a virtual keyboard."""
 import difflib
-import json
 import re
-import shutil
 import subprocess
 import threading
 import time
 from urllib.parse import quote
 
-from ..core import config
+from .. import platform
+from ..core import config, jsonfile
 from ..voice import voice
 from .tools import ToolError, _browser, capture_screen, heard_recently, tool
 
@@ -18,11 +17,7 @@ CONTACT_ALIASES = {"mom": {"mum", "mummy", "mother", "mama", "amma", "ma"},
 
 
 def _contacts():
-    try:
-        data = json.loads(CONTACTS.read_text())
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    return jsonfile.read(CONTACTS, {}, dict)
 
 
 def _find_contact(spoken):
@@ -71,28 +66,8 @@ def _trusted(args):
         return False
 
 
-def _press(*steps):
-    """Each step is a tuple of key names pressed together, followed by a pause in seconds."""
-    from evdev import UInput, ecodes as e
-    ui = UInput({e.EV_KEY: [e.KEY_ENTER, e.KEY_LEFTCTRL, e.KEY_V]}, name="jarvis-keyboard")
-    try:
-        time.sleep(0.5)
-        for keys, pause in steps:
-            codes = [getattr(e, "KEY_" + k) for k in keys]
-            for code in codes:
-                ui.write(e.EV_KEY, code, 1)
-            ui.syn()
-            time.sleep(0.05)
-            for code in reversed(codes):
-                ui.write(e.EV_KEY, code, 0)
-            ui.syn()
-            time.sleep(pause)
-    finally:
-        ui.close()
-
-
 def _press_enter():
-    _press((("ENTER",), 0.2))
+    platform.send_enter()
 
 
 def _send_later(delay, name):
@@ -120,18 +95,16 @@ def message_contact(args):
 
 
 def _copy_image(path):
-    if shutil.which("wl-copy") is None:
-        raise ToolError("I need wl-copy to send a picture.")
-    with open(path, "rb") as f:
-        subprocess.run(["wl-copy", "--type", "image/png"], stdin=f, stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL, timeout=10, check=True)
+    platform.clipboard_write_image(path)
 
 
 def _paste_and_send(delay, name, path):
     def go():
         time.sleep(delay)
         try:
-            _press((("LEFTCTRL", "V"), 3.0), (("ENTER",), 0.2))
+            platform.send_paste()
+            time.sleep(3.0)
+            platform.send_enter()
             voice.say(f"I pasted the screenshot and pressed send for {name}. Take a quick look to make sure it went through.")
         except Exception as e:
             voice.say(f"I could not send the picture, {type(e).__name__}. It is still on your clipboard, so you can paste it yourself.")

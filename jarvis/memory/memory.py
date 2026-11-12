@@ -7,6 +7,7 @@ import threading
 from collections import Counter
 from datetime import datetime, timedelta
 
+from .. import redact
 from ..core import config
 from . import store
 
@@ -252,7 +253,7 @@ def _plain(role, text):
 
 def archive_turns(turns):
     _boot()
-    rows = [(_now(), role, _plain(role, text)[:600]) for role, text in turns]
+    rows = [(_now(), role, redact.mask(_plain(role, text))[:600]) for role, text in turns]
     rows = [r for r in rows if r[2]]
     if not rows:
         return

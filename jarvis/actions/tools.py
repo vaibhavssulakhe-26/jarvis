@@ -2,23 +2,21 @@
 import re
 import shutil
 import subprocess
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
+from .. import platform
 from . import events
 from ..brain import brain
 from ..core import config
+from ..core.errors import ToolError  # noqa: F401  (tools.ToolError is used everywhere)
 from ..memory import memory, notes
 from ..scheduling import reminders
 
 HOME = Path.home()
+
 TOOLS = {}
-
-
-class ToolError(Exception):
-    pass
 
 
 def tool(name, doc, risk="safe", describe=None, skip=None):
@@ -57,6 +55,7 @@ TRIGGERS = {
     "ask_about_file": "file document pdf says about",
     "read_aloud_file": "read aloud file text",
     "web_search": "search google look browse",
+    "live_answer": "weather forecast temperature news headlines score scores price prices stock stocks bitcoin latest today",
     "draft_text": "draft email letter write compose message application",
     "build_project": "build create make write code script program website web app html page project interface ui design",
     "edit_file": "edit change modify update add file code",
@@ -84,6 +83,25 @@ TRIGGERS = {
     "stop_repeating": "stop repeating",
     "move_reminder": "move reminder time",
     "morning_briefing": "morning briefing day today digest",
+    "list_routines": "routines routine list scheduled",
+    "add_routine": "routine add schedule nightly daily",
+    "run_routine": "routine run now triage reindex",
+    "calendar_today": "calendar schedule events meeting meetings agenda tomorrow",
+    "draft_reply": "draft reply respond email answer",
+    "add_job": "job jobs add track tracker application",
+    "update_job": "job update interview offer rejected applied saved",
+    "jobs_this_week": "jobs applied apply week",
+    "jobs_follow_up": "jobs follow followup need",
+    "analyse_job": "analyse analyze job posting description fit",
+    "draft_followup": "draft follow followup email job company",
+    "draft_cover_letter": "draft cover letter job",
+    "job_mail_updates": "job updates mail tracker apply",
+    "practice_interview": "interview practice mock",
+    "interview_weak_areas": "interview weak areas",
+    "run_diagnostics": "diagnostics diagnose doctor health check",
+    "show_failures": "failures failed failure wrong mistakes",
+    "which_model": "model brain using offline",
+    "run_benchmark": "benchmark speed latency",
     "add_watch": "watch monitor changes change",
     "list_watches": "watches watching list",
     "pause_watch": "pause watch",
@@ -217,7 +235,10 @@ def _launch(cmd):
 
 def _browser(url):
     pref = config.get("BROWSER") or config.get("JARVIS_BROWSER") or "google-chrome"
-    _launch([pref, url] if shutil.which(pref) else ["xdg-open", url])
+    if shutil.which(pref):
+        _launch([pref, url])
+    else:
+        platform.open_target(url)
 
 
 _STOP = {"the", "a", "an", "to", "of", "on", "in", "at", "and", "or", "my", "me", "you", "your", "i",
@@ -293,17 +314,13 @@ def system_status(args):
     return line[0].upper() + line[1:]
 
 
-def _wp(*a):
-    subprocess.run(["wpctl", *a], timeout=5)
-
-
 @tool("set_volume", 'args {"percent": 0 to 100}')
 def set_volume(args):
     try:
         n = max(0, min(100, int(float(args.get("percent")))))
     except (TypeError, ValueError):
         raise ToolError("What volume level do you want?")
-    _wp("set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", f"{n / 100:.2f}")
+    platform.volume_set(n)
     return f"Volume {n} percent."
 
 
@@ -316,13 +333,13 @@ def _step(args):
 
 @tool("volume_up", 'args {} to raise the volume a little, or {"by": percent} to raise it by that much')
 def volume_up(args):
-    _wp("set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", f"{_step(args)}%+")
+    platform.volume_change(_step(args))
     return "Louder."
 
 
 @tool("volume_down", 'args {} to lower the volume a little, or {"by": percent} to lower it by that much')
 def volume_down(args):
-    _wp("set-volume", "@DEFAULT_AUDIO_SINK@", f"{_step(args)}%-")
+    platform.volume_change(-_step(args))
     return "Quieter."
 
 
@@ -330,9 +347,7 @@ _before_mute = [None]
 
 
 def get_volume():
-    r = subprocess.run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"], capture_output=True, text=True, timeout=5)
-    m = re.search(r"([0-9.]+)", r.stdout)
-    return round(float(m.group(1)) * 100) if m else None
+    return platform.volume_get()
 
 
 @tool("mute", "args {} - mute the laptop sound, remembering the volume level")
@@ -340,7 +355,7 @@ def mute(args):
     level = get_volume()
     if level:
         _before_mute[0] = level
-    _wp("set-volume", "@DEFAULT_AUDIO_SINK@", "0")
+    platform.volume_set(0)
     return "Muted."
 
 
@@ -349,8 +364,8 @@ def unmute(args):
     level = _before_mute[0]
     if level is None:
         level = get_volume() or 40
-    _wp("set-mute", "@DEFAULT_AUDIO_SINK@", "0")
-    _wp("set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", f"{level / 100:.2f}")
+    platform.unmute()
+    platform.volume_set(level)
     _before_mute[0] = None
     return f"Sound is back at {level} percent."
 
@@ -364,25 +379,12 @@ def screenshot(args):
 
 
 def capture_screen(path):
-    # scrot and gnome-screenshot only work on X11 or GNOME, so they are fallbacks behind spectacle
-    for cmd in (["spectacle", "-b", "-n", "-f", "-o", str(path)],
-                ["grim", str(path)],
-                ["gnome-screenshot", "-f", str(path)],
-                ["scrot", "-o", str(path)]):
-        if shutil.which(cmd[0]):
-            break
-    else:
-        raise ToolError("I need spectacle to take a screenshot.")
-    subprocess.run(cmd, timeout=15, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if not path.exists():
-        time.sleep(1.5)
-    if not path.exists():
-        raise ToolError("I could not save the screenshot.")
+    platform.capture_screen(path)
 
 
 @tool("lock_screen", "args {} - lock the screen")
 def lock_screen(args):
-    _launch(["loginctl", "lock-session"])
+    platform.lock_screen()
     return "Locking the screen."
 
 
@@ -477,11 +479,7 @@ def draft_text(args):
     (folder / stamped_name(args.get("title", "draft"), "draft", ".txt")).write_text(text[:6000] + "\n")
     print("\n" + text + "\n")
     events.emit("sys", text)
-    copied = False
-    if shutil.which("wl-copy"):
-        subprocess.run(["wl-copy"], input=text.encode(), timeout=5,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        copied = True
+    copied = platform.clipboard_write(text)
     return "I wrote the draft and saved it in your drafts folder" + (" and copied it to the clipboard." if copied else ".")
 
 
@@ -501,23 +499,23 @@ def _power_desc(verb):
 
 @tool("suspend", "args {} - suspend the laptop", risk="confirm", describe=_power_desc("suspend the laptop"))
 def suspend(args):
-    _launch(["systemctl", "suspend"])
+    platform.power("suspend")
     return "Suspending."
 
 
 @tool("shutdown", "args {} - power the laptop off", risk="confirm", describe=_power_desc("shut the laptop down"))
 def shutdown(args):
-    _launch(["systemctl", "poweroff"])
+    platform.power("poweroff")
     return "Shutting down."
 
 
 @tool("restart", "args {} - restart the laptop", risk="confirm", describe=_power_desc("restart the laptop"))
 def restart(args):
-    _launch(["systemctl", "reboot"])
+    platform.power("reboot")
     return "Restarting."
 
 
 # these modules register their tools on import, so they must load after the registry above
-from . import (apps, briefing, browser, capabilities, clipwatch, coder, debug, documents, focus_tools, guard_tools, handoff, mail, media, messaging,  # noqa: E402,F401
-               notes, palette_tools, play, proactive_tools, rag_tools, recall, reminder_tools, screen, stats, study, theme_tools, translate, voice_tools, watches)
-from ..research import research, topic  # noqa: E402,F401
+from . import (apps, briefing, browser, capabilities, clipwatch, coder, debug, diag_tools, documents, focus_tools, guard_tools, handoff, job_tools, mail, media, messaging,  # noqa: E402,F401
+               notes, palette_tools, play, proactive_tools, rag_tools, recall, reminder_tools, routine_tools, screen, stats, study, theme_tools, translate, voice_tools, watches)
+from ..research import live, research, topic  # noqa: E402,F401

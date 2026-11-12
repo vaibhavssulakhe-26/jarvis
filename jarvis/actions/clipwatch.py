@@ -2,10 +2,10 @@
 Nothing is stored: only a hash of the last clip is kept to tell when it changes."""
 import hashlib
 import re
-import shutil
 import threading
 import time
 
+from .. import platform
 from ..brain import brain
 from ..core import config, state
 from . import events
@@ -64,8 +64,8 @@ def clip_summary(args):
 @tool("clip_monitor_switch", 'args {"on": true or false} - turn the clipboard monitor on or off; for "turn on clipboard monitor"')
 def clip_monitor_switch(args):
     on = args.get("on") in (True, "true", "yes", "on", 1)
-    if on and not shutil.which("wl-paste"):
-        raise ToolError("I need wl-paste to watch the clipboard.")
+    if on and not platform.clipboard_watch_ok():
+        raise ToolError("I cannot watch the clipboard on this system.")
     state.update(clipwatch=on)
     if on:
         start()

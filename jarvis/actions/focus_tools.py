@@ -2,6 +2,7 @@
 import threading
 from datetime import datetime
 
+from .. import redact
 from ..core import config
 from ..memory import notes, rag
 from ..scheduling import pomodoro
@@ -62,6 +63,13 @@ def _today_reminders():
 
 @tool("good_morning", 'args {} - a short start to the day: date, reminders, the next roadmap item and the study streak; for "good morning"')
 def good_morning(args):
+    from ..routines import morning
+    from ..voice import speech
+    from . import events
+    saved = morning.latest()
+    if saved and saved["spoken"]:
+        events.emit("sys", saved["text"])
+        return speech.Full(saved["spoken"])
     now = datetime.now()
     part = "morning" if now.hour < 12 else "afternoon" if now.hour < 17 else "evening"
     who = config.PET_NAME
@@ -86,7 +94,7 @@ def inbox_path():
 
 @tool("quick_note", 'args {"text": "<the note>"} - add a line with the time to the notes inbox; for "note: buy a cable"')
 def quick_note(args):
-    text = " ".join(str(args.get("text") or "").split())[:1000]
+    text = redact.mask(" ".join(str(args.get("text") or "").split())[:1000])
     if not text:
         raise ToolError("What should I note?")
     path = inbox_path()

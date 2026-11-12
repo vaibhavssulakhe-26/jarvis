@@ -12,3 +12,4 @@ models/voices/
 *.onnx
 *.onnx.json
 .venv*/
+data/traces.jsonl*

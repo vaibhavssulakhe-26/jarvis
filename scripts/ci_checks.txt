@@ -1,0 +1,39 @@
+# Checks that need no microphone, speakers, display or API keys. One name per line (scripts/<name>.py).
+# A second word "linux" marks a check that only makes sense on Linux; it is skipped on macOS with a message.
+platform_check
+echo_check
+jobs_check
+doctor_check
+traces_check
+routines_check
+live_check
+speech_check
+route_check
+confirm_check
+pending_check
+brain_check
+mail_check
+memory_check
+rag_check
+reminders_check
+research_check
+schedule_check
+study_check
+stats_check
+translate_check
+language_check
+palette_check
+proactive_check
+files_check
+focus_check
+guard_check
+handoff_check
+debug_check
+clipwatch_check
+coder_check
+apps_check
+play_check
+screen_check linux
+player_check linux
+stop_check linux
+dashboard_check linux

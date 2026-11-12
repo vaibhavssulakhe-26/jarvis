@@ -3,6 +3,7 @@ import re
 import shutil
 import subprocess
 
+from .. import platform
 from ..brain import brain
 from ..core import config
 from ..voice.speech import Full
@@ -115,22 +116,12 @@ def read_screen(args):
 
 
 def read_clip():
-    for cmd in (["wl-paste", "--no-newline", "--type", "text"],
-                ["xclip", "-selection", "clipboard", "-o"],
-                ["xsel", "--clipboard", "--output"]):
-        if shutil.which(cmd[0]):
-            r = subprocess.run(cmd, capture_output=True, timeout=5)
-            return r.stdout.decode(errors="replace").strip() if r.returncode == 0 else ""
-    raise ToolError("I need wl-paste to read the clipboard.")
+    return platform.clipboard_read()
 
 
 def write_clip(text):
     """Put text on the clipboard. Returns False when no clipboard tool is installed."""
-    for cmd in (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]):
-        if shutil.which(cmd[0]):
-            subprocess.run(cmd, input=str(text).encode(), timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return True
-    return False
+    return platform.clipboard_write(text)
 
 
 SECRET = re.compile(

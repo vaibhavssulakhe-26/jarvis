@@ -1,9 +1,8 @@
 """Which Piper voice is in use. The choice is saved in data/settings.json and applies on the next spoken reply."""
-import json
 import re
 from pathlib import Path
 
-from ..core import config, lang
+from ..core import config, jsonfile, lang
 
 DEFAULT = "en_US-ryan-medium"
 DIRS = (config.MODELS / "voices", Path.home() / "piper-voices")
@@ -21,6 +20,28 @@ def installed():
             if p.with_name(p.name + ".json").exists():
                 found.setdefault(p.stem, p)
     return found
+
+
+QUALITY = {"x_low": 0, "low": 1, "medium": 2, "high": 3}
+
+
+def quality(name):
+    return QUALITY.get(name.rsplit("-", 1)[-1], 1)
+
+
+def best():
+    """The best installed English voice: highest quality tier, then the default voice, then name order. None when nothing is installed."""
+    names = english()
+    return min(names, key=lambda n: (-quality(n), n != DEFAULT, n)) if names else None
+
+
+def length_scale():
+    """Piper phoneme length: 0.92 is a little brisker than the model default; VOICE_SPEED above 1 speaks faster."""
+    try:
+        speed = float(config.get("VOICE_SPEED", "1"))
+    except ValueError:
+        speed = 1.0
+    return round(0.92 / min(2.0, max(0.5, speed)), 3)
 
 
 def english():
@@ -53,11 +74,17 @@ def label(name):
     return f"{who}, {ACCENTS.get(name[:5], 'a')} {gender(name)} voice"
 
 
+def read_settings():
+    """data/settings.json (voice, theme, window size) as a dict."""
+    return jsonfile.read(SETTINGS, {}, dict)
+
+
+def write_settings(data):
+    jsonfile.write(SETTINGS, data)
+
+
 def _saved():
-    try:
-        return str(json.loads(SETTINGS.read_text()).get("voice") or "")
-    except (OSError, ValueError, AttributeError):
-        return ""
+    return str(read_settings().get("voice") or "")
 
 
 def first_run_default():
@@ -66,10 +93,10 @@ def first_run_default():
 
 def current_name():
     voices = installed()
-    for name in (_saved(), first_run_default(), DEFAULT):
+    for name in (_saved(), config.get("VOICE") or config.get("JARVIS_VOICE")):
         if name in voices:
             return name
-    return next(iter(english()), first_run_default())
+    return best() or first_run_default()
 
 
 def current_path():
@@ -77,14 +104,9 @@ def current_path():
 
 
 def choose(name):
-    SETTINGS.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        data = json.loads(SETTINGS.read_text())
-        data = data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        data = {}
+    data = read_settings()
     data["voice"] = name
-    SETTINGS.write_text(json.dumps(data))
+    write_settings(data)
 
 
 def next_name():

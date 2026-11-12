@@ -1,0 +1,9 @@
+[Unit]
+Description=Jarvis routines (morning briefing, inbox triage, notes reindex)
+
+[Service]
+Type=oneshot
+ExecStart=%h/Documents/JARVIS/.venv/bin/python -u -m jarvis.routines run
+WorkingDirectory=%h/Documents/JARVIS
+MemoryMax=600M
+TimeoutStartSec=300

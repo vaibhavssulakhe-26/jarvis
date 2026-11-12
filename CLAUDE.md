@@ -7,6 +7,7 @@ Groq as the brain, OpenRouter as the first fallback and Ollama as the offline fa
 - `python -m jarvis.main` from the repo root, inside `.venv`. Never `python jarvis/main.py`: the package uses relative imports.
 - `python -m jarvis.main --text` to type commands instead of speaking.
 - `python -m jarvis.scheduling.reminders list` prints pending reminders.
+- `python -m jarvis.doctor` prints diagnostics, `python -m jarvis.bench` times the eval phrases, `python -m jarvis.routines run|list|now <name>`.
 
 ## Dependencies
 - `requirements.txt`, plus `openwakeword` installed with `--no-deps`.
@@ -108,8 +109,8 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
   the file name. `models/voices/` and `*.onnx` are git-ignored.
 - Speech output: every spoken line goes through `voice/speech.py` (`clean`): no markdown, symbols, links (one "link on screen"),
   addresses or emoji; `&` and `%` are spoken as words. Code, lists, tables, drafts and anything over five sentences or 450
-  characters stay on screen, are copied, and Jarvis says "Done, it's on your screen and copied." Four or five sentences are cut
-  to three. A tool that must be read in full returns `speech.Full(text)` (file read aloud, short clipboard, the digest).
+  characters stay on screen, are copied, and Jarvis says "Done, it's on your screen and copied." Three or more sentences are cut
+  to two (`speech.SHORT_SENTENCES`). A tool that must be read in full returns `speech.Full(text)` (file read aloud, short clipboard, the digest).
 - Interrupting: `voice.stop()` kills the player process and drops the queue (a generation counter), and is harmless when
   nothing is playing. Mechanisms: the spoken words stop / stop talking / quiet / enough / shut up / ruko / चुप (`main.STOP`);
   the wake word at threshold + 0.3 while Jarvis talks (`Ears._interrupt`, logged as "speech cut off by the wake word"); the STOP
@@ -195,3 +196,50 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
   window; "watch X", "show me X" and "play a video of X" always do. `main.collapse_repeats` turns "stop playing. stop playing" / "next next" into
   one phrase before routing. `WAKE_DEBUG=1` prints wake scores above 0.15; `BARGE_THRESHOLD` is separate from `WAKE_THRESHOLD`; extra custom
   `.onnx` wake models in `models/` load next to hey_jarvis. `python -m jarvis.actions.mpvctl --pause|--stop|--next` for keyboard shortcuts.
+
+- Browser launch: `chromium_sandbox=not _is_root()`, so Chromium keeps its sandbox (Playwright adds `--no-sandbox` otherwise). `browser.goto` loads the
+  page, waits for `load` and closes a leftover about:blank tab. Real-time questions (weather, news, scores, prices) never open a browser:
+  `research/live.py` (`live_answer`, matched in `main.DIRECT` by `live.is_live`) searches DuckDuckGo's HTML endpoint with requests, reads the top three pages
+  with trafilatura, makes one small brain call (or uses the snippets) and names the sources. A sentence with "open" does not match.
+- `BRAIN=hybrid|offline` (`config.brain_mode()`, `config.offline()`): offline makes `brain.route` local only and turns off Groq, OpenRouter, the vision
+  call, the warm-up and cloud STT. The dashboard top bar shows it.
+- Themes: each preset keeps its panel and background at the accent's hue; `dashboard_check` prints every accent and asserts purple (hue 275 to 295 and red at least 70 percent of blue), plus the pink and red hue ranges and that each panel tint follows its accent.
+- Media: `play.rank` drops candidates that fail the ranking (live streams stay last as a fallback). `play._state["now"]` is the item that actually started;
+  `play.now()` gives (item, queue index) for the Media page and returns None only when `mpvctl.active()` is false.
+- Notes page: reads `rag.scan()` (NOTES_DIR plus RAG_FOLDERS, .md .txt .pdf), links notes that share keywords, and shows indexed and on-disk counts.
+- Study: the sidebar entry is hidden unless `STUDY=on` (`window.show_study`); the page shows the next roadmap item as a 20 minute block with a Start button
+  (`start focus 20`).
+- Voice: `voices.best()` picks the highest quality installed English voice when nothing is saved or set in `VOICE`; `voices.length_scale()` is 0.92 divided by
+  `VOICE_SPEED`; `voice._speak` synthesises the next sentence while the current one plays; at most two sentences are spoken.
+- Routines: `routines/__init__.py` (parser for `data/routines.md`, state in `data/routines-state.json`, `due`, `run_due`, file lock), `routines/morning.py`
+  (gather, one brain call under 750 estimated tokens, template fallback, saves `data/briefings/<date>.md`), `routines/ical.py` (read-only iCal from
+  `CALENDAR_ICS_URL`, simple RRULE), `routines/triage.py`, `routines/runner.py` (startup catch-up, five minute loop, once-a-day spoken briefing that claims
+  `digest_last` so the old digest does not repeat it). Tools in `actions/routine_tools.py` and `mail.draft_reply`. Email text that matches
+  `morning.SUSPECT` is withheld from the model. `mail.save_draft` is the only write to the mailbox (APPEND to Drafts); nothing in the code imports smtplib.
+- Doctor and traces: `jarvis/doctor.py` (items with pass, warn, fail and a fix hint; keys only as set or not set), `actions/diag_tools.py`
+  (`run_diagnostics`, `show_failures`, `which_model`, `run_benchmark`), `jarvis/traces.py` (data/traces.jsonl, `main.handle` begins and ends each trace,
+  `events.emit` supplies route and provider, `do_tool` supplies tool and failures; a repeat of three or more words with the same numbers, or a sentence
+  starting "no", "I said", "I meant" and so on within 90 seconds marks the earlier line corrected). `jarvis/evalkit.py` holds the 30 phrases and the
+  router probe used by `scripts/eval_phrases.py`, `jarvis/bench.py` and `scripts/replay_failures.py`.
+- Offline model: `brain.pick_ollama_model(names, free)` takes `OLLAMA_MODEL` when installed, else the largest installed chat model that fits (under 2 GB free
+  1B, 2 to 4 GB up to 4B, above 4 GB up to 9B). It is chosen at startup, printed, and shown in the dashboard Core panel.
+- New checks: `live_check`, `routines_check`, `doctor_check`, `traces_check`.
+- Wake word anywhere and echo: `Ears.roll` keeps 4 seconds of idle audio; on a wake hit `ears.take_preroll` keeps speech spoken before the wake word
+  ("play something Jarvis") and `drop_name` removes the name from anywhere in the transcript. `voice/echo.py` (`EchoGate`) learns the microphone level
+  during Jarvis's own speech or media playback and only a clearly louder voice (3 blocks, 1.8 times the echo, 0.4 s cooldown after output stops) starts a
+  "barge" recording, in which only stop words (`echo.is_stop_phrase`) are acted on. `jarvis/redact.py` (`mask`) is applied to traces, notes, the quick note
+  inbox, archived conversation turns and the `heard:` log line.
+- Platform layer: everything OS-specific lives in `jarvis/platform/` (`__init__` has the interface, `API` lists the calls; `linux.py`, `mac.py`). Other code
+  calls `platform.clipboard_write`, `open_target`, `capture_screen`, `active_window`, `notify`, `power`, `volume_*`, `media_control`, `listen_key`,
+  `send_paste`, `install_schedule` and so on, never a command. A call a backend lacks raises `platform.Unsupported` (a `ToolError`: "... is not supported
+  on this system."). `scripts/platform_check.py` scans `jarvis/` for Linux or Mac commands outside the backends. `ToolError` now lives in `core/errors.py`
+  (still importable from `actions.tools`).
+- Profiles and setup: `JARVIS_PROFILE=name` (`config.PROFILE`) reads `.env.<name>` before `.env` and moves `config.DATA` to `data/profiles/<name>`, the
+  runtime folder and the state file to per-profile paths. `python -m jarvis.setup` (and `scripts/install.sh`) is the first-run wizard (standard library only).
+- CI: `.github/workflows/checks.yml` runs `scripts/ci_run.sh`, which reads `scripts/ci_checks.txt` (a name, optionally followed by `linux`), on Ubuntu and
+  macOS with Python 3.11 and `QT_QPA_PLATFORM=offscreen`.
+- Jobs (`JOBS=on`): `jobs/tracker.py` (data/jobs.json), `jobs/analyse.py` (extract, compare with data/profile.md, one brain call, `LAST`), `jobs/drafts.py`
+  (clipboard plus `mail.save_draft(..., reply=False)`), `jobs/mailflag.py` (recruiter mail words, suggestions in data/job-suggestions.json, applied only through
+  the confirm tool `job_mail_updates`), `jobs/interview.py` (spoken mock interview; `main._handle` calls `interview.take` after `study.take`),
+  `actions/job_tools.py` (tools are registered only when JOBS=on) and the Jobs dashboard page.
+- Small JSON files under data/ are read and written through `core/jsonfile.py` (`read(path, default, kind)`, atomic `write`); settings.json goes through `voices.read_settings` / `write_settings`.

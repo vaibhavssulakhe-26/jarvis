@@ -1,6 +1,5 @@
 """Study buddy: DSA quizzes, short lessons, the roadmap file, and the daily check-in."""
 import difflib
-import json
 import os
 import random
 import re
@@ -8,7 +7,7 @@ import time
 from datetime import date, timedelta
 
 from ..brain import brain
-from ..core import config
+from ..core import config, jsonfile
 from .tools import ToolError, tool
 
 TOPICS = {
@@ -47,22 +46,14 @@ def path():
 
 
 def load():
-    try:
-        data = json.loads(path().read_text())
-        if isinstance(data, dict):
-            data.setdefault("topics", {})
-            data.setdefault("days", {})
-            return data
-    except (OSError, ValueError):
-        pass
-    return {"topics": {}, "days": {}}
+    data = jsonfile.read(path(), {}, dict)
+    data.setdefault("topics", {})
+    data.setdefault("days", {})
+    return data
 
 
 def save(data):
-    path().parent.mkdir(parents=True, exist_ok=True)
-    tmp = path().with_name(path().name + f".{os.getpid()}.tmp")
-    tmp.write_text(json.dumps(data, indent=1))
-    os.replace(tmp, path())
+    jsonfile.write(path(), data, indent=1)
 
 
 def day(data, when=None):

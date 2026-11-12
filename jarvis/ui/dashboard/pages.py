@@ -1,12 +1,13 @@
 """The dashboard pages. Each page has refresh(), called when it is shown and every couple of seconds while it is."""
 import time
+from pathlib import Path
 from datetime import datetime
 
 import psutil
 from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter, QPen
-from PyQt6.QtWidgets import (QCheckBox, QColorDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPushButton, QSlider,
-                             QSpinBox, QTextEdit, QVBoxLayout, QWidget)
+from PyQt6.QtGui import QPainter, QPen
+from PyQt6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPushButton, QSlider,
+                             QSpinBox, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget)
 
 from ...actions import coder, events, mpvctl, play, procs, stats, study
 from ...brain import brain
@@ -207,11 +208,17 @@ class Home(Page):
         self.agents = value_label("")
         self.agents.setTextFormat(Qt.TextFormat.RichText)
         agents.box.addWidget(self.agents)
+        brief = Panel(t, "Briefing and routines")
+        self.brief = value_label("")
+        self.brief.setTextFormat(Qt.TextFormat.RichText)
+        self.brief.setWordWrap(True)
+        brief.box.addWidget(self.brief)
         mission = Panel(t, "Mission timeline")
         self.today = value_label("")
         self.today.setTextFormat(Qt.TextFormat.RichText)
         mission.box.addWidget(self.today)
         right.addWidget(feed, 1)
+        right.addWidget(brief)
         right.addWidget(agents)
         right.addWidget(mission)
         for col, stretch in ((left, 3), (centre, 6), (right, 3)):
@@ -220,6 +227,23 @@ class Home(Page):
             col.setContentsMargins(0, 0, 0, 0)
             row.addWidget(holder, stretch)
         self.root.addLayout(row, 1)
+
+    def brief_html(self, dim, acc):
+        from html import escape
+        from ...routines import load, morning
+        got = morning.latest()
+        if got:
+            body = f'{escape(got["spoken"][:260])}'
+        else:
+            body = f'<span style="color:{dim}">No briefing yet today. Say "morning briefing".</span>'
+        try:
+            nxt = [r for r in load() if r["time"] > datetime.now().strftime("%H:%M")]
+            nxt = nxt[0] if nxt else (load() or [None])[0]
+        except OSError:
+            nxt = None
+        later = f'<br><span style="color:{dim}">next routine {nxt["time"]} {escape(nxt["name"])}</span>' if nxt else ""
+        cmds = '<br><span style="color:%s">say: morning briefing, what is on my calendar, what is important in my email, list routines</span>' % dim
+        return body + later + cmds
 
     def refresh(self):
         t = self.ctx.theme
@@ -239,8 +263,10 @@ class Home(Page):
             f'<span style="color:{dim}">last indexed {datetime.fromtimestamp(stamp):%d %b %H:%M}</span>' if stamp else
             f'<span style="color:{dim}">not indexed yet: say "reindex my notes"</span>'))
         from ...voice import voices
-        info = (("BRAIN", "Groq" if config.get("GROQ_API_KEY") else "offline only"), ("EARS", "Groq Whisper" if config.stt_cloud() else "this laptop"),
-                ("WAKE", config.wake_label().title()), ("VOICE", voices.current_name()), ("FALLBACK", "OpenRouter, then Ollama"))
+        brain_name = "offline (Ollama only)" if config.offline() else "Groq" if config.get("GROQ_API_KEY") else "offline only"
+        info = (("BRAIN", brain_name), ("EARS", "Groq Whisper" if config.stt_cloud() else "this laptop"),
+                ("WAKE", config.wake_label().title()), ("VOICE", voices.current_name()),
+                ("OFFLINE", brain._ollama_name["name"] or "not checked yet"), ("FALLBACK", "Ollama only" if config.offline() else "OpenRouter, then Ollama"))
         self.core.setText("<br>".join(f'<span style="color:{dim}">{k:<9}</span>{v}' for k, v in info))
         rows = []
         for r in self.ctx.feed[-self.FEED_ROWS:][::-1]:
@@ -249,6 +275,7 @@ class Home(Page):
         self.feed.setText("<br><br>".join(rows) or
                           f'<span style="color:{dim}">Nothing heard yet.<br><br>Say "{config.wake_label().title()}" and ask for the time, '
                           f'or type a command below. Every command shows up here with how it was routed and which brain answered.</span>')
+        self.brief.setText(self.brief_html(dim, acc))
         lines = []
         for name, key in AGENTS:
             on = agent_running(key)
@@ -299,11 +326,14 @@ class Media(Page):
         self.root.addWidget(queue, 1)
 
     def refresh(self):
-        if not mpvctl.running():
+        current = play.now()
+        if current is None:
             self.title.setText("nothing playing")
             self.pos.setText("")
+            index = -1
         else:
-            title = (mpvctl.send("get_property", "media-title") or {}).get("data") or "playing"
+            item, index = current
+            title = item.get("title") or (mpvctl.send("get_property", "media-title") or {}).get("data") or "playing"
             p = (mpvctl.send("get_property", "time-pos") or {}).get("data")
             d = (mpvctl.send("get_property", "duration") or {}).get("data")
             paused = (mpvctl.send("get_property", "pause") or {}).get("data")
@@ -316,9 +346,8 @@ class Media(Page):
                 self.vol.setValue(int(min(100, v)))
                 self.vol.blockSignals(False)
         self.queue.clear()
-        results = play._state.get("results") or []
-        for i, item in enumerate(results):
-            mark = ">" if i == play._state.get("i", 0) else " "
+        for i, item in enumerate(play._state.get("results") or []):
+            mark = ">" if i == index else " "
             self.queue.addItem(f"{mark} {str(item.get('title', item))[:90]}")
 
 
@@ -394,7 +423,9 @@ class Notes(Page):
         self.search.textChanged.connect(lambda q: self.graph.highlight(q))
         reindex = QPushButton("Reindex")
         reindex.clicked.connect(lambda: ctx.run("reindex my notes"))
+        self.count = cap("")
         top.addWidget(self.search, 1)
+        top.addWidget(self.count)
         top.addWidget(reindex)
         self.root.addLayout(top)
         row = QHBoxLayout()
@@ -426,28 +457,45 @@ class Notes(Page):
         self.root.addLayout(row, 1)
         self._sig = None
         self.files = {}
+        self._texts = {}
 
     def files_now(self):
-        out = {}
-        folder = notes_store.NOTES_DIR
-        if folder.is_dir():
-            for p in sorted(folder.rglob("*")):
-                if p.suffix.lower() in (".md", ".txt") and p.is_file() and len(out) < 60:
-                    out[p.name] = p
-        return out
+        """Every .md, .txt and .pdf in NOTES_DIR and RAG_FOLDERS, keyed by a short display name."""
+        found = {}
+        names = {}
+        for path in sorted(rag.scan()):
+            p = Path(path)
+            if len(found) >= 60:
+                break
+            key = p.name if p.name not in names else f"{p.parent.name}/{p.name}"
+            names[p.name] = p
+            found[key] = p
+        return found
+
+    def text_of(self, p):
+        stamp = p.stat().st_mtime
+        hit = self._texts.get(p)
+        if hit is None or hit[0] != stamp:
+            try:
+                hit = (stamp, rag.read_text(p)[:4000])
+            except Exception:
+                hit = (stamp, "")
+            self._texts[p] = hit
+        return hit[1]
 
     def load_graph(self):
         self.files = self.files_now()
         sig = tuple((n, p.stat().st_mtime) for n, p in self.files.items())
         if sig != self._sig:
             self._sig = sig
-            self.graph.load([(n, p.read_text(errors="replace")[:4000]) for n, p in self.files.items()])
+            self.graph.load([(n, self.text_of(p)) for n, p in self.files.items()])
             self.graph.highlight(self.search.text())
+        self.count.setText(f"{rag.count()} indexed / {len(self.files)} on disk, {len(rag.folders())} folders")
 
     def open_note(self, name):
         p = self.files.get(name)
         if p:
-            self.viewer.setPlainText(p.read_text(errors="replace")[:6000])
+            self.viewer.setPlainText(self.text_of(p)[:6000])
 
     def do_search(self):
         q = self.search.text().strip()
@@ -496,6 +544,14 @@ class Study(Page):
         ci.box.addLayout(form)
         self.note = value_label("")
         ci.box.addWidget(self.note)
+        today = Panel(t, "Today, 20 minutes")
+        self.today_item = value_label("")
+        self.today_item.setWordWrap(True)
+        start = QPushButton("Start")
+        start.clicked.connect(self.start_today)
+        today.box.addWidget(self.today_item)
+        today.box.addWidget(start)
+        left.addWidget(today)
         left.addWidget(sc)
         left.addWidget(ci)
         left.addStretch(1)
@@ -511,6 +567,9 @@ class Study(Page):
         row.addWidget(holder, 2)
         row.addWidget(road, 3)
         self.root.addLayout(row, 1)
+
+    def start_today(self):
+        self.ctx.run("start focus 20")
 
     def save(self):
         values = {"study_min": self.mins.value(), "walk": self.walk.isChecked()}
@@ -541,11 +600,55 @@ class Study(Page):
         self.scores.setText("<br>".join(rows) or "no quizzes yet")
         self.streak.setText(f"streak {study.streak(data)} days" + (f"   weak: {', '.join(weak[:2])}" if weak else ""))
         lines, items = study.roadmap_items()
+        nxt = study.next_item()
+        self.today_item.setText(nxt if nxt else "no open item in data/roadmap.md" if lines is not None else "no data/roadmap.md yet")
         self.road.clear()
         for _, done, text in items:
             self.road.addItem(("x " if done else "o ") + text)
         if lines is None:
             self.road.addItem("no data/roadmap.md yet")
+
+
+class Jobs(Page):
+    COLUMNS = ("Company", "Role", "Resume", "Status", "Applied", "Follow up", "Location")
+
+    def __init__(self, ctx):
+        super().__init__(ctx)
+        t = ctx.theme
+        top = QHBoxLayout()
+        top.addWidget(cap("Status"))
+        self.filter = QComboBox()
+        self.filter.addItems(["all", "saved", "applied", "interview", "offer", "rejected"])
+        self.filter.currentTextChanged.connect(lambda _: self.refresh())
+        self.summary = value_label("")
+        top.addWidget(self.filter)
+        top.addWidget(self.summary, 1)
+        self.root.addLayout(top)
+        tp = Panel(t, "Jobs")
+        self.table = QTableWidget(0, len(self.COLUMNS))
+        self.table.setHorizontalHeaderLabels(self.COLUMNS)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.verticalHeader().setVisible(False)
+        tp.box.addWidget(self.table, 1)
+        self.root.addWidget(tp, 1)
+        hint = value_label('Say "add job Acme as data analyst", "update Acme to interview", "analyse this job", "what needs a follow-up". '
+                           "Nothing is applied for or sent for you.")
+        hint.setWordWrap(True)
+        self.root.addWidget(hint)
+
+    def refresh(self):
+        from ...jobs import tracker
+        jobs = tracker.load()
+        by_status, by_resume = tracker.counts(jobs)
+        pick = self.filter.currentText()
+        shown = [j for j in jobs if pick in ("all", j["status"])]
+        self.table.setRowCount(len(shown))
+        for row, j in enumerate(sorted(shown, key=lambda j: j.get("id", 0), reverse=True)):
+            for col, key in enumerate(("company", "role", "resume", "status", "applied", "follow_up", "location")):
+                self.table.setItem(row, col, QTableWidgetItem(str(j.get(key) or "")))
+        self.summary.setText("   ".join(f"{s} {n}" for s, n in by_status.items()) + "      resume: " + "  ".join(f"{r} {n}" for r, n in by_resume.items()))
 
 
 class Web(Page):
@@ -593,10 +696,14 @@ class Stats(Page):
         self.use = value_label("")
         self.use.setTextFormat(Qt.TextFormat.RichText)
         use.box.addWidget(self.use)
+        bench_panel = Panel(t, "Benchmark")
+        self.bench = value_label("")
+        self.bench.setWordWrap(True)
+        bench_panel.box.addWidget(self.bench)
         sysp = Panel(t, "This process")
         self.sys = value_label("")
         sysp.box.addWidget(self.sys)
-        for w in (self.eval, use, sysp):
+        for w in (self.eval, bench_panel, use, sysp):
             self.root.addWidget(w)
         self.root.addStretch(1)
 
@@ -606,6 +713,9 @@ class Stats(Page):
             self.eval_text.setText(f"{ev['passed']}/{ev['total']} passed   {ev['avg_tokens']} tokens avg   {ev['date']}")
         else:
             self.eval_text.setText("no eval yet: python scripts/eval_phrases.py")
+        from ... import bench
+        latest = bench.latest()
+        self.bench.setText(bench.describe(latest) if latest else "no benchmark yet: python -m jarvis.bench")
         week, today = stats.usage()
         rows = []
         for key, label in stats.PROVIDERS:
@@ -659,9 +769,45 @@ class Settings(Page):
         keys = Panel(t, "Keys")
         self.keys = value_label("")
         keys.box.addWidget(self.keys)
-        for w in (tp, opt, keys):
+        doc = Panel(t, "Doctor")
+        self.doctor_text = value_label("Press the button to check the microphone, wake word, keys, offline model, tools, voice and memory.")
+        self.doctor_text.setTextFormat(Qt.TextFormat.RichText)
+        self.doctor_text.setWordWrap(True)
+        self.doctor_btn = QPushButton("Run diagnostics")
+        self.doctor_btn.clicked.connect(self.run_doctor)
+        doc.box.addWidget(self.doctor_btn)
+        doc.box.addWidget(self.doctor_text)
+        self._doctor = {"results": None, "running": False}
+        for w in (tp, opt, keys, doc):
             self.root.addWidget(w)
         self.root.addStretch(1)
+
+    def run_doctor(self):
+        """The checks can take a few seconds (microphone, Ollama), so they run off the window thread and the next refresh shows them."""
+        if self._doctor["running"]:
+            return
+        import threading
+        from ... import doctor
+        self._doctor["running"] = True
+        self.doctor_btn.setEnabled(False)
+        self.doctor_text.setText("checking ...")
+
+        def go():
+            try:
+                self._doctor["results"] = doctor.run()
+            finally:
+                self._doctor["running"] = False
+        threading.Thread(target=go, daemon=True).start()
+
+    def doctor_html(self):
+        from html import escape
+        t = self.ctx.theme
+        colours = {"pass": t.ok.name(), "warn": t.warn.name(), "fail": t.bad.name()}
+        rows = []
+        for r in self._doctor["results"]:
+            fix = f' <span style="color:{t.dim.name()}">{escape(r["fix"])}</span>' if r["fix"] and r["status"] != "pass" else ""
+            rows.append(f'<span style="color:{colours[r["status"]]}">{r["status"].upper():<5}</span> {escape(r["name"])}: {escape(r["detail"])}{fix}')
+        return "<br>".join(rows)
 
     def pick(self):
         c = QColorDialog.getColor(self.ctx.theme.accent, self, "Accent colour")
@@ -684,4 +830,7 @@ class Settings(Page):
 
     def refresh(self):
         self.sync()
+        if self._doctor["results"] is not None and not self._doctor["running"]:
+            self.doctor_text.setText(self.doctor_html())
+            self.doctor_btn.setEnabled(True)
         self.keys.setText("\n".join(f"{k}: {'set' if config.get(k) else 'not set'}" for k in KEYS))

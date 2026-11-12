@@ -4,15 +4,16 @@ Safety is enforced here, not in a prompt: no passwords, card numbers, OTPs or ke
 a yes, only http and https pages open, and page text is only ever data."""
 import atexit
 import concurrent.futures
+import os
 import queue
 import re
 import shutil
-import subprocess
 import threading
 import time
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
+from .. import platform
 from ..brain import brain
 from ..core import config
 from .tools import ToolError, tool
@@ -150,6 +151,10 @@ def ready():
     return playwright_ok() and (channel() is not None or bundled_chromium())
 
 
+def _is_root():
+    return hasattr(os, "geteuid") and os.geteuid() == 0
+
+
 def profile_dir():
     return config.DATA / "browser-profile"
 
@@ -245,6 +250,7 @@ class _Worker:
             self.pw = sync_playwright().start()
             self.ctx = self.pw.chromium.launch_persistent_context(
                 str(profile_dir()), channel=channel(), headless=headless, accept_downloads=True,
+                chromium_sandbox=not _is_root(),
                 args=["--blink-settings=imagesEnabled=false"] if lite else [], viewport={"width": 1280, "height": 800})
         except Exception as e:
             self._close()
@@ -316,13 +322,28 @@ def active():
     return W.ctx is not None and W.page is not None
 
 
+def goto(pg, url):
+    """Load the page and wait for it. A fresh browser starts on about:blank, so any blank tab left over is closed afterwards."""
+    pg.goto(url, wait_until="domcontentloaded", timeout=30000)
+    try:
+        pg.wait_for_load_state("load", timeout=10000)
+    except Exception:
+        pass
+    for other in list(pg.context.pages):
+        if other is not pg and not other.is_closed() and other.url in ("about:blank", "chrome://newtab/"):
+            try:
+                other.close()
+            except Exception:
+                pass
+
+
 def open_page(url):
     """For other tools (run it): open a web address in the controlled browser."""
     safe_url(url)
 
     def go():
         pg = W.current()
-        pg.goto(url, wait_until="domcontentloaded", timeout=30000)
+        goto(pg, url)
         return pg.title()
     return W.run(go)
 
@@ -357,7 +378,7 @@ def browse_open(args):
 
     def go():
         pg = W.current()
-        pg.goto(url, wait_until="domcontentloaded", timeout=30000)
+        goto(pg, url)
         _guard(pg)
         return _title(pg)
     title = W.run(go)
@@ -371,7 +392,7 @@ def browse_search(args):
 
     def go():
         pg = W.current()
-        pg.goto(url, wait_until="domcontentloaded", timeout=30000)
+        goto(pg, url)
         _guard(pg)
         return True
     W.run(go)
@@ -533,9 +554,7 @@ def browse_external(args):
     pg_url = W.run(lambda: W.current(create=False).url if W.current(create=False) else "")
     if not pg_url or not pg_url.startswith(("http://", "https://")):
         raise ToolError("There is no page to hand over.")
-    if not shutil.which("xdg-open"):
-        raise ToolError("I need xdg-open for that.")
-    subprocess.Popen(["xdg-open", pg_url], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    platform.open_target(pg_url)
     return "Opened it in your normal browser."
 
 

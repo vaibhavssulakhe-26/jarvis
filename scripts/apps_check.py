@@ -12,6 +12,7 @@ os.environ["XDG_STATE_HOME"] = str(tmp / "state")
 
 from jarvis.actions import tools  # noqa: E402
 from jarvis.actions import apps, windows  # noqa: E402
+from jarvis.platform import linux as platform_linux  # noqa: E402
 from jarvis.core import main as core  # noqa: E402
 
 results = []
@@ -31,7 +32,7 @@ for fname, name in (("google-chrome.desktop", "Google Chrome"), ("code.desktop",
 
 launched = []
 with mock.patch.object(apps, "APP_DIRS", [desktop]), mock.patch.object(apps, "_apps", {"t": 0.0, "items": []}), \
-        mock.patch.object(apps, "_launch", side_effect=launched.append), mock.patch.object(apps.shutil, "which", return_value="/usr/bin/x"):
+        mock.patch.object(apps, "_launch", side_effect=launched.append), mock.patch.object(platform_linux.shutil, "which", return_value="/usr/bin/x"):
     for said, want in (("the browser", "Google Chrome"), ("VS Code", "Visual Studio Code"), ("terminal", "Konsole"),
                        ("spotify", "Spotify"), ("Spotifi", "Spotify")):
         hit = apps.find_app(said)
@@ -62,13 +63,13 @@ with mock.patch.object(apps, "APP_DIRS", [desktop]), mock.patch.object(apps, "_a
     check("switch activates the first window", got == ["{abc}"])
 
 ran = []
-with mock.patch.object(apps.subprocess, "run", side_effect=lambda cmd, **k: ran.append(cmd) or mock.Mock(returncode=0)), \
-        mock.patch.object(apps.shutil, "which", return_value="/usr/bin/brightnessctl"):
+with mock.patch.object(platform_linux.subprocess, "run", side_effect=lambda cmd, **k: ran.append(cmd) or mock.Mock(returncode=0)), \
+        mock.patch.object(platform_linux.shutil, "which", return_value="/usr/bin/brightnessctl"):
     T["brightness"]["fn"]({"text": "brightness up"})
     T["brightness"]["fn"]({"text": "set brightness to 40"})
     T["brightness"]["fn"]({"text": "dim the brightness by 20"})
 check("brightness commands", ran == [["brightnessctl", "set", "10%+"], ["brightnessctl", "set", "40%"], ["brightnessctl", "set", "20%-"]])
-with mock.patch.object(apps.shutil, "which", return_value=None):
+with mock.patch.object(platform_linux.shutil, "which", return_value=None):
     try:
         T["brightness"]["fn"]({"text": "brightness up"})
         check("missing brightnessctl said plainly", False)

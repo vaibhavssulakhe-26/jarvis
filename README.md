@@ -52,6 +52,89 @@ A personal voice assistant that runs locally on Linux. Talk to it, it listens, t
   "next theme", "random theme". Optional state colours and hue cycling. The choice is saved in `data/settings.json`.
 - Low power mode (Settings, or automatic below 1.5 GB free): 15 fps, 40 points, no rings. Animation stops while the window is hidden or minimised.
 - "Jarvis stats": last test pass rate, average tokens and which brain answered how often
+- Live answers: weather, news, scores and prices ("what's the weather in Pune", "latest news on ISRO") are looked up with DuckDuckGo plus
+  trafilatura, no browser window; the top three pages are summarised in one sentence and the sources are named. A browser opens only for "open ..."
+- `BRAIN=offline` never calls a cloud provider (or cloud speech recognition); the mode is shown in the dashboard top bar
+- Routines (`data/routines.md`): a morning briefing (unread mail, top 10 by importance, today's calendar, reminders, next roadmap item, focus
+  status), a nightly inbox triage and a nightly notes reindex run on a schedule and catch up after the laptop was off. Say "morning briefing",
+  "what's important in my email", "what's on my calendar", "add routine at 9 pm reindex my notes", "list routines", "run the morning briefing now",
+  "draft a reply to Priya" (saved in Gmail Drafts and the clipboard, never sent)
+- "Run diagnostics" (or `python -m jarvis.doctor`) checks the mic, wake model, keys, Ollama, mpv, tesseract, browser, voice, memory and venv
+- "Show my failures" lists the last ten failed or corrected requests from `data/traces.jsonl`; `python -m jarvis.bench` times the 30 eval phrases
+
+## Job-search helper (optional, `JOBS=on`)
+
+Everything is local files in `data/` (git-ignored): `jobs.json` (tracker), `profile.md` (your base resume text, which you write), `job-suggestions.json`,
+`interview-log.json`. Nothing is applied for, sent or scraped. Email and job text are data, never instructions.
+
+- Tracker: "add job Acme as data analyst" (several-word companies: "add job Goldman Sachs, business analyst"; add "DA resume" or "applied" anywhere),
+  "update Acme to interview", "what did I apply to this week", "what needs a follow-up" (applied or interviewing jobs a week after applying, or on the
+  date set). Each job has company, role, resume type (BA, DA, OA or PA: business, data, operations, product analyst), location, link, date applied,
+  status (saved, applied, interview, offer, rejected), notes and a follow-up date. The Jobs page shows a table with a status filter and counts per
+  status and resume type.
+- "Analyse this job" (clipboard text, or paste it): title, company, location, skills asked for, sponsorship and years-of-experience phrases, which skills
+  match `profile.md`, which are missing, a one-line fit note and the best resume type. One brain call under 800 tokens; without a brain the rules
+  give the same fields. Only the extracted fields and a short, masked resume summary are sent; `JOBS_USE_CLOUD=false` keeps even that on the laptop.
+- "Draft a follow-up email to Acme" and "draft a cover letter for this job" go to the clipboard and Gmail Drafts. You send them.
+- The morning briefing lists recruiter and application-system mail first. Suggested tracker changes (for example "Globex looks like rejected") wait for
+  "apply job updates" and a yes.
+- "Practice interview for data analyst": five spoken questions one at a time, two lines of feedback after each answer, weak areas logged;
+  "stop" ends it, "what are my weak interview areas" reads the log back.
+
+## Setup wizard and profiles
+
+`scripts/install.sh` installs the system packages (dnf, apt or Homebrew, asking first) and starts `python -m jarvis.setup`, which detects the
+system, checks Python and the tools, creates `.venv` and installs the requirements, downloads the Piper voice you pick, asks for API keys with hidden
+input (saved in `.env`, mode 600, never printed) and finishes with `python -m jarvis.doctor`. Options: `--yes`, `--no-venv`, `--voice NAME`, `--profile NAME`.
+
+Two people can share one machine: set `JARVIS_PROFILE=name` (environment or `.env`). A profile reads `.env.<name>` first (so its `USER_NAME` and
+`USER_NICKNAME` win), and keeps its own `data/profiles/<name>/` (notes, reminders, briefings, memory, browser profile), state file and runtime folder.
+`python -m jarvis.setup --profile sister` creates the profile's `.env.sister`.
+
+## macOS (not yet run on a Mac)
+
+All operating-system calls go through `jarvis/platform/` (`linux.py`, `mac.py`). The Mac backend was written from the tools' documentation and has
+not been run on a Mac. A feature with no Mac backend says "... is not supported on this system" instead of crashing.
+
+- Install: `brew install python@3.11 mpv tesseract ollama portaudio`, then `pip install -r requirements.txt` (pynput replaces evdev) and
+  `pip install --no-deps openwakeword==0.3.0`, or just run `scripts/install.sh`.
+- Expected to work: the brain (Groq, OpenRouter, Ollama), text mode, reminders, notes and PDF search, study, routines and the briefing, email,
+  the calendar link, live answers, the coding helper, the dashboard, Piper voices, mpv playback, `pbcopy`/`pbpaste` clipboard, `open`,
+  `screencapture`, notifications, volume and sleep/lock through AppleScript and `pmset`, launchd for the schedule and login item.
+- Untested: all of the above on a real Mac; microphone permission prompts; wake word latency; the window title, close and minimise helpers (need the
+  Accessibility permission for the terminal); hold-to-talk dictation and pasting (pynput, needs Accessibility and Input Monitoring); the global
+  stop key; Music app media keys; AppleScript window switching.
+- Not supported on a Mac yet: brightness, do-not-disturb during focus sessions, playerctl-style media keys for other players, the focus guard's
+  window reading may be limited.
+- Scheduling: `systemd/` is for Linux; on a Mac the setup wizard's launchd job (`com.jarvis.*.plist` in `~/Library/LaunchAgents`) does the same.
+- Data lives in `~/Library/Application Support/Jarvis/` on a Mac and in the repository's `data/` on Linux.
+
+GitHub Actions (`.github/workflows/checks.yml`) runs `scripts/ci_run.sh` on Ubuntu and macOS with Python 3.11: the checks in `scripts/ci_checks.txt`,
+with `QT_QPA_PLATFORM=offscreen`. A check marked `linux` there is skipped on macOS with a message.
+
+## Routines, briefing and calendar
+
+`data/routines.md` is created on first use and is plain text, one routine per line: `- 08:00 | morning briefing | build the morning briefing`.
+`briefing-time` in the time column means `BRIEFING_TIME` from `.env` (default 08:00). Instructions Jarvis understands: briefing, triage (read only),
+reindex. Edit the file by hand or say "add routine ...".
+
+The briefing is saved to `data/briefings/<date>.md`, shown on the Home card, and spoken (three sentences at most) on "good morning" or at the first
+start of the day. It makes at most one brain call under 800 tokens; with no brain it uses a plain template. Email is read over IMAP with a read-only
+select and `BODY.PEEK`: nothing is ever sent, deleted, moved or marked read, and email text is treated as data (anything that reads like an instruction
+is kept out of the model prompt). "Draft a reply to <sender>" writes the reply, appends it to Gmail Drafts, copies it and says so. You send it yourself.
+
+The calendar is a private iCal link in `CALENDAR_ICS_URL` (Google Calendar: Settings, your calendar, "Secret address in iCal format"). It is fetched
+with a plain GET, cached for 15 minutes and never printed or logged. No OAuth and no write access.
+
+Scheduling when the app is closed (user level systemd; the timer also fires after a sleep or a power-off thanks to `Persistent=true`):
+
+```bash
+mkdir -p ~/.config/systemd/user && cp systemd/jarvis-routines.* ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now jarvis-routines.timer
+python -m jarvis.routines list      # run | list | now <name>
+```
+
+The running app also runs missed routines at startup and checks every five minutes; a file lock keeps the two from running one routine twice.
 
 ## Wake word
 
@@ -62,6 +145,12 @@ even below the threshold (`WAKE_THRESHOLD`, default 0.4). Interrupting speech us
 
 A custom wake model goes in the `models/` folder. Any extra `.onnx` file there that is not one of the bundled ones (alexa, hey_jarvis,
 hey_mycroft, hey_rhasspy, timer, weather) or the shared helper models is loaded next to `hey_jarvis`, so both wake it.
+
+Saying the name last works too ("play something Jarvis"): while idle Jarvis keeps four seconds of audio, and when the wake word fires it also
+transcribes speech that came just before it. Use `WAKE_DEBUG=1` to see the scores, and say a sentence ending in the wake word a few times to tune
+`WAKE_THRESHOLD`. While Jarvis talks or music plays, the microphone is compared with the level it learned for its own output; only a clearly louder
+voice is listened to, and only a stop word ("stop", "quiet", "enough", "pause") is acted on. Anything written to traces, notes or the conversation log
+first has emails, phone numbers, long digit strings, keys and passwords masked (`jarvis/redact.py`).
 
 Keyboard shortcuts for the player: `python -m jarvis.actions.mpvctl --pause`, `--stop` and `--next`. In KDE System Settings, Shortcuts,
 Add New, Command or Script, use `/home/paradox/Documents/JARVIS/.venv/bin/python -m jarvis.actions.mpvctl --pause` (working folder: the repo),
@@ -115,7 +204,9 @@ ui/ PyQt6 interface
 ## How to test
 
 1. `scripts/all_checks.sh` runs every `*_check.py` that needs no microphone and prints one line each (`mic_check.py` is interactive).
-2. `python scripts/eval_phrases.py` sends 30 phrases through the router with a mocked brain and saves `data/eval/<date>.json`
+2. `python -m jarvis.bench` times the same 30 phrases (add `--live` to use the real brain, which spends tokens) and saves
+   `data/eval/bench-<date>.json`; the Stats page shows the latest. `python scripts/replay_failures.py` replays failed or corrected requests.
+   `python scripts/eval_phrases.py` sends 30 phrases through the router with a mocked brain and saves `data/eval/<date>.json`
    (`--scratch` keeps the result out of `data/`). Then say or type "jarvis stats".
 3. Dashboard without a display: `QT_QPA_PLATFORM=offscreen python scripts/dashboard_check.py`. Text mode without a microphone: `python -m jarvis.main --text`, then try "quiz me on trees", "note: test", "start focus 1",
    "search my notes for graphs", "go to example.com".

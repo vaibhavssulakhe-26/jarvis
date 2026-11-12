@@ -15,7 +15,6 @@ import threading  # noqa: E402
 import time  # noqa: E402
 
 from jarvis.core import main as core  # noqa: E402
-from jarvis.core import state  # noqa: E402
 from jarvis.ui import palette  # noqa: E402
 
 results = []

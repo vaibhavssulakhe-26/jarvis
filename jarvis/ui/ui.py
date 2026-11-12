@@ -4,7 +4,6 @@ import math
 import os
 import random
 import signal
-import subprocess
 import sys
 import threading
 import time
@@ -20,6 +19,7 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QLabel, QLineEdit, QPush
                              QTextEdit, QVBoxLayout, QWidget)
 
 from ..actions import browser, events, mpvctl, procs
+from .. import platform
 from ..brain import brain
 from ..core import config, main as core, state
 from ..voice import voice, voices
@@ -479,11 +479,7 @@ class Window(QWidget):
 
 
 def service_active(name):
-    try:
-        return subprocess.run(["systemctl", "--user", "is-active", "--quiet", name],
-                              timeout=3).returncode == 0
-    except Exception:
-        return False
+    return platform.service_active(name)
 
 
 def start_core():
@@ -505,8 +501,7 @@ def start_core():
 
 
 def main():
-    lock_dir = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
-    lock = QLockFile(os.path.join(lock_dir, "jarvis_ui.lock"))
+    lock = QLockFile(str(platform.lock_dir() / f"jarvis_ui{'_' + config.PROFILE if config.PROFILE else ''}.lock"))
     if not lock.tryLock(100):
         print("Jarvis is already running.")
         return

@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from jarvis.actions import tools  # noqa: E402,F401
 from jarvis.actions import focus_tools, study  # noqa: E402
 from jarvis.core import main, state  # noqa: E402
-from jarvis.scheduling import pomodoro, reminders  # noqa: E402
+from jarvis.scheduling import pomodoro  # noqa: E402
 
 bad = []
 
@@ -84,15 +84,17 @@ n_spoken = len(spoken)
 check("a timer that ran out while Jarvis was off is dropped quietly", pomodoro.status() is None and len(spoken) == n_spoken)
 
 # do not disturb is opt in
+from jarvis.platform import linux as platform_linux  # noqa: E402
+platform_linux._inhibit["cookie"] = None
 calls = []
-with mock.patch.object(pomodoro, "_call", lambda *a: calls.append(a) or mock.Mock(arguments=lambda: [7])):
+with mock.patch.object(platform_linux, "_dbus_call", lambda *a: calls.append(a) or mock.Mock(arguments=lambda: [7])):
     pomodoro.mute_notifications(True)
     check("notifications stay on unless FOCUS_MUTE_NOTIFICATIONS is set", not calls)
     with mock.patch.dict(os.environ, {"FOCUS_MUTE_NOTIFICATIONS": "true"}):
-        check("opted in: focus inhibits notifications", pomodoro.mute_notifications(True) and calls[-1][1] == "Inhibit")
+        check("opted in: focus inhibits notifications", pomodoro.mute_notifications(True) and calls[-1][0] == "Inhibit")
         check("only once while it is on", pomodoro.mute_notifications(True) is False and len(calls) == 1)
-        check("and releases them afterwards", pomodoro.mute_notifications(False) and calls[-1][1] == "UnInhibit")
-with mock.patch.object(pomodoro, "_call", side_effect=RuntimeError("no bus")), mock.patch.dict(os.environ, {"FOCUS_MUTE_NOTIFICATIONS": "true"}):
+        check("and releases them afterwards", pomodoro.mute_notifications(False) and calls[-1][0] == "UnInhibit")
+with mock.patch.object(platform_linux, "_dbus_call", side_effect=RuntimeError("no bus")), mock.patch.dict(os.environ, {"FOCUS_MUTE_NOTIFICATIONS": "true"}):
     check("a missing desktop service does not crash", pomodoro.mute_notifications(True) is False)
 
 # good morning

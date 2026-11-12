@@ -12,7 +12,6 @@ os.environ.update(JARVIS_DATA=d, XDG_STATE_HOME=d, XDG_RUNTIME_DIR=d)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from jarvis.actions import apps, tools  # noqa: E402,F401
-from jarvis.brain import brain  # noqa: E402
 from jarvis.core import main  # noqa: E402
 
 bad = []

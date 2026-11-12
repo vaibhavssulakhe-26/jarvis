@@ -10,6 +10,7 @@ import threading
 import time
 import wave
 
+from .. import platform
 from ..actions import events
 from ..core import config, lang, state
 from . import speech, voices
@@ -23,7 +24,6 @@ _proc = [None]
 Full = speech.Full
 
 PRONOUNCE = [(r"\bVibe\b", "Vyb"), (r"\bVibeo\b", "Vybee")]
-PLAYERS = ("pw-play", "paplay", "aplay")
 _player = []
 
 
@@ -48,16 +48,18 @@ def synth(text, wav_path):
     path = voices.path_for(text)
     try:
         voice = _load(path)
+        scale = voices.length_scale()
         with wave.open(wav_path, "wb") as f:
             if hasattr(voice, "synthesize_wav"):
-                voice.synthesize_wav(text, f)
+                from piper import SynthesisConfig
+                voice.synthesize_wav(text, f, syn_config=SynthesisConfig(length_scale=scale))
             else:
                 voice.synthesize(text, f)
         return True
     except Exception as e:
         print(f"  (fast voice failed: {type(e).__name__}, using the slower one)")
     try:
-        r = subprocess.run([sys.executable, "-m", "piper", "-m", str(path),
+        r = subprocess.run([sys.executable, "-m", "piper", "-m", str(path), "--length-scale", str(voices.length_scale()),
                             "-f", wav_path], input=text.encode(), capture_output=True)
         return r.returncode == 0
     except OSError:
@@ -66,7 +68,7 @@ def synth(text, wav_path):
 
 def player():
     if not _player:
-        _player.append(next((p for p in PLAYERS if shutil.which(p)), None))
+        _player.append(next((p for p in platform.audio_players() if shutil.which(p)), None))
     return _player[0]
 
 
@@ -122,6 +124,33 @@ def stop():
     return was
 
 
+def _speak(parts, wav, gen):
+    """Speak sentence by sentence. The first one starts as soon as it is synthesised; the next is made while it plays."""
+    spare = wav.replace(".wav", "_next.wav")
+    atexit.register(config.discard, spare)
+    ready = {}
+
+    def make(i, path):
+        ready[i] = synth(parts[i], path)
+
+    maker = None
+    current = wav
+    make(0, current)
+    for i in range(len(parts)):
+        if gen != _gen[0]:
+            break
+        following = spare if current == wav else wav
+        if i + 1 < len(parts):
+            maker = threading.Thread(target=make, args=(i + 1, following), daemon=True)
+            maker.start()
+        if ready.get(i):
+            play(current, gen)
+        if maker is not None:
+            maker.join()
+            maker = None
+        current = following
+
+
 def _worker():
     wav = str(config.runtime_file(f"say_{os.getpid()}.wav"))
     atexit.register(config.discard, wav)
@@ -131,9 +160,9 @@ def _worker():
             SPEAKING.set()
             state.update(activity="speaking", activity_at=time.time())
         try:
-            for part in speech.sentences(pronounce(text)) if gen == _gen[0] else ():
-                if gen == _gen[0] and synth(part, wav) and gen == _gen[0]:
-                    play(wav, gen)
+            parts = speech.sentences(pronounce(text)) if gen == _gen[0] else ()
+            if parts:
+                _speak(parts, wav, gen)
         except Exception as e:
             print(f"  (voice error: {type(e).__name__})")
         finally:

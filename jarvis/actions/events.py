@@ -5,6 +5,9 @@ out_level = 0.0
 
 
 def emit(kind, text):
+    if kind in ("route", "provider"):
+        from .. import traces
+        traces.note(**{kind: str(text)})
     for fn in list(listeners):
         try:
             fn(kind, str(text))

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for due Jarvis routines every 15 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+# Run at once after the laptop was off or asleep through a scheduled time
+Persistent=true
+
+[Install]
+WantedBy=timers.target

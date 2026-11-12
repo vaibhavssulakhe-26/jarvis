@@ -12,7 +12,7 @@ os.environ["XDG_STATE_HOME"] = scratch
 os.environ["XDG_RUNTIME_DIR"] = scratch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from jarvis.actions import play, tools  # noqa: E402
+from jarvis.actions import play  # noqa: E402
 from jarvis.core import main  # noqa: E402
 
 

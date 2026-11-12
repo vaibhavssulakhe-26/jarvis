@@ -109,7 +109,7 @@ def _local(audio, language=None):
 
 def _groq(audio, language=None):
     key = config.get("GROQ_API_KEY")
-    if not key:
+    if not key or config.offline():
         return None
     language = lang.listening() if language is None else language
     try:

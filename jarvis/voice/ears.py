@@ -6,7 +6,6 @@ import os
 import queue
 import random
 import re
-import shutil
 import subprocess
 import time
 import traceback
@@ -15,10 +14,11 @@ import numpy as np
 import sounddevice as sd
 from scipy.signal import lfilter
 
+from .. import platform, redact
 from ..actions import events, mpvctl
 from ..core import config, state
 from ..scheduling import reminders
-from . import stt, voice
+from . import echo, stt, voice
 
 SR = stt.SR
 BLOCK = 1280  # 80 ms of audio per step
@@ -26,6 +26,10 @@ BLOCK = 1280  # 80 ms of audio per step
 OPENER = r"(?:can|could|would|will) you(?: please)?|please|i (?:want|need) you to|okay|hey|so|and|um|uh"
 FILLER = {"hey", "hi", "hello", "okay", "ok", "yo", "jarvis"}
 NAME_ALIASES = {"jarvis", "jarvas", "jarves", "jarvus", "jervis", "service", "jarvi"}
+ANYWHERE_ALIASES = NAME_ALIASES - {"service"}
+ROLL_BLOCKS = 50  # 4 seconds of audio kept while idle, for "play something Jarvis"
+ROLL_TAIL = 14  # the last 1.1 seconds are the wake word itself
+ROLL_MIN_LOUD = 4
 NOISE = {"you", "thank you", "thanks", "thanks for watching", "bye", "okay", "ok",
          "yeah", "hmm", "mm", "uh", "um", "oh", "the", "so", "and"}
 END = re.compile(r"^(?:ok(?:ay)? )?(?:thanks|thank you|that(?:s| is) (?:all|it)|that will be all|bye|goodbye|good bye|stop listening|"
@@ -56,6 +60,28 @@ def is_name(word):
 def is_wake_word(word, cutoff):
     w = re.sub(r"[^a-z]", "", word.lower())
     return bool(w) and any(difflib.SequenceMatcher(None, w, k).ratio() >= cutoff for k in WAKE_WORDS)
+
+
+def drop_name(text):
+    """Remove the assistant's name wherever it stands ("play something Jarvis"). 'service' is only dropped at the start, by strip_wake."""
+    name = config.ASSISTANT.lower()
+    words = [w for w in text.split() if re.sub(r"[^a-z]", "", w.lower()) not in ANYWHERE_ALIASES | {name}]
+    return " ".join(words).strip(" ,.")
+
+
+def named_anywhere(raw):
+    name = config.ASSISTANT.lower()
+    return any(re.sub(r"[^a-z]", "", w.lower()) in ANYWHERE_ALIASES | {name} for w in raw.split())
+
+
+def take_preroll(roll, thr):
+    """Audio spoken just before the wake word, or None. `roll` is the recent blocks, newest last; the final ROLL_TAIL blocks
+    are the wake word, so speech is looked for before them. The result starts a little ahead of the first loud block."""
+    before = list(roll)[:-ROLL_TAIL]
+    loud = [i for i, b in enumerate(before) if block_rms(b) > thr]
+    if len(loud) < ROLL_MIN_LOUD:
+        return None
+    return list(roll)[max(0, loud[0] - 3):]
 
 
 def strip_wake(text):
@@ -113,15 +139,12 @@ def followup_seconds():
 
 
 def media_playing():
-    """Music or video is audible: Jarvis's own player, or anything that shows up on playerctl."""
+    """Music or video is audible: Jarvis's own player, or any media player the system reports as playing."""
     if mpvctl.playing():
         return True
-    if shutil.which("playerctl") is None:
-        return False
     try:
-        r = subprocess.run(["playerctl", "status"], capture_output=True, text=True, timeout=1.5)
-        return r.stdout.strip() == "Playing"
-    except (OSError, subprocess.SubprocessError):
+        return platform.media_status() == "Playing"
+    except platform.Unsupported:
         return False
 
 
@@ -132,6 +155,7 @@ class Ears:
         self.q = queue.Queue(maxsize=400)
         self.noise = collections.deque(maxlen=600)
         self.pre = collections.deque(maxlen=3)
+        self._init_echo()
         self.thr = 0.02
         self.n = 0
         self.reported = False
@@ -162,6 +186,12 @@ class Ears:
             self.gain = 4.0
         self.oww = self._load_wake()
         self.chime = make_chime()
+
+    def _init_echo(self):
+        self.roll = collections.deque(maxlen=ROLL_BLOCKS)
+        self.gate = echo.EchoGate()
+        self.barge_rec = False
+        self._media, self._media_at = False, 0.0
 
     def _load_wake(self):
         import onnxruntime
@@ -210,6 +240,8 @@ class Ears:
         self.phase = None
         self.buf = []
         self.pre.clear()
+        self.roll.clear()
+        self.barge_rec = False
         self.loud = 0
         self.quiet = 0
 
@@ -267,6 +299,10 @@ class Ears:
             self._drain()
             self._reset()
             return
+        output = voice.SPEAKING.is_set() or (self.phase is None and self._media_now(now))
+        if self.gate.feed(block_rms(block), output and self.phase is None, now) and self.phase is None:
+            self._barge(block, now)
+            return
         if voice.SPEAKING.is_set() and self.phase is None:
             self._interrupt(block, now)
             return
@@ -286,6 +322,18 @@ class Ears:
         else:
             self._recording(block, rms, now)
 
+    def _media_now(self, now):
+        """media_playing() runs a subprocess, so it is asked at most once a second."""
+        if now - self._media_at > 1.0:
+            self._media_at, self._media = now, media_playing()
+        return self._media
+
+    def _barge(self, block, now):
+        """The user is talking over Jarvis or the music. Record it, but only a stop word will be acted on (see _handle)."""
+        print("  (voice over the output, listening for a stop word)")
+        self.barge_rec = True
+        self._begin(now, "record", list(self.roll)[-4:] + [block])
+
     def _interrupt(self, block, now):
         """While Jarvis talks only the wake word, at a higher threshold, can cut in ("Hey Jarvis, stop")."""
         scores = self.oww.predict(block)
@@ -302,6 +350,7 @@ class Ears:
     def _idle(self, block, rms, now):
         self.noise.append(rms)
         self.pre.append(block)
+        self.roll.append(block)
         self.n += 1
         if self.n % 25 == 0 and len(self.noise) >= 50:
             floor = float(np.percentile(self.noise, 10))
@@ -311,7 +360,7 @@ class Ears:
                 print(f"  background {floor:.3f}, speech threshold {self.thr:.3f}")
                 if floor > 0.05:
                     print("  the background is loud; lowering the microphone helps: "
-                          "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 0.5")
+                          "lower the input volume in your sound settings")
         if mpvctl.ducked() and now >= self.awake_until:
             mpvctl.unduck()
         scores = self.oww.predict(block)
@@ -324,7 +373,12 @@ class Ears:
             print(f"  wake (score {score:.2f})")
             events.emit("sys", "wake word heard")
             self.via_wake = True
-            self._begin(now, "wait")
+            before = take_preroll(self.roll, self.thr)
+            if before:
+                print("  (speech before the wake word is kept)")
+                self._begin(now, "record", before)
+            else:
+                self._begin(now, "wait")
         elif now < self.awake_until:
             if rms > self.thr:
                 self.loud += 1
@@ -360,26 +414,34 @@ class Ears:
     def _recording(self, block, rms, now):
         self.buf.append(block)
         self.quiet = self.quiet + 1 if rms < self.thr * 0.7 else 0
-        if self.quiet >= 10 or len(self.buf) >= 150:
+        if self.quiet >= 10 or len(self.buf) >= (30 if self.barge_rec else 150):
             audio = np.concatenate(self.buf).astype(np.float32) / 32768.0
-            via = self.via_wake
+            via, barge = self.via_wake, self.barge_rec
             self._reset()
             if len(audio) >= int(0.5 * SR):
                 try:
-                    self._handle(audio, via)
+                    self._handle(audio, via, barge)
                 except Exception:
                     traceback.print_exc()
                     voice.say("Something broke on my side, but I am still here.")
             self._drain()
             self._reset_wake()
 
-    def _handle(self, audio, via_wake):
+    def _handle(self, audio, via_wake, barge=False):
         t0 = time.time()
         raw = stt.transcribe(audio)
         t1 = time.time()
-        text = strip_wake(raw)
+        text = drop_name(strip_wake(raw))
         bare = re.sub(r"[^\w ]", "", text.lower()).strip()
-        named = any(is_name(w) or is_wake_word(w, 0.7) for w in raw.split()[:3])
+        if barge:
+            if echo.is_stop_phrase(text):
+                print(f"heard: {repr(text)}")
+                events.emit("you", text)
+                self.on_command(text, True)
+            else:
+                print(f"  (ignored while Jarvis was talking: {redact.mask(repr(text))})")
+            return
+        named = named_anywhere(raw) or any(is_name(w) or is_wake_word(w, 0.7) for w in raw.split()[:3])
         if not bare:
             if via_wake or named:
                 print("  (nothing after the wake word)")
@@ -410,7 +472,7 @@ class Ears:
             if not via_wake and len(bare.split()) < 3 and bare.split()[0] not in VERBS:
                 print(f"  (ignored a short remark: {repr(text)})")
                 return
-        print(f"heard: {repr(text)}")
+        print(f"heard: {redact.mask(repr(text))}")
         events.emit("you", text)
         t2 = time.time()
         self.expect = bool(self.on_command(text, via_wake or named))

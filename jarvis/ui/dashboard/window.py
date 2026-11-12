@@ -9,17 +9,18 @@ from datetime import datetime
 
 import psutil
 from PyQt6.QtCore import QObject, QSize, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
+from PyQt6.QtGui import QAction, QIcon, QKeySequence, QPainter, QShortcut
 from PyQt6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QStackedWidget,
                              QSystemTrayIcon, QToolButton, QVBoxLayout, QWidget)
 
+from ... import platform
 from ...actions import events, mpvctl
 from ...core import config, state
 from . import icons, pages, themes
 from .theme import Theme
 from .widgets import Clock, Waveform
 
-NAV = (("Home", pages.Home), ("Media", pages.Media), ("Code", pages.Code), ("Notes", pages.Notes), ("Study", pages.Study),
+NAV = (("Home", pages.Home), ("Media", pages.Media), ("Code", pages.Code), ("Notes", pages.Notes), ("Study", pages.Study), ("Jobs", pages.Jobs),
        ("Web", pages.Web), ("Stats", pages.Stats), ("Settings", pages.Settings))
 POLL_MS = 500
 PAGE_MS = 2000
@@ -131,7 +132,14 @@ class Dashboard(QWidget):
             self.nav[name] = b
             box.addWidget(b)
         box.addStretch(1)
+        self.show_study()
         return side
+
+    def show_study(self):
+        """The Study button appears only when STUDY=on."""
+        on = config.flag("STUDY", False)
+        self.nav["Study"].setVisible(on)
+        self.nav["Jobs"].setVisible(config.flag("JOBS", False))
 
     def _topbar(self):
         row = QHBoxLayout()
@@ -148,11 +156,15 @@ class Dashboard(QWidget):
         self.chip = QLabel("")
         self.chip.setObjectName("cap")
         self.chip.setContentsMargins(10, 2, 10, 2)
+        self.brain_chip = QLabel("BRAIN " + config.brain_mode().upper())
+        self.brain_chip.setObjectName("cap")
+        self.brain_chip.setContentsMargins(10, 2, 10, 2)
         self.theme_btn = QPushButton("THEME")
         self.theme_btn.clicked.connect(lambda: self.set_theme(themes.pick("next", self.theme.name if self.theme.name != "custom" else "")))
         row.addWidget(self.clock_label)
         row.addStretch(1)
         row.addWidget(self.search)
+        row.addWidget(self.brain_chip)
         row.addWidget(self.ram_chip)
         row.addWidget(self.chip)
         row.addWidget(self.theme_btn)
@@ -247,6 +259,8 @@ class Dashboard(QWidget):
         self.refresh_page()
 
     def refresh_page(self):
+        self.brain_chip.setText("BRAIN " + config.brain_mode().upper())
+        self.show_study()
         if not self.isVisible() and not os.environ.get("JARVIS_DASH_TEST"):
             return
         page = self.stack.currentWidget()
@@ -408,8 +422,9 @@ class Dashboard(QWidget):
 
 def run(with_core=True):
     from PyQt6.QtCore import QLockFile
-    os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
-    lock = QLockFile(os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "jarvis_ui.lock"))
+    if platform.name() == "linux":
+        os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+    lock = QLockFile(str(platform.lock_dir() / f"jarvis_ui{'_' + config.PROFILE if config.PROFILE else ''}.lock"))
     if not lock.tryLock(100):
         print("Jarvis is already running.")
         return

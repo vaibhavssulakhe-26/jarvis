@@ -4,9 +4,7 @@ import hashlib
 import html
 import ipaddress
 import re
-import shutil
 import socket
-import subprocess
 import threading
 import time
 import urllib.robotparser
@@ -16,6 +14,7 @@ from urllib.parse import quote, urlparse
 
 import requests
 
+from .. import platform
 from ..core import config
 from ..memory import store
 
@@ -184,8 +183,7 @@ def check(w):
 
 def alert(text):
     print(f"\n*** WATCH: {text} ***")
-    if shutil.which("notify-send"):
-        subprocess.run(["notify-send", "Jarvis watch", text], timeout=5)
+    platform.notify("Jarvis watch", text)
     if config.flag("SPEAK_MONITOR_ALERTS"):
         from ..voice import voice
         voice.say(text)

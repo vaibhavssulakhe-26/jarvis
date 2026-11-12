@@ -19,7 +19,8 @@ FILLER = {"a", "an", "the", "some", "any", "me", "one", "something", "anything",
 ARTICLES = {"a", "an", "the", "some", "any", "me", "one", "something", "anything", "video", "videos", "please", "play"}
 TEACH_WORDS = ("tutorial", "lecture", "course", "explained", "crash course", "full course", "for beginners")
 BAD_MUSIC = ("reaction", "cover", "karaoke", "slowed", "reverb", "8d", "nightcore", "tutorial", "how to")
-_state = {"results": [], "i": 0, "at": 0.0, "kind": "", "topic": "", "music": False, "ask": None}
+MIN_SCORE = -1.0
+_state = {"results": [], "i": 0, "at": 0.0, "kind": "", "topic": "", "music": False, "ask": None, "now": None}
 
 
 def study_channels():
@@ -114,8 +115,23 @@ def score(item, kind, channels, query=""):
 
 
 def rank(items, kind, query=""):
+    """Best first. Only candidates that pass the ranking stay in the queue; live streams stay at the end as a last resort."""
     channels = study_channels()
-    return sorted(items, key=lambda it: -score(it, kind, channels, query))
+    scored = sorted(((score(it, kind, channels, query), it) for it in items), key=lambda pair: -pair[0])
+    passed = [it for pts, it in scored if pts >= MIN_SCORE and not it.get("live")]
+    streams = [it for _, it in scored if it.get("live")]
+    return (passed + streams) or [it for _, it in scored[:1]]
+
+
+def now():
+    """(item, index in the queue) for what mpv is playing, from the same state the queue pointer uses. None when mpv is idle."""
+    if not mpvctl.active():
+        return None
+    item = _state.get("now")
+    results = _state["results"]
+    if item is None or item not in results:
+        return {}, -1
+    return item, results.index(item)
 
 
 def music_video():
@@ -130,10 +146,12 @@ def _open(item):
         for pos in range(start, min(start + MPV_TRIES, len(results))):
             if mpvctl.load("https://www.youtube.com/watch?v=" + results[pos]["id"], audio=_state["kind"] == "music" and not music_video()):
                 _state["i"] = pos
+                _state["now"] = results[pos]
                 return results[pos]
         raise ToolError(f"I could not get that to play. Details are in {mpvctl.log_path()}.")
     base = "https://music.youtube.com/watch?v=" if _state["music"] else "https://www.youtube.com/watch?v="
     _browser(base + item["id"])
+    _state["now"] = item
     return item
 
 
@@ -207,5 +225,6 @@ def player_control(args):
     CONTROLS[which]()
     if which == "stop":
         _state["results"] = []
+        _state["now"] = None
     return {"pause": "Paused.", "resume": "Playing.", "stop": "Stopped.", "louder": "Louder.", "quieter": "Quieter.",
             "forward": "Thirty seconds ahead.", "back": "Thirty seconds back."}[which]

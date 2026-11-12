@@ -13,7 +13,10 @@ from datetime import datetime, timedelta
 from ..actions import apps, browser, events, capabilities, clipwatch, coder, files, mail, mpvctl, play, procs, study, tools
 from ..brain import brain, companion
 from . import config, state
-from ..research import topic as research_topic
+from .. import traces
+from ..research import live as research_live, topic as research_topic
+from ..jobs import interview
+from ..routines import find as routines_find, runner as routine_runner
 from ..memory import rag
 from ..scheduling import digest, guard, monitor, pomodoro, proactive, reminders
 from ..voice import dictate, voice
@@ -135,13 +138,16 @@ def do_tool(action, args, spoken=""):
         _recent[key] = time.time()
     group = agent_of(action)
     events.agent_start(group)
+    traces.note(tool=action)
     try:
         result = tools.TOOLS[action]["fn"](args)
     except tools.ToolError as e:
+        traces.fail(str(e))
         voice.say(str(e))
         return
     except Exception as e:
         print(f"  (tool failed: {type(e).__name__})")
+        traces.fail("tool crashed: " + type(e).__name__)
         voice.say("Oops, that did not work. Something broke on my side.")
         return
     finally:
@@ -221,6 +227,36 @@ def _waiting():
 
 DIRECT = [
     (re.compile(r"^(.+)$"), "play_media", lambda m: play.answer(m.group(1)), play.asking),
+    (re.compile(r"^(.+)$"), "live_answer", lambda m: {"query": m.group(1)} if research_live.is_live(m.group(1)) else None),
+    (re.compile(r"^(?:please )?(?:what(?:'| i)?s|what is|whats|is there anything|anything) (?:important|urgent|new)(?: in| on)? (?:my )?(?:e-?mail|mail|inbox)s?$", re.I),
+     "check_email", lambda m: {}),
+    (re.compile(r"^(?:please )?(?:what(?:'| i)?s|what is|whats|show me|read) (?:on |in )?my (?:calendar|schedule|agenda)(?: for)?\s*(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)?$", re.I),
+     "calendar_today", lambda m: {"day": m.group(1) or "today"}),
+    (re.compile(r"^(?:please )?(?:what(?:'| i)?s|what is|whats) (?:on|in) (?:the )?calendar(?: (today|tomorrow))?$", re.I), "calendar_today", lambda m: {"day": m.group(1) or "today"}),
+    (re.compile(r"^(?:please )?(?:list|show|read)(?: out)?(?: my| the)? routines$|^what routines do i have$", re.I), "list_routines", lambda m: {}),
+    (re.compile(r"^(?:please )?add (?:a )?routine\s*(.*)$", re.I), "add_routine", lambda m: {"text": m.group(1)}),
+    (re.compile(r"^(?:please )?run (?:the |my )?(.+?)(?: routine)? now$", re.I), "run_routine", lambda m: {"name": m.group(1)} if routines_find(m.group(1)) else None),
+    (re.compile(r"^(?:please )?draft (?:a |the )?(?:reply|response|answer) (?:to|for) (?:the )?(?:email |mail |message )?(?:from )?(.+)$", re.I),
+     "draft_reply", lambda m: {"to": m.group(1)}),
+    (re.compile(r"^(?:please )?(?:run (?:the )?(?:diagnostics|a diagnostic|diagnostic|doctor|self[- ]check)|diagnose yourself|check your health)$", re.I),
+     "run_diagnostics", lambda m: {}),
+    (re.compile(r"^(?:please )?(?:show|list|what were) (?:me )?(?:my |the )?(?:failures|failed requests|mistakes)$|^what (?:did you )?fail(?:ed)?(?: on)?$", re.I),
+     "show_failures", lambda m: {}),
+    (re.compile(r"^(?:please )?(?:which|what) (?:offline )?(?:model|brain)(?: are you| is that| do you)(?: using| use)?$", re.I), "which_model", lambda m: {}),
+    (re.compile(r"^(?:please )?run (?:the )?benchmark$", re.I), "run_benchmark", lambda m: {}),
+    (re.compile(r"^(?:please )?add (?:a |this |the )?job(?: (?:at|for))?\s*(.*)$", re.I), "add_job", lambda m: {"text": m.group(1)}),
+    (re.compile(r"^(?:please )?(?:update|change|mark) (.+?) (?:to|as) (saved|applied|interview(?:ing)?|offer(?:ed)?|rejected|rejection)$", re.I),
+     "update_job", lambda m: {"company": m.group(1), "status": m.group(2)}),
+    (re.compile(r"^what (?:jobs )?(?:did|have) i appl(?:y|ied) (?:to|for)? ?this week$|^jobs? applied this week$", re.I), "jobs_this_week", lambda m: {}),
+    (re.compile(r"^(?:what|which)(?: jobs)? needs? (?:a )?follow-?[ ]?up$|^which jobs need (?:a )?follow-?[ ]?up$", re.I), "jobs_follow_up", lambda m: {}),
+    (re.compile(r"^(?:please )?analy[sz]e (?:this|the|that) (?:job|posting|job posting|job description|role)$|^analy[sz]e (?:the )?job (?:from )?(?:my )?clipboard$", re.I),
+     "analyse_job", lambda m: {}),
+    (re.compile(r"^(?:please )?draft (?:a )?follow-?[ ]?up(?: email)? (?:to|for) (.+)$", re.I), "draft_followup", lambda m: {"company": m.group(1)}),
+    (re.compile(r"^(?:please )?draft (?:a )?cover letter(?: for (?:this|the|that) job)?$", re.I), "draft_cover_letter", lambda m: {}),
+    (re.compile(r"^(?:please )?(?:apply|confirm)(?: the)? job (?:mail )?updates$", re.I), "job_mail_updates", lambda m: {}),
+    (re.compile(r"^(?:please )?(?:practice|start) (?:an |a )?(?:mock )?interview(?: for (?:a |an |the )?(.+))?$|^mock interview(?: for (?:a |an |the )?(.+))?$", re.I),
+     "practice_interview", lambda m: {"role": m.group(1) or m.group(2) or ""}),
+    (re.compile(r"^what are my (?:weak|weakest) interview (?:areas|spots|topics)$", re.I), "interview_weak_areas", lambda m: {}),
     (capabilities.ASK, "capabilities", lambda m: {}),
     (capabilities.CAN, "capabilities", lambda m: {"question": m.group(0)}),
     (re.compile(r"^(?:please )?(?:next(?: one| video| song| track)?|another(?: one)?|not this one|something else|play (?:the )?next(?: one| video| song)?)$", re.I),
@@ -530,12 +566,14 @@ def execute(plan, addressed=False):
             voice.say(spoken)
     elif action == "none":
         if addressed:
+            traces.fail("not understood")
             voice.say("Sorry, I missed that. Could you say it once more?")
         else:
             print("  (not for me)")
     elif action in tools.TOOLS:
         run_tool(action, args, spoken)
     else:
+        traces.fail("unknown action")
         voice.say("I cannot do that one yet, sorry.")
 
 
@@ -558,7 +596,14 @@ def collapse_repeats(text):
 
 def handle(text, via_wake=True):
     with _handle_lock:
-        return _handle(text, via_wake)
+        traces.begin(text, answering=bool(PENDING) or files.waiting() or play.asking() or study.waiting() or coder.asking() or interview.waiting())
+        try:
+            return _handle(text, via_wake)
+        except Exception:
+            traces.fail("crashed")
+            raise
+        finally:
+            traces.end()
 
 
 APP_STOP = re.compile(r"^(?:please )?(?:(?:stop|kill|close) (?:the (?:app|server|project|website|site))|stop running)$")
@@ -603,6 +648,10 @@ def _handle(text, via_wake=True):
     if reply is not None:
         voice.say(reply)
         return study.waiting()
+    reply = interview.take(text)
+    if reply is not None:
+        voice.say(reply)
+        return interview.waiting()
     spec = coder.take_spec(text)
     if spec:
         run_tool("build_project", {"request": "build me " + spec}, "")
@@ -621,7 +670,7 @@ def _handle(text, via_wake=True):
     state.update(activity="thinking", activity_at=time.time(), touched_at=time.time())
     try:
         if direct(text):
-            return bool(PENDING) or files.waiting() or play.asking() or study.waiting() or coder.asking()
+            return bool(PENDING) or files.waiting() or play.asking() or study.waiting() or coder.asking() or interview.waiting()
         if fast_path(text):
             return False
         t0 = time.time()
@@ -630,6 +679,7 @@ def _handle(text, via_wake=True):
         plan = brain.think(text, tools.prompt(names), names) if names else brain.chat(text)
         print(f"  [brain {time.time() - t0:.1f}s ~{brain.take_tokens()} tokens]")
         if plan is None:
+            traces.fail("no brain")
             voice.say("I cannot reach my brain right now, so only quick things like time, volume and reminders will work.")
             return False
         plans = plan.get("actions") if isinstance(plan.get("actions"), list) else [plan]
@@ -675,6 +725,7 @@ def start(watch_reminders=True):
         digest.watch(lambda text: voice.say(voice.Full(text)))
         monitor.watch()
     rag.start()
+    routine_runner.start(lambda text: voice.say(voice.Full(text)))
     pomodoro.resume()
     dictate.start(voice.say)
     companion.start()
@@ -684,6 +735,7 @@ def start(watch_reminders=True):
     clipwatch.start()
     threading.Thread(target=command_loop, daemon=True).start()
     threading.Thread(target=brain.warm, daemon=True).start()
+    threading.Thread(target=brain.ollama_model_in_use, daemon=True).start()
     voice.warm()
 
 

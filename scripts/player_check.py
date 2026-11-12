@@ -181,15 +181,14 @@ with mock.patch.dict(os.environ, {"YT_FORMAT": "best[height<=360]"}):
 check("the video format defaults to the tested one", mpvctl.video_format() == mpvctl.VIDEO_FORMAT)
 
 window_calls = []
-with mock.patch.object(mpvctl.shutil, "which", lambda n: "/usr/bin/" + n), \
-        mock.patch.object(mpvctl, "_find_window", lambda: "{abc}"), \
-        mock.patch.object(mpvctl.subprocess, "run", lambda cmd, **kw: window_calls.append(cmd) or mock.Mock(stdout="")):
-    check("the video window is brought forward", mpvctl._bring_forward(1.0) and ["kdotool", "windowactivate", "{abc}"] in window_calls, str(window_calls))
+with mock.patch.object(mpvctl, "_find_window", lambda: "{abc}"), \
+        mock.patch.object(mpvctl.platform, "window_activate", lambda wid: window_calls.append(wid)):
+    check("the video window is brought forward", mpvctl._bring_forward(1.0) and window_calls == ["{abc}"], str(window_calls))
 with mock.patch.object(mpvctl, "_find_window", lambda: None), mock.patch.object(mpvctl.time, "sleep", lambda s: None), \
         mock.patch.object(mpvctl.time, "time", mock.Mock(side_effect=[0, 0, 5, 50])):
     check("no window means no activation and no hang", not mpvctl._bring_forward(1.0))
-with mock.patch.object(mpvctl.shutil, "which", lambda n: None):
-    check("without kdotool nothing is attempted", mpvctl.raise_window() is None)
+with mock.patch.object(mpvctl.platform, "windows_ok", lambda: False):
+    check("without window control nothing is attempted", mpvctl.raise_window() is None)
 
 check("music is audio only by default", not play.music_video())
 with mock.patch.dict(os.environ, {"MUSIC_VIDEO": "true"}):

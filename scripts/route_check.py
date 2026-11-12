@@ -15,7 +15,7 @@ os.environ["XDG_STATE_HOME"] = scratch
 os.environ["XDG_RUNTIME_DIR"] = scratch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from jarvis.actions import files, tools  # noqa: E402
+from jarvis.actions import tools  # noqa: E402
 from jarvis.brain import brain  # noqa: E402
 from jarvis.core import main  # noqa: E402
 
@@ -36,6 +36,9 @@ CASES = [
     ("what is the capital of France", "chat"),
     ("watch binary search", "local:play_media"),
     ("what can you do", "local:capabilities"),
+    ("what's the weather in Pune", "local:live_answer"),
+    ("latest news on ISRO", "local:live_answer"),
+    ("bitcoin price", "local:live_answer"),
     ("what are your features", "local:capabilities"),
     ("help", "local:capabilities"),
     ("what time is it", "local:time_date"),
@@ -182,7 +185,6 @@ for text, want in (("find my resume file", False), ("where did I save my thesis"
     if not ok:
         bad.append((text, "remember", names, 0))
 
-import tempfile as _t  # noqa: E402
 from jarvis.actions import capabilities as _cap, coder as _coder  # noqa: E402
 
 can = {q: _cap.answer_can(q) for q in ("can you build apps", "can you code", "can you run code", "can you browse the web")}

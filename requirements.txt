@@ -11,7 +11,8 @@ tqdm
 PyQt6
 ddgs
 yt-dlp
-evdev
+evdev; sys_platform == "linux"
+pynput; sys_platform == "darwin"
 psutil
 pdfminer.six
 python-docx

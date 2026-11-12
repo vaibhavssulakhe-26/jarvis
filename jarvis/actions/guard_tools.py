@@ -24,7 +24,7 @@ def guard_switch(args):
     on = args.get("on") in (True, "true", "yes", "on", 1)
     if on and windows.active_window(max_age=0) is None:
         state.update(guard=False)
-        raise ToolError("I cannot read the active window here, so the guard stays off. Install kdotool to use it.")
+        raise ToolError("I cannot read the active window here, so the guard stays off. Window reading is not available here.")
     state.update(guard=on)
     if on:
         guard.start()

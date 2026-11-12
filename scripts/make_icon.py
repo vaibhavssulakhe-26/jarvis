@@ -13,7 +13,7 @@ OUT = Path(__file__).resolve().parent.parent / "assets" / "jarvis.png"
 
 
 def main():
-    app = QGuiApplication(sys.argv)
+    app = QGuiApplication(sys.argv)  # noqa: F841  (must stay alive while painting)
     size = 256
     pm = QPixmap(size, size)
     pm.fill(QColor(7, 9, 11))

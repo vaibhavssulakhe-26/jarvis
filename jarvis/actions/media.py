@@ -4,6 +4,7 @@ import subprocess
 import threading
 import time
 
+from .. import platform
 from . import apps, play
 from .tools import ToolError, _browser, _launch, heard_recently, tool
 
@@ -14,21 +15,17 @@ def media(args):
     cmd = cmds.get(str(args.get("do", "")).lower().strip())
     if cmd is None:
         raise ToolError("I can play, pause, skip or go back.")
-    if shutil.which("playerctl") is None:
-        raise ToolError("Media control needs playerctl. Install it with: sudo dnf install playerctl")
-    subprocess.run(["playerctl", cmd], timeout=5)
+    platform.media_control(cmd)
     return "Done."
 
 
 def _resume_later(delay):
     def go():
         time.sleep(delay)
-        if shutil.which("playerctl"):
-            try:
-                subprocess.run(["playerctl", "-p", "chromium,chrome,firefox", "play"],
-                               capture_output=True, timeout=5)
-            except (OSError, subprocess.SubprocessError):
-                pass
+        try:
+            platform.media_control("play", "chromium,chrome,firefox")
+        except (OSError, subprocess.SubprocessError, ToolError):
+            pass
     threading.Thread(target=go, daemon=True).start()
 
 

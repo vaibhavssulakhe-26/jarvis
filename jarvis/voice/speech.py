@@ -6,7 +6,7 @@ EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 EMOJI = re.compile("[\U0001F000-\U0001FAFF←-⇿⌀-⏿☀-➿⬀-⯿️‍]")
 SENTENCE = re.compile(r"(?<=[.!?])\s+")
 STRUCTURED = re.compile(r"```|^\s*(?:[-*•]|\d+[.)])\s+\S|^\s*#{1,6}\s|^\s*\|.*\|\s*$|^\s*-{3,}\s*$", re.M)
-SHORT_SENTENCES = 3
+SHORT_SENTENCES = 2
 MAX_SENTENCES = 5
 MAX_CHARS = 450
 DONE = "Done, it's on your screen and copied."
@@ -46,6 +46,6 @@ def too_long(text):
 
 
 def shorten(spoken):
-    """At most three sentences are spoken."""
+    """At most two sentences are spoken; the full text stays on screen."""
     parts = sentences(spoken)
     return " ".join(parts[:SHORT_SENTENCES]) if len(parts) > SHORT_SENTENCES else spoken

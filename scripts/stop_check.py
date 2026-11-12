@@ -122,6 +122,7 @@ def blocks(*scores):
 
 
 e = ears.Ears.__new__(ears.Ears)
+e._init_echo()
 e.q = queue.Queue()
 e.oww = FakeOww()
 e.wake_thr = 0.4
@@ -154,6 +155,7 @@ with mock.patch.object(voice, "stop", lambda: cuts.append(1) or True):
 # follow-up window: no wake word needed for a while after a reply, closed by thanks / bye / silence, shut while media plays
 said_f, asked_f = [], []
 f = ears.Ears.__new__(ears.Ears)
+f._init_echo()
 f.followup, f.expect, f.awake_until, f.via_wake = 10.0, False, 0.0, False
 f.q, f.oww = queue.Queue(), FakeOww()
 f.noise, f.pre = [], __import__("collections").deque(maxlen=3)
@@ -235,6 +237,7 @@ for phrase in ("stop playing", "pause", "resume", "next", "louder", "quieter"):
 duck_state["on"] = False
 playing["on"] = False
 g = ears.Ears.__new__(ears.Ears)
+g._init_echo()
 g.__dict__.update({k: v for k, v in f.__dict__.items()})
 g.thr, g.phase, g.loud, g.wake_thr = 0.02, None, 0, 0.4
 loud_block = np.full(1280, 3000, dtype=np.int16)

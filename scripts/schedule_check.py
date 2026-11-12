@@ -16,7 +16,7 @@ os.environ["WEATHER_CITY"] = "Bengaluru"
 from jarvis.actions import tools, watches  # noqa: E402,F401
 from jarvis.brain import brain  # noqa: E402
 from jarvis.core import main as core  # noqa: E402
-from jarvis.memory import notes, store  # noqa: E402
+from jarvis.memory import notes  # noqa: E402
 from jarvis.scheduling import digest, monitor, reminders  # noqa: E402
 
 results = []

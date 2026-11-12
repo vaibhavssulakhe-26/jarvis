@@ -2,44 +2,23 @@
 import threading
 import time
 
+from .. import platform
 from ..core import config, state
 
 FOCUS_DEFAULT = 25
 BREAK_DEFAULT = 5
 MAX_MINUTES = 180
 _watcher = {"thread": None}
-_inhibit = {"cookie": None}
-
-
-def _dbus():
-    from PyQt6.QtDBus import QDBus, QDBusConnection
-    return QDBus, QDBusConnection.sessionBus()
-
-
-def _call(iface, method, *args):
-    from PyQt6.QtDBus import QDBusMessage
-    QDBus, bus = _dbus()
-    msg = QDBusMessage.createMethodCall("org.freedesktop.Notifications", "/org/freedesktop/Notifications", iface, method)
-    msg.setArguments(list(args))
-    return bus.call(msg, QDBus.CallMode.Block, 2000)
 
 
 def mute_notifications(on):
-    """Plasma's notification inhibit (do not disturb). It ends by itself if Jarvis exits. Best effort; returns True if it changed."""
+    """Do not disturb while a focus session runs. It ends by itself if Jarvis exits. Best effort; returns True if it changed."""
     if not config.flag("FOCUS_MUTE_NOTIFICATIONS"):
         return False
     try:
-        if on and _inhibit["cookie"] is None:
-            reply = _call("org.freedesktop.Notifications", "Inhibit", "Jarvis", "Focus session", {})
-            if reply.arguments():
-                _inhibit["cookie"] = int(reply.arguments()[0])
-                return True
-        elif not on and _inhibit["cookie"] is not None:
-            from PyQt6.QtCore import QMetaType
-            from PyQt6.QtDBus import QDBusArgument
-            _call("org.freedesktop.Notifications", "UnInhibit", QDBusArgument(_inhibit["cookie"], QMetaType.Type.UInt.value))
-            _inhibit["cookie"] = None
-            return True
+        return platform.inhibit_notifications(on)
+    except platform.Unsupported as e:
+        print(f"  ({e})")
     except Exception as e:
         print(f"  (could not change do not disturb: {type(e).__name__})")
     return False

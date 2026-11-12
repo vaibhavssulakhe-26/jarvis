@@ -156,6 +156,8 @@ def _sent(name, messages, max_tokens):
     _turn_tokens[0] += tokens
     _spent.setdefault(name, deque()).append((time.time(), tokens + max_tokens))
     print(f"  [{name} ~{tokens} tokens]")
+    from .. import traces
+    traces.add_tokens(tokens)
     if tokens > WARN_TOKENS:
         print(f"  (warning: that request is over {WARN_TOKENS} tokens)")
 
@@ -221,7 +223,7 @@ def _groq(messages, use_json=True, model=None, max_tokens=ASK_TOKENS):
     """One Groq call. Returns (reply text or None, HTTP status; 0 means no key, -1 means no network)."""
     model = model or MODEL
     key = config.get("GROQ_API_KEY")
-    if not key:
+    if not key or config.offline():
         return None, 0
     body = {"model": model, "messages": messages, "temperature": 0.2, "max_tokens": max_tokens}
     if use_json:
@@ -257,7 +259,7 @@ def _try_groq(messages, max_tokens, want_json):
 
 def _try_openrouter(messages, max_tokens, want_json, models=None):
     key = config.get("OPENROUTER_API_KEY")
-    if not key:
+    if not key or config.offline():
         return None, 0
     deadline = time.time() + OPENROUTER_BUDGET
     code = 0
@@ -284,22 +286,54 @@ def _try_openrouter(messages, max_tokens, want_json, models=None):
     return None, code
 
 
+EMBED_WORDS = ("embed", "nomic", "bge", "minilm")
+
+
+def _billions(name):
+    """Parameter count in billions from a model name such as llama3.2:3b or qwen2.5:7b-instruct; 1.5 when the name does not say."""
+    m = re.search(r"(\d+(?:\.\d+)?)\s*b\b", name.lower().replace(":", " ").replace("-", " "))
+    return float(m.group(1)) if m else 1.5
+
+
+def pick_ollama_model(names, free=None):
+    """The offline model for this machine. OLLAMA_MODEL in .env wins when it is installed. Otherwise the largest installed chat model
+    that fits the free memory: under 2 GB a 1B model, 2 to 4 GB up to 4B, above 4 GB up to 9B. If none fits, the smallest one."""
+    chat = [n for n in names if n and not any(x in n.lower() for x in EMBED_WORDS)]
+    wanted = config.get("OLLAMA_MODEL")
+    if not chat:
+        return wanted or OLLAMA_DEFAULT
+    if wanted and (wanted in chat or wanted + ":latest" in chat):
+        return wanted
+    free = _free_gb() if free is None else free
+    cap = 1.6 if free is None or free < 2 else 4.5 if free < 4 else 9.5
+    sized = sorted((_billions(n), n) for n in chat)
+    fits = [pair for pair in sized if pair[0] <= cap]
+    return (fits[-1] if fits else sized[0])[1]
+
+
 def _ollama_model():
-    wanted = config.get("OLLAMA_MODEL", OLLAMA_DEFAULT)
     if time.time() - _ollama_name["t"] < 300:
         return _ollama_name["name"]
-    name = wanted
+    wanted = config.get("OLLAMA_MODEL")
+    name = wanted or OLLAMA_DEFAULT
     try:
         r = _http.get(OLLAMA_URL + "/api/tags", timeout=3)
-        sizes = {m.get("name", ""): m.get("size", 0) for m in r.json().get("models", [])}
-        chat = {n: z for n, z in sizes.items() if n and not any(x in n.lower() for x in ("embed", "nomic", "bge", "minilm"))}
-        if chat and wanted not in chat and wanted + ":latest" not in chat:
-            name = min(chat, key=chat.get)
-            print(f"  (backup model {wanted} is not installed, using the smallest one, {name})")
+        installed = [m.get("name", "") for m in r.json().get("models", [])]
+        name = pick_ollama_model(installed)
+        if wanted and name != wanted:
+            print(f"  (backup model {wanted} is not installed, so I chose {name})")
     except (requests.RequestException, ValueError):
         pass
+    if name != _ollama_name["name"]:
+        free = _free_gb()
+        print(f"  (offline model: {name}" + (f", {free:.1f} GB free" if free is not None else "") + (", set in .env" if wanted == name else "") + ")")
     _ollama_name["t"], _ollama_name["name"] = time.time(), name
     return name
+
+
+def ollama_model_in_use():
+    """The offline model Jarvis would use right now, for the dashboard and 'which model'."""
+    return _ollama_model()
 
 
 def _ollama_up():
@@ -402,6 +436,7 @@ def _go_offline():
 def route(messages, max_tokens=PLAN_TOKENS, want_json=True, local=False):
     """Try each provider in order. Returns (reply text, provider name), or (None, None).
     local=True skips the cloud providers, for text that must stay on this laptop."""
+    local = local or config.offline()
     if local:
         _ollama_said[0] = time.time()
     codes = {}
@@ -565,7 +600,7 @@ def finish():
 
 def warm():
     key = config.get("GROQ_API_KEY")
-    if not key:
+    if not key or config.offline():
         return
     try:
         _http.get("https://api.groq.com/openai/v1/models",
@@ -580,6 +615,8 @@ def complete(prompt):
 
 def look(prompt, jpeg):
     """Ask the vision model about an image. Returns its JSON reply, or None."""
+    if config.offline():
+        return None
     url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()
     content = [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": url}}]
     text, _ = _groq([{"role": "user", "content": content}], use_json=False, model=VISION_MODEL, max_tokens=PLAN_TOKENS)

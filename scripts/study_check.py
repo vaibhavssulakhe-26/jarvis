@@ -1,6 +1,5 @@
 """Checks the study buddy: quizzes, grading, weak topics, lessons, roadmap, daily check-in, week summary. No network.
 Run: python scripts/study_check.py"""
-import json
 import os
 import sys
 import tempfile

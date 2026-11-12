@@ -3,12 +3,11 @@ and gives a gentle nudge after a long stretch of entertainment or social media. 
 are stored, never window titles."""
 import random
 import re
-import shutil
-import subprocess
 import threading
 import time
 from datetime import date, datetime
 
+from .. import platform
 from ..actions import windows
 from ..brain import brain
 from ..core import config, state
@@ -230,8 +229,7 @@ def nudge(mins):
     focus = float(state.get("focus_until") or 0) > time.time()
     line = random.choice(FOCUS_NUDGES if focus else NUDGES).format(pet=pet, mins=mins, plan=planned())
     line = " ".join(line.split())
-    if shutil.which("notify-send"):
-        subprocess.run(["notify-send", "Jarvis", line], timeout=5)
+    platform.notify("Jarvis", line)
     from ..voice import voice
     voice.say(line)
 

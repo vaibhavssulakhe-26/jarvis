@@ -1,9 +1,8 @@
 """'Jarvis stats': the latest eval result and which brain answered how often."""
-import json
 
-from ..core import config
+from ..core import config, jsonfile
 from . import events
-from .tools import ToolError, tool
+from .tools import tool
 
 PROVIDERS = (("groq", "Groq"), ("openrouter", "OpenRouter"), ("ollama", "Ollama"))
 
@@ -13,17 +12,13 @@ def latest_eval():
     files = sorted((config.DATA / "eval").glob("*.json"))
     if not files:
         return None
-    try:
-        return json.loads(files[-1].read_text())
-    except (OSError, ValueError):
-        return None
+    return jsonfile.read(files[-1])
 
 
 def usage(days=7):
     """{provider: {'calls', 'tokens'}} summed over the last days, plus today's row."""
-    try:
-        data = json.loads((config.DATA / "usage.json").read_text())
-    except (OSError, ValueError):
+    data = jsonfile.read(config.DATA / "usage.json", None, dict)
+    if data is None:
         return {}, {}
     keys = sorted(data)[-days:]
     total = {}

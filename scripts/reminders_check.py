@@ -16,7 +16,6 @@ os.environ["QUIET_START"] = ""
 os.environ["QUIET_END"] = ""
 
 from jarvis.actions import reminder_tools, tools  # noqa: E402,F401
-from jarvis.core import main as core  # noqa: E402
 from jarvis.memory import store  # noqa: E402
 from jarvis.scheduling import reminders  # noqa: E402
 

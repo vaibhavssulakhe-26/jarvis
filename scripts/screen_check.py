@@ -149,10 +149,13 @@ check("dictation is off without DICTATE_KEY", dictate.key_name() is None and dic
 for raw, want in (("F9", "KEY_F9"), ("rightctrl", "KEY_RIGHTCTRL"), ("KEY_PAUSE", "KEY_PAUSE"), ("right ctrl", "KEY_RIGHTCTRL"), ("off", None)):
     with mock.patch.dict(os.environ, {"DICTATE_KEY": raw}):
         check(f"DICTATE_KEY={raw!r} -> {want}", dictate.key_name() == want)
-with mock.patch.dict(os.environ, {"DICTATE_KEY": "F9"}):
-    check("the key name maps to an evdev code", dictate.key_code() is not None)
 with mock.patch.dict(os.environ, {"DICTATE_KEY": "NOTAKEY"}):
-    check("an unknown key is reported, not a crash", dictate.start() is None)
+    import contextlib
+    import io
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        dictate.start().join(2)
+    check("an unknown key is reported, not a crash", "not a known key name" in out.getvalue(), out.getvalue())
 
 with mock.patch.dict(os.environ, {"DICTATE_KEY": "F9"}), mock.patch.object(dictate, "listen", side_effect=PermissionError()):
     import contextlib
@@ -163,7 +166,6 @@ with mock.patch.dict(os.environ, {"DICTATE_KEY": "F9"}), mock.patch.object(dicta
         t.join(2)
     check("without input group access it says how to fix it", "usermod -aG input" in out.getvalue() and "--once" in out.getvalue(), out.getvalue())
 
-from evdev import ecodes  # noqa: E402
 
 
 class Stream:
@@ -185,17 +187,15 @@ class Stream:
 heard = []
 pasted = []
 spoken = []
-kb = dictate.Keyboard(ecodes.KEY_F9, open_stream=Stream, say=spoken.append)
+kb = dictate.Keyboard(open_stream=Stream, say=spoken.append)
 with mock.patch.object(dictate.stt, "transcribe", lambda a: heard.append(len(a)) or "hello world from my voice"), \
         mock.patch.object(dictate, "paste", lambda t: pasted.append(t)):
-    kb.handle(ecodes.EV_KEY, ecodes.KEY_A, 1)
-    check("other keys do nothing", kb.stream is None and not state.get("dictating"))
-    kb.handle(ecodes.EV_KEY, ecodes.KEY_F9, 1)
+    kb.press()
     check("pressing the key starts recording and pauses the wake listener", kb.stream is not None and state.get("dictating") is True)
-    kb.handle(ecodes.EV_KEY, ecodes.KEY_F9, 2)
+    kb.press()
     check("key repeat does not start a second recording", len(kb.chunks) == 8)
     time.sleep(0.35)
-    kb.handle(ecodes.EV_KEY, ecodes.KEY_F9, 0)
+    kb.release()
     check("releasing stops recording and resumes the wake listener", kb.stream is None and state.get("dictating") is False)
     for _ in range(50):
         if pasted:
@@ -204,55 +204,35 @@ with mock.patch.object(dictate.stt, "transcribe", lambda a: heard.append(len(a))
 check("the recording is transcribed and pasted", pasted == ["hello world from my voice"] and heard == [12800], f"{pasted} {heard}")
 
 pasted.clear()
-kb2 = dictate.Keyboard(ecodes.KEY_F9, open_stream=Stream)
+kb2 = dictate.Keyboard(open_stream=Stream)
 with mock.patch.object(dictate.stt, "transcribe", lambda a: "x"), mock.patch.object(dictate, "paste", lambda t: pasted.append(t)):
-    kb2.handle(ecodes.EV_KEY, ecodes.KEY_F9, 1)
-    kb2.handle(ecodes.EV_KEY, ecodes.KEY_F9, 0)
+    kb2.press()
+    kb2.release()
     time.sleep(0.2)
 check("a tap shorter than a third of a second is ignored", not pasted)
 
 with mock.patch.object(dictate.stt, "transcribe", lambda a: ""), mock.patch.object(dictate, "paste", lambda t: pasted.append(t)):
     check("nothing understood means nothing is pasted", dictate.finish(np.zeros(100), spoken.append) == "" and not pasted and "I did not catch that." in spoken)
-with mock.patch.object(dictate.stt, "transcribe", lambda a: "some text"), mock.patch.object(dictate, "paste", side_effect=RuntimeError("wl-copy is missing")):
+with mock.patch.object(dictate.stt, "transcribe", lambda a: "some text"), mock.patch.object(dictate, "paste", side_effect=RuntimeError("no clipboard tool")):
     del spoken[:]
     check("a paste failure is reported, not raised", dictate.finish(np.zeros(100), spoken.append) == "some text" and spoken)
 
-typed = []
-
-
-class FakeUInput:
-    def __init__(self, caps, name=""):
-        self.name = name
-
-    def write(self, t, code, value):
-        typed.append((code, value))
-
-    def syn(self):
-        pass
-
-    def close(self):
-        pass
-
-
-copied = []
-import evdev  # noqa: E402
-with mock.patch.object(dictate.shutil, "which", lambda n: "/usr/bin/wl-copy"), \
-        mock.patch.object(dictate.subprocess, "run", lambda cmd, **k: copied.append((cmd, k.get("input")))), \
-        mock.patch.object(evdev, "UInput", FakeUInput), mock.patch.object(dictate.time, "sleep", lambda s: None), \
+copied, pastes = [], []
+with mock.patch.object(dictate.platform, "clipboard_write", lambda t: copied.append(t) or True), \
+        mock.patch.object(dictate.platform, "send_paste", lambda terminal=False: pastes.append(terminal)), mock.patch.object(dictate.time, "sleep", lambda s: None), \
         mock.patch("jarvis.actions.windows.active_window", lambda *a, **k: ("firefox", "Docs")):
     dictate.paste("typed text")
-    check("paste copies with wl-copy", copied == [(["wl-copy"], b"typed text")])
-    check("and presses Ctrl+V in a normal window", typed[:2] == [(ecodes.KEY_LEFTCTRL, 1), (ecodes.KEY_V, 1)] and len(typed) == 4, str(typed))
-    del typed[:]
+    check("paste copies the text", copied == ["typed text"])
+    check("and presses the plain paste shortcut in a normal window", pastes == [False])
     with mock.patch("jarvis.actions.windows.active_window", lambda *a, **k: ("org.kde.konsole", "bash")):
         dictate.paste("in terminal")
-    check("and Ctrl+Shift+V in a terminal", (ecodes.KEY_LEFTSHIFT, 1) in typed)
-with mock.patch.object(dictate.shutil, "which", lambda n: None):
+    check("and the terminal shortcut in a terminal", pastes[-1] is True)
+with mock.patch.object(dictate.platform, "clipboard_write", lambda t: False):
     try:
         dictate.paste("x")
-        check("no wl-copy raises a clear error", False)
+        check("no clipboard tool raises a clear error", False)
     except RuntimeError as e:
-        check("no wl-copy raises a clear error", "wl-copy" in str(e))
+        check("no clipboard tool raises a clear error", "clipboard" in str(e))
 
 # shortcut mode stops after silence
 clock = {"t": 0.0}
@@ -293,6 +273,7 @@ check("--once records until about a second of quiet", 5 * 1600 <= len(audio) <= 
 
 # the wake listener leaves the mic alone while dictating
 e = ears.Ears.__new__(ears.Ears)
+e._init_echo()
 e.q = queue.Queue()
 e.q.put(np.zeros(1280, dtype=np.int16))
 e.phase, e.buf, e.pre, e.loud, e.quiet = None, [], __import__("collections").deque(maxlen=3), 0, 0

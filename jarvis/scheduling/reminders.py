@@ -1,16 +1,14 @@
 """Reminders: saved in data/reminders.json, announced by notification and voice.
 What the user does about each one (acknowledge, snooze, ignore) is logged in the database and shapes later reminders."""
-import json
-import os
 import re
-import shutil
 import statistics
 import subprocess
 import threading
 import time
 from datetime import datetime, timedelta
 
-from ..core import config, state
+from .. import platform
+from ..core import config, jsonfile, state
 from ..memory import store
 
 FILE = config.DATA / "reminders.json"
@@ -25,18 +23,11 @@ _escalating = {}
 
 
 def _load():
-    try:
-        data = json.loads(FILE.read_text())
-        return data if isinstance(data, list) else []
-    except (OSError, ValueError):
-        return []
+    return jsonfile.read(FILE, [], list)
 
 
 def _save(items):
-    FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = FILE.with_name(FILE.name + ".tmp")
-    tmp.write_text(json.dumps(items, indent=2))
-    os.replace(tmp, FILE)
+    jsonfile.write(FILE, items, indent=2)
 
 
 def add(task, when, every=None, urgent=False):
@@ -119,10 +110,6 @@ def take_due_items(now=None):
         if due:
             _save(items)
     return due
-
-
-def take_due(now=None):
-    return [r["text"] for r in take_due_items(now)]
 
 
 # ---------- what the user did about each reminder ----------
@@ -263,11 +250,9 @@ def stop_repeating():
 
 
 def _sound():
-    for cmd in (["canberra-gtk-play", "-i", "alarm-clock-elapsed"],
-                ["paplay", "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga"]):
-        if shutil.which(cmd[0]):
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return
+    cmd = platform.alarm_sound()
+    if cmd:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def sweep(on_due, now=None):
@@ -330,8 +315,7 @@ def describe():
 def notify(text):
     from ..voice import voice
     print(f"\n*** REMINDER: {text} ***")
-    if shutil.which("notify-send"):
-        subprocess.run(["notify-send", "-u", "critical", "Reminder", text])
+    platform.notify("Reminder", text, urgent=True)
     pet = config.PET_NAME or "Hey"
     voice.say(f"{pet}, reminder: {text}.")
 

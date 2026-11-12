@@ -53,7 +53,7 @@ check("a list is long", speech.too_long("Things:\n- one\n- two\n- three"))
 check("a table is long", speech.too_long("| a | b |\n| 1 | 2 |"))
 check("an email draft is long", speech.too_long("Dear Professor,\n\nI am writing about X.\n\nRegards,\nMe"))
 check("six sentences are long", speech.too_long("One. Two. Three. Four. Five. Six."))
-check("replies are capped at three sentences", speech.shorten("One. Two. Three. Four.") == "One. Two. Three.")
+check("replies are capped at two sentences", speech.shorten("One. Two. Three. Four.") == "One. Two.")
 
 queued, clips = [], []
 
@@ -77,7 +77,7 @@ check("without a clipboard tool it still says so briefly", out == "Done, it's on
 out = run("```python\nprint('hi')\n```")
 check("code is never read out", "print" not in out and out == speech.DONE, out)
 out = run("One. Two. Three. Four.")
-check("four sentences are cut to three when spoken", out == "One. Two. Three.", out)
+check("four sentences are cut to two when spoken", out == "One. Two.", out)
 out = run(speech.Full("Line one.\nLine two.\n- item\n- item"))
 check("text read aloud on request is not replaced", "Line one" in out and out != speech.DONE, out)
 out = run("Visit https://example.com/path now")

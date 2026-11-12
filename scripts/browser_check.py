@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from jarvis.actions import tools  # noqa: E402,F401
 from jarvis.actions import browser  # noqa: E402
+from jarvis.platform import linux as platform_linux  # noqa: E402
 from jarvis.core import main as core  # noqa: E402
 
 bad = []
@@ -252,7 +253,7 @@ try:
     msg = refused(T["browse_open"]["fn"], {"target": BASE + "/sorry/index"})
     check("a captcha page stops the command with the plain message", msg == browser.CAPTCHA_HELP, str(msg))
     opened_ext = []
-    with mock.patch.object(browser.subprocess, "Popen", lambda cmd, **k: opened_ext.append(cmd)):
+    with mock.patch.object(platform_linux.subprocess, "Popen", lambda cmd, **k: opened_ext.append(cmd)):
         out = T["browse_external"]["fn"]({})
     check("'open that in my normal browser' hands the address to xdg-open", opened_ext and opened_ext[0][0] == "xdg-open" and opened_ext[0][1].startswith(BASE), str(opened_ext))
 

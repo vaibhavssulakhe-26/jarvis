@@ -1,15 +1,15 @@
 """Dictation: hold a key, speak, release, and the text is pasted into the focused window.
 DICTATE_KEY names the key (for example F9 or RIGHTCTRL); empty keeps it off. Reading keys needs membership of the input group.
 Without that, bind `python -m jarvis.voice.dictate --once` to a KDE shortcut: it records until you stop talking."""
-import shutil
-import subprocess
 import sys
 import threading
 import time
 
 import numpy as np
 
+from .. import platform
 from ..core import config, state
+from ..core.errors import ToolError
 from . import stt
 
 MAX_SECONDS = 60
@@ -20,17 +20,11 @@ _hint = [False]
 
 
 def key_name():
-    """The evdev key name for DICTATE_KEY, such as KEY_F9, or None when dictation is off."""
+    """The key name for DICTATE_KEY, such as KEY_F9, or None when dictation is off."""
     raw = config.get("DICTATE_KEY").strip().upper().replace(" ", "")
     if not raw or raw in ("OFF", "NONE", "FALSE", "0"):
         return None
     return raw if raw.startswith("KEY_") else "KEY_" + raw
-
-
-def key_code(name=None):
-    from evdev import ecodes
-    name = name or key_name()
-    return getattr(ecodes, name, None) if name else None
 
 
 def set_dictating(on):
@@ -38,10 +32,9 @@ def set_dictating(on):
 
 
 def paste(text):
-    """Copy text with wl-copy and press the paste shortcut in the focused window. Returns True if the keys were sent."""
-    if not shutil.which("wl-copy"):
-        raise RuntimeError("wl-copy is missing")
-    subprocess.run(["wl-copy"], input=text.encode(), timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    """Put text on the clipboard and press the paste shortcut in the focused window."""
+    if not platform.clipboard_write(text):
+        raise RuntimeError("no clipboard tool is available")
     shift = False
     try:
         from ..actions import windows
@@ -49,21 +42,8 @@ def paste(text):
         shift = bool(win) and any(t in win[0].lower() for t in TERMINALS)
     except Exception:
         pass
-    from evdev import UInput, ecodes as e
-    ui = UInput({e.EV_KEY: [e.KEY_LEFTCTRL, e.KEY_LEFTSHIFT, e.KEY_V]}, name="jarvis-dictation")
-    try:
-        time.sleep(0.3)
-        keys = [e.KEY_LEFTCTRL] + ([e.KEY_LEFTSHIFT] if shift else []) + [e.KEY_V]
-        for k in keys:
-            ui.write(e.EV_KEY, k, 1)
-        ui.syn()
-        time.sleep(0.05)
-        for k in reversed(keys):
-            ui.write(e.EV_KEY, k, 0)
-        ui.syn()
-        time.sleep(0.1)
-    finally:
-        ui.close()
+    time.sleep(0.3)
+    platform.send_paste(terminal=shift)
     return True
 
 
@@ -77,17 +57,16 @@ def finish(audio, say=None):
     try:
         paste(text)
     except Exception as e:
-        print(f"  (could not paste: {type(e).__name__}); the text is on the clipboard if wl-copy ran")
+        print(f"  (could not paste: {type(e).__name__}); the text is on the clipboard if a clipboard tool ran")
         if say:
             say("I could not paste it. Look on your clipboard.")
     return text
 
 
 class Keyboard:
-    """Press starts a recording, release ends it. handle(event_type, code, value) takes raw evdev values."""
+    """press() starts a recording and release() ends it; the platform key listener calls them."""
 
-    def __init__(self, code, open_stream=None, say=None):
-        self.code = code
+    def __init__(self, open_stream=None, say=None):
         self.open_stream = open_stream or self._stream
         self.say = say
         self.stream = None
@@ -101,13 +80,12 @@ class Keyboard:
     def _on_audio(self, indata, frames, t, status):
         self.chunks.append(indata.copy().flatten())
 
-    def handle(self, ev_type, code, value):
-        from evdev import ecodes
-        if ev_type != ecodes.EV_KEY or code != self.code:
-            return
-        if value == 1 and self.stream is None:
+    def press(self):
+        if self.stream is None:
             self.begin()
-        elif value == 0 and self.stream is not None:
+
+    def release(self):
+        if self.stream is not None:
             self.end()
 
     def begin(self):
@@ -136,31 +114,9 @@ class Keyboard:
                 print(f"  (dictation failed: {type(e).__name__})")
 
 
-def keyboards():
-    """Evdev devices that look like keyboards. Raises PermissionError without input group access."""
-    import evdev
-    from evdev import ecodes
-    found = []
-    for path in evdev.list_devices():
-        dev = evdev.InputDevice(path)
-        keys = dev.capabilities().get(ecodes.EV_KEY, [])
-        if ecodes.KEY_A in keys and ecodes.KEY_ENTER in keys and "jarvis" not in dev.name.lower():
-            found.append(dev)
-    return found
-
-
-def listen(code, say=None):
-    import selectors
-    kb = Keyboard(code, say=say)
-    sel = selectors.DefaultSelector()
-    for dev in keyboards():
-        sel.register(dev, selectors.EVENT_READ)
-    if not sel.get_map():
-        raise RuntimeError("no keyboard found")
-    while True:
-        for key, _ in sel.select():
-            for ev in key.fileobj.read():
-                kb.handle(ev.type, ev.code, ev.value)
+def listen(name, say=None):
+    kb = Keyboard(say=say)
+    platform.listen_key(name, kb.press, kb.release)
 
 
 def start(say=None):
@@ -168,21 +124,17 @@ def start(say=None):
     name = key_name()
     if not name:
         return None
-    try:
-        code = key_code(name)
-    except ImportError:
-        print("  (dictation needs the evdev package)")
-        return None
-    if code is None:
-        print(f"  (DICTATE_KEY {name} is not a known key name)")
-        return None
 
     def run():
         try:
-            listen(code, say)
+            listen(name, say)
         except PermissionError:
             print("  (dictation cannot read the keyboard. Run: sudo usermod -aG input $USER, then log out and in. "
-                  "Or bind python -m jarvis.voice.dictate --once to a KDE shortcut.)")
+                  "Or bind python -m jarvis.voice.dictate --once to a keyboard shortcut.)")
+        except ImportError:
+            print("  (dictation needs the evdev package)")
+        except ToolError as e:
+            print(f"  ({e})")
         except Exception as e:
             print(f"  (dictation stopped: {type(e).__name__})")
     thread = threading.Thread(target=run, daemon=True)

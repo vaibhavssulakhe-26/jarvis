@@ -87,7 +87,7 @@ win = window.Dashboard()
 win.show()
 pump(0.3)
 check("the window opens", win.isVisible() and win.windowTitle() == "JARVIS")
-check("the sidebar has the eight pages", list(win.nav) == ["Home", "Media", "Code", "Notes", "Study", "Web", "Stats", "Settings"])
+check("the sidebar has the nine pages", list(win.nav) == ["Home", "Media", "Code", "Notes", "Study", "Jobs", "Web", "Stats", "Settings"])
 
 # ---- every page ----
 for name in win.nav:
@@ -97,7 +97,42 @@ for name in win.nav:
     img = win.grab()
     check(f"page {name} paints", not img.isNull() and img.width() > 900)
 
+check("Study is hidden from the sidebar unless STUDY=on", win.nav["Study"].isHidden())
+os.environ["STUDY"] = "on"
+win.show_study()
+check("Study appears with STUDY=on", not win.nav["Study"].isHidden())
+os.environ.pop("STUDY")
+win.show_study()
+check("the top bar shows the brain mode", win.brain_chip.text() == "BRAIN HYBRID", win.brain_chip.text())
+os.environ["BRAIN"] = "offline"
+win.refresh_page()
+check("the top bar follows BRAIN=offline", win.brain_chip.text() == "BRAIN OFFLINE")
+os.environ.pop("BRAIN")
+win.go("Notes")
+check("the Notes page shows the indexed file count", "indexed" in win.pages["Notes"].count.text(), win.pages["Notes"].count.text())
+
 # ---- themes ----
+import colorsys  # noqa: E402
+
+
+def hue_of(hex_):
+    r, g, b = (int(hex_[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    return colorsys.rgb_to_hsv(r, g, b)[0] * 360
+
+
+print("preset accents:")
+for pname, spec in themes.PRESETS.items():
+    print(f"  {pname:7} accent {spec['accent']} hue {hue_of(spec['accent']):5.1f}  panel {spec['panel']} hue {hue_of(spec['panel']):5.1f}")
+pa = themes.PRESETS["purple"]
+rgb = [int(pa["accent"][i:i + 2], 16) for i in (1, 3, 5)]
+check("purple is a real purple, not blue-dominant", 275 <= hue_of(pa["accent"]) <= 295 and rgb[0] >= 0.7 * rgb[2] and rgb[0] > rgb[1])
+check("purple panel tint follows the accent", abs(hue_of(pa["panel"]) - hue_of(pa["accent"])) < 15)
+for pname, lo, hi in (("pink", 315, 340), ("red", 340, 365)):
+    spec = themes.PRESETS[pname]
+    hh = hue_of(spec["accent"]) + (360 if hue_of(spec["accent"]) < 10 else 0)
+    check(f"{pname} accent sits in its hue range", lo <= hh <= hi, f"{hh:.0f}")
+    pp = hue_of(spec["panel"]) + (360 if hue_of(spec["panel"]) < 10 else 0)
+    check(f"{pname} panel tint follows the accent", abs(pp - hh) < 15, f"{pp:.0f} vs {hh:.0f}")
 th = win.theme
 for name in themes.ORDER:
     t0 = time.time()
@@ -284,9 +319,41 @@ core.PENDING.clear()
 win.go("Stats")
 check("the stats page renders", "rate limits" in win.pages["Stats"].use.text() and "Jarvis memory" in win.pages["Stats"].sys.text())
 
+from jarvis.jobs import tracker as jobs_tracker  # noqa: E402
+jobs_tracker.add("Acme", "Data Analyst", "DA", status="applied")
+jobs_tracker.add("Globex", "Business Analyst", "BA")
+check("Jobs is hidden from the sidebar unless JOBS=on", win.nav["Jobs"].isHidden())
+os.environ["JOBS"] = "on"
+win.show_study()
+check("Jobs appears with JOBS=on", not win.nav["Jobs"].isHidden())
+win.go("Jobs")
+jp = win.pages["Jobs"]
+jp.refresh()
+check("the Jobs page lists the tracker", jp.table.rowCount() == 2 and "Acme" in [jp.table.item(r, 0).text() for r in range(2)])
+check("and counts per status and resume type", "applied 1" in jp.summary.text() and "DA 1" in jp.summary.text() and "BA 1" in jp.summary.text(), jp.summary.text())
+jp.filter.setCurrentText("applied")
+check("the status filter narrows the table", jp.table.rowCount() == 1 and jp.table.item(0, 0).text() == "Acme")
+jp.filter.setCurrentText("all")
+os.environ.pop("JOBS")
+win.show_study()
+from jarvis import bench as bench_mod, doctor as doctor_mod  # noqa: E402
+bench_mod.save({"date": "2026-11-12", "time": "10:00:00", "mode": "mock", "total": 30, "passed": 30, "avg_ms": 1.5, "p95_ms": 3.2, "brain_requests": 3,
+                "avg_tokens": 305, "providers": {"local": 27, "mock": 3}, "results": []})
+win.pages["Stats"].refresh()
+check("the Stats page shows the latest benchmark", "p95 3.2 ms" in win.pages["Stats"].bench.text(), win.pages["Stats"].bench.text())
+
 # ---- settings and secrets ----
 win.go("Settings")
 st = win.pages["Settings"]
+fake_results = [doctor_mod.item("microphone", "pass", "fake mic, level 0.020"), doctor_mod.item("mpv", "warn", "not found", "sudo dnf install mpv"),
+                doctor_mod.item("Groq key", "pass", "set")]
+with mock.patch.object(doctor_mod, "run", lambda *a, **k: fake_results):
+    st.doctor_btn.click()
+    until(lambda: st._doctor["results"] is not None and not st._doctor["running"], 3)
+    st.refresh()
+check("the Doctor card lists each item with its fix", "mpv" in st.doctor_text.text() and "sudo dnf install mpv" in st.doctor_text.text()
+      and "fake mic" in st.doctor_text.text(), st.doctor_text.text())
+check("the Doctor button is usable again", st.doctor_btn.isEnabled())
 with mock.patch.object(window.pages.config, "get", lambda k, d="": "x" if k == "GROQ_API_KEY" else ""):
     st.refresh()
 check("API keys show only as set or not set", "GROQ_API_KEY: set" in st.keys.text() and "OPENROUTER_API_KEY: not set" in st.keys.text())
