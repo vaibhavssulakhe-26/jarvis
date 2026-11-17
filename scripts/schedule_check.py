@@ -62,7 +62,7 @@ with mock.patch("requests.get", fake_get):
     text = digest.build()
     again = digest.weather_line()
 print(text)
-check("greets by pet name with the date", text.startswith("Good") and "Testy" in text and f"{date.today():%A}" in text)
+check("states the date with no greeting", text.startswith("It is") and "Good" not in text and f"{date.today():%A}" in text)
 check("weather is included", "24 degrees" in text and "60 percent" in text)
 check("deadline reminder is flagged", "deadline: submit the synopsis" in text)
 check("today's note is included", "finish DSA chapter 3" in text)
@@ -78,7 +78,7 @@ digest._weather.update(t=0.0)
 import requests  # noqa: E402
 with mock.patch("requests.get", side_effect=requests.ConnectionError):
     check("weather fails soft", digest.weather_line() == "")
-    check("digest still builds offline", "Testy" in digest.build())
+    check("digest still builds offline", f"{date.today():%A}" in digest.build())
 
 spoken = []
 with mock.patch.object(digest, "build", return_value="the briefing"), mock.patch.object(digest, "due_now", return_value=True):

@@ -29,6 +29,33 @@ def tool(name, doc, risk="safe", describe=None, skip=None):
 
 # trigger words per tool: a new tool needs one entry here. Words match the start of a word in the sentence.
 TRIGGERS = {
+    "browse_agent": "browser web online agent website amazon compare multi step task",
+    "next_class": "class classes lecture timetable next",
+    "today_schedule": "schedule timetable classes today lectures",
+    "whats_due": "due deadline deadlines assignment submit week",
+    "add_deadline": "deadline due submit add assignment exam",
+    "add_class": "class lecture timetable add",
+    "add_task": "task tasks todo add",
+    "list_tasks": "tasks task todo list",
+    "task_done": "task done finished complete",
+    "clear_done_tasks": "tasks done clear finished",
+    "make_website": "website web site page landing build make create hackathon",
+    "preview_site": "preview serve site website",
+    "stop_preview": "preview stop site website",
+    "export_site": "export zip site website github netlify",
+    "list_folder": "list folder files pictures photos documents downloads contents sorted",
+    "open_file": "open file picture photo document pdf first second third fourth fifth last",
+    "read_text_file": "read file text contents notes txt",
+    "describe_image": "image picture photo describe",
+    "wiki_answer": "wikipedia wiki offline encyclopedia",
+    "quiz_from_notes": "quiz test notes pdf syllabus questions",
+    "review_due": "review revise due questions cards",
+    "weak_note_topics": "weak topics notes quiz wrong",
+    "show_alerts": "alerts alert failures errors failed",
+    "clear_alerts": "alerts alert clear",
+    "recall_memory": "remember recall memory memories",
+    "show_memory": "memory memories remember",
+    "crowd_mode": "crowd noisy mode",
     "time_date": "time date day today clock",
     "battery": "battery charge charging",
     "system_status": "system status memory ram cpu processor temperature laptop computer",
@@ -214,6 +241,52 @@ def pick_tools(text):
     return ranked + always
 
 
+CATEGORIES = {
+    "files": ("list_folder", "find_file", "open_file", "read_text_file", "describe_image", "summarise_file"),
+    "media and volume": ("play_media", "player_control", "set_volume", "mute"),
+    "reminders, tasks and notes": ("set_reminder", "add_task", "take_note", "search_docs"),
+    "memory": ("recall_memory", "remember", "forget"),
+    "schedule": ("next_class", "calendar_today", "whats_due"),
+    "email": ("check_email", "draft_reply"),
+    "web and research": ("live_answer", "research_topic", "web_search", "wiki_answer"),
+    "browser control": ("browse_agent", "browse_open"),
+    "coding": ("build_project", "make_website"),
+    "study": ("quiz_me", "quiz_from_notes", "review_due"),
+    "system": ("system_status", "battery", "lock_screen", "open_app"),
+    "screen": ("describe_screen", "read_screen", "screenshot", "read_clipboard"),
+    "phone": ("send_to_device",),
+    "translation": ("translate",),
+}
+
+
+def categories():
+    """The names of the tool groups that have at least one registered tool, with email only when a mailbox is set up."""
+    out = []
+    for name, tool_names in CATEGORIES.items():
+        if any(t in TOOLS for t in tool_names) and (name != "email" or (config.get("GMAIL_ADDRESS") and config.get("GMAIL_APP_PASSWORD"))):
+            out.append(name)
+    return out
+
+
+def rank_tools(text, n=6):
+    """The n tools most likely to matter for a sentence, by trigger words, then by words in the tool's own name and description. Empty for small talk."""
+    if small_talk(text):
+        return []
+    words = set(re.findall(r"[a-z0-9]+", str(text).lower()))
+    score = {}
+    for name, trig in TRIGGERS.items():
+        if name in TOOLS:
+            hits = sum(1 for t in trig.split() if any(w == t or (len(t) > 4 and w.startswith(t)) for w in words))
+            if hits:
+                score[name] = float(hits)
+    if not score:
+        return []
+    for name in score:
+        own = set(re.findall(r"[a-z]{4,}", name.replace("_", " ") + " " + TOOLS[name]["doc"].split(" - ", 1)[-1].lower()))
+        score[name] += 0.3 * len(own & words)
+    return sorted(score, key=lambda k: (-score[k], k))[:n]
+
+
 def _short(doc):
     return doc if len(doc) <= MAX_DOC else doc[:MAX_DOC].rsplit(" ", 1)[0]
 
@@ -262,7 +335,7 @@ def stamped_name(text, fallback, ext):
 def read_battery():
     for d in sorted(Path("/sys/class/power_supply").glob("BAT*")):
         try:
-            return int((d / "capacity").read_text()), (d / "status").read_text().strip().lower()
+            return int((d / "capacity").read_text(encoding="utf-8")), (d / "status").read_text(encoding="utf-8").strip().lower()
         except (OSError, ValueError):
             continue
     return None, ""
@@ -476,7 +549,7 @@ def draft_text(args):
         return f"I wrote the draft and saved it in your notes under {title}."
     folder = HOME / "Documents" / "drafts"
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / stamped_name(args.get("title", "draft"), "draft", ".txt")).write_text(text[:6000] + "\n")
+    (folder / stamped_name(args.get("title", "draft"), "draft", ".txt")).write_text(text[:6000] + "\n", encoding="utf-8")
     print("\n" + text + "\n")
     events.emit("sys", text)
     copied = platform.clipboard_write(text)
@@ -516,6 +589,6 @@ def restart(args):
 
 
 # these modules register their tools on import, so they must load after the registry above
-from . import (apps, briefing, browser, capabilities, clipwatch, coder, debug, diag_tools, documents, focus_tools, guard_tools, handoff, job_tools, mail, media, messaging,  # noqa: E402,F401
-               notes, palette_tools, play, proactive_tools, rag_tools, recall, reminder_tools, routine_tools, screen, stats, study, theme_tools, translate, voice_tools, watches)
-from ..research import live, research, topic  # noqa: E402,F401
+from . import (apps, briefing, browser, capabilities, clipwatch, coder, debug, diag_tools, documents, file_tools, focus_tools, guard_tools, handoff, job_tools, listen_tools, mail, media, messaging,  # noqa: E402,F401
+               notes, notes_quiz, palette_tools, play, planner_tools, proactive_tools, rag_tools, recall, reminder_tools, routine_tools, screen, stats, study, theme_tools, translate, voice_tools, watches, web_agent, webproject)
+from ..research import live, research, topic, wiki  # noqa: E402,F401

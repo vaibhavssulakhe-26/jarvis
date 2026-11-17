@@ -54,7 +54,7 @@ def take_break(args):
         until = datetime.now().replace(hour=23, minute=59, second=0).timestamp()
     state.update(break_until=until)
     when = datetime.fromtimestamp(until).strftime("%I:%M %p").lstrip("0")
-    return f"Enjoy your break. I will stay quiet until {when}."
+    return f"Quiet until {when}."
 
 
 @tool("screen_time", 'args {} - say how much time went on study versus entertainment today; for "what\'s my screen time", "how did I spend my time today"')

@@ -4,20 +4,22 @@ import random
 
 from ...voice import voices
 
+CHARCOAL = "#0e1015"
 PRESETS = {
-    "cyan": dict(accent="#19d8ff", secondary="#5b8cff", bg="#050a14", panel="#0c1a2e", glow=1.0),
-    "green": dict(accent="#2dff9a", secondary="#b8ff4d", bg="#040d0b", panel="#0a2019", glow=1.0),
-    "amber": dict(accent="#ffb02e", secondary="#ff6a1a", bg="#0b0a07", panel="#241a0a", glow=0.9),
-    "red": dict(accent="#e0566a", secondary="#d98a5e", bg="#0c0506", panel="#261114", glow=0.9),
-    "purple": dict(accent="#d05bff", secondary="#ff66f2", bg="#0e0611", panel="#291033", glow=1.0),
-    "pink": dict(accent="#ff5fb8", secondary="#ffa05f", bg="#0f050b", panel="#2b101f", glow=1.0),
-    "ice": dict(accent="#a9e4ff", secondary="#7fa6ff", bg="#050a12", panel="#101f33", glow=0.9),
-    "white": dict(accent="#e8f1ff", secondary="#9db4d6", bg="#07090d", panel="#161c26", glow=0.7),
+    "ice": dict(accent="#8fe3ff", secondary="#9a82ff", bg=CHARCOAL, panel="#14202e", glow=0.9),
+    "cyan": dict(accent="#19d8ff", secondary="#9a6bff", bg=CHARCOAL, panel="#0c1a2e", glow=1.0),
+    "amber": dict(accent="#ffb02e", secondary="#ff4d3d", bg=CHARCOAL, panel="#241a0a", glow=0.9),
+    "green": dict(accent="#2dff9a", secondary="#b8ff4d", bg=CHARCOAL, panel="#0a2019", glow=1.0),
+    "red": dict(accent="#e0566a", secondary="#ffa24d", bg=CHARCOAL, panel="#261114", glow=0.9),
+    "purple": dict(accent="#d05bff", secondary="#6f8cff", bg=CHARCOAL, panel="#291033", glow=1.0),
+    "pink": dict(accent="#ff5fb8", secondary="#ffa05f", bg=CHARCOAL, panel="#2b101f", glow=1.0),
+    "white": dict(accent="#e8f1ff", secondary="#9db4d6", bg=CHARCOAL, panel="#161c26", glow=0.7),
 }
+DEFAULT = "ice"
 ORDER = list(PRESETS)
 SEMANTIC = dict(ok="#3ddc84", warn="#ffb02e", bad="#ff4d5e", white="#ffffff")
 STATE_TINT = {"listening": "#7ff0ff", "thinking": "#ffb02e", "error": "#ff3b4e"}
-DEFAULT_UI = dict(state_colours=False, cycle=False, low_power=False)
+DEFAULT_UI = dict(state_colours=False, cycle=False, low_power=False, chat_dock=False)
 
 
 def from_hue(hue):
@@ -26,20 +28,19 @@ def from_hue(hue):
     def hex_(hh, s, v):
         r, g, b = colorsys.hsv_to_rgb(hh % 1.0, s, v)
         return "#%02x%02x%02x" % (int(r * 255), int(g * 255), int(b * 255))
-    return dict(accent=hex_(h, 0.85, 1.0), secondary=hex_(h + 0.09, 0.7, 1.0), bg=hex_(h, 0.6, 0.07),
-                panel=hex_(h, 0.7, 0.2), glow=1.0)
+    return dict(accent=hex_(h, 0.85, 1.0), secondary=hex_(h + 0.12, 0.65, 1.0), bg=CHARCOAL, panel=hex_(h, 0.7, 0.2), glow=1.0)
 
 
 def load():
     """(preset name or 'custom', hue, ui flags) from data/settings.json."""
     data = voices.read_settings()
     t = data.get("theme") if isinstance(data.get("theme"), dict) else {}
-    name = t.get("name") if t.get("name") in PRESETS or t.get("name") == "custom" else "cyan"
+    name = t.get("name") if t.get("name") in PRESETS or t.get("name") == "custom" else DEFAULT
     ui = dict(DEFAULT_UI)
     if isinstance(data.get("ui"), dict):
         ui.update({k: bool(v) for k, v in data["ui"].items() if k in DEFAULT_UI})
     try:
-        hue = float(t.get("hue", 190))
+        hue = float(t.get("hue", 195))
     except (TypeError, ValueError):
         hue = 190.0
     return name, hue, ui
@@ -75,7 +76,7 @@ def save_window(w, h):
 
 
 def preset(name, hue=190.0):
-    return from_hue(hue) if name == "custom" else dict(PRESETS.get(name, PRESETS["cyan"]))
+    return from_hue(hue) if name == "custom" else dict(PRESETS.get(name, PRESETS[DEFAULT]))
 
 
 def pick(spec, current):

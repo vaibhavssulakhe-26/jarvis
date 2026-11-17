@@ -159,7 +159,7 @@ with mock.patch.object(main.voice, "say", lambda t: said_cap.append(str(t))), mo
                 mock.patch.object(main.brain, "chat", side_effect=AssertionError("model used")):
             main._handle(phrase)
         check(f"{phrase!r} is answered locally", len(said_cap) == 1 and "full list" in said_cap[0], str(said_cap))
-listing = shown.call_args[0][1]
+listing = [c[0][1] for c in shown.call_args_list if c[0][0] == "jarvis"][-1]
 check("the screen list covers every registered tool", all(n.replace("_", " ") in listing for n in capabilities.TOOLS), listing[:200])
 check("the screen list has no feature that is not registered", "weather forecast" not in listing.lower() and "phone call" not in listing.lower())
 check("the spoken summary names real categories", "reminders" in said_cap[0].lower() and "volume" in said_cap[0].lower(), said_cap[0])

@@ -17,36 +17,13 @@ MODEL_GAP = 4 * 3600
 POLL = 30
 
 LINES = {
-    "checkin": [
-        "Hey {pet}, still alive over there? I was getting lonely.",
-        "How is it going? Anything I can take off your plate?",
-        "Just checking in. Need anything, or shall I stay quiet?",
-        "It has been quiet, so I wondered how your day is going.",
-        "{pet}, you have been heads down for a while. All good?",
-    ],
-    "break": [
-        "{pet}, stretch time. Roll your shoulders, sip some water, then back to it.",
-        "Quick break? Look away from the screen for a minute, your eyes will thank you.",
-        "You have been at it a while. Stand up, walk to the window, come back sharper.",
-        "Water check. Have you had any in the last hour?",
-    ],
-    "study": [
-        "Want to do one small thing for your goals today? Even ten minutes counts.",
-        "{pet}, how about one tiny study sprint? I can set a twenty minute timer.",
-        "Quick one: what is the one thing you want done before you stop today?",
-        "If you are stuck, tell me where. Sometimes saying it out loud fixes it.",
-    ],
-    "joke": [
-        "Why do programmers prefer dark mode? Because light attracts bugs.",
-        "I would tell you a UDP joke, but you might not get it.",
-        "A SQL query walks into a bar, walks up to two tables and asks: can I join you?",
-        "Why was the laptop cold? It left its Windows open.",
-        "Debugging is being the detective in a crime movie where you are also the culprit.",
-        "There are only ten kinds of people: those who understand binary, and those who do not.",
-    ],
+    "checkin": ["No activity for {m} minutes. Say a command if you need anything."],
+    "break": ["You have been at the screen for {m} minutes. A short break is due.",
+              "{m} minutes since you last did anything here. Stand up and drink some water."],
+    "study": ["{m} minutes without a command. Say start focus 20 to begin a timer."],
 }
-MODEL_SYSTEM = ("You are {name}, a friendly voice companion. Say one short, warm, slightly funny sentence to nudge the "
-                "user to take a break or check in. Plain words, no emoji.")
+MODEL_SYSTEM = ("You are {name}. Say one short factual sentence saying how long the user has been inactive and that a break is due. "
+                "No jokes, no encouragement, no emoji.")
 
 
 def level():
@@ -110,11 +87,10 @@ class Chatter:
         return None
 
     def line(self):
-        pet = config.PET_NAME
         now = self.clock()
         if self.ask and level() == "normal" and now - self.model_at > MODEL_GAP and random.random() < 0.25:
             self.model_at = now
-            text = self.ask(MODEL_SYSTEM.format(name=config.ASSISTANT) + (f" Their pet name is {pet}." if pet else ""))
+            text = self.ask(MODEL_SYSTEM.format(name=config.ASSISTANT))
             if text:
                 return text.strip()
         kinds = [k for k in LINES if k != self.last_kind]
@@ -122,11 +98,8 @@ class Chatter:
         if not self.bag.get(kind):
             self.bag[kind] = random.sample(LINES[kind], len(LINES[kind]))
         text = self.bag[kind].pop()
-        # the pet name goes in about half the time, and never as a dangling placeholder
-        if "{pet}" in text:
-            use = pet and random.random() < 0.5
-            text = text.format(pet=pet) if use else text.replace("Hey {pet}, ", "Hey, ").replace("{pet}, ", "")
-        return text[0].upper() + text[1:]
+        minutes = max(1, int((now - self.last_touch()) / 60))
+        return text.format(m=minutes)
 
     def tick(self):
         """Speak one line if everything allows it. Returns the line, or None."""

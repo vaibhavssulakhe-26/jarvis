@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import wave
+from contextlib import contextmanager
 
 from .. import platform
 from ..actions import events
@@ -25,6 +26,19 @@ Full = speech.Full
 
 PRONOUNCE = [(r"\bVibe\b", "Vyb"), (r"\bVibeo\b", "Vybee")]
 _player = []
+_cap = threading.local()
+
+
+@contextmanager
+def capture():
+    """Inside this block say() on the same thread collects its lines in the list instead of printing and speaking them
+    (replies that go to the phone)."""
+    lines = []
+    _cap.lines = lines
+    try:
+        yield lines
+    finally:
+        _cap.lines = None
 
 
 def pronounce(text):
@@ -183,11 +197,25 @@ def _no_kannada(text):
     say("I cannot speak Kannada yet, so the text is on screen" + (" and on your clipboard." if copied else "."))
 
 
-def say(text):
-    """Print a line and speak it, unless Jarvis is muted. Long or structured text stays on screen and is copied."""
+def speak_part(text):
+    """Queue text to be spoken now, without printing it or adding it to the chat: the first sentence of a streamed reply. True if queued."""
+    text = str(text).strip()
+    if getattr(_cap, "lines", None) is not None or not text or state.get("muted") or voices.current_path() is None or lang.script(text) == "kn":
+        return False
+    SPEAKING.set()
+    _queue.put((_gen[0], text))
+    return True
+
+
+def say(text, skip=0, limit=None):
+    """Print a line and speak it, unless Jarvis is muted. Long or structured text stays on screen and is copied.
+    `skip` sentences were already spoken (see stream.Streamer); `limit` is how many sentences may be spoken in all."""
     full = isinstance(text, speech.Full)
     text = str(text).strip()
     if not text:
+        return
+    if getattr(_cap, "lines", None) is not None:
+        _cap.lines.append(text)
         return
     LAST[0] = text
     print(f"  {text}")
@@ -200,8 +228,11 @@ def say(text):
     elif speech.too_long(text):
         from ..actions.screen import write_clip
         spoken = speech.DONE if write_clip(text) else "Done, it's on your screen."
+        skip = 0
     else:
-        spoken = speech.shorten(speech.clean(text))
+        spoken = speech.shorten(speech.clean(text), limit)
+    if skip and spoken:
+        spoken = " ".join(speech.sentences(spoken)[skip:])
     if not spoken or state.get("muted") or voices.current_path() is None:
         return
     SPEAKING.set()

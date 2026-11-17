@@ -10,18 +10,19 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from ..actions import apps, browser, events, capabilities, clipwatch, coder, files, mail, mpvctl, play, procs, study, tools
-from ..brain import brain, companion
+from ..actions import apps, browser, events, web_agent, capabilities, clipwatch, coder, files, mail, mpvctl, play, procs, study, tools
+from ..brain import agent, brain, companion
 from . import config, state
-from .. import traces
-from ..research import live as research_live, topic as research_topic
+from .. import telegram, traces
+from ..research import live as research_live, topic as research_topic, wiki as research_wiki
 from ..jobs import interview
 from ..routines import find as routines_find, runner as routine_runner
-from ..memory import rag
+from ..memory import facts, memory, rag, threads
 from ..scheduling import digest, guard, monitor, pomodoro, proactive, reminders
-from ..voice import dictate, voice
+from ..voice import dictate, ptt, stream as voice_stream, voice
 
 PENDING = {}
+REMOTE = threading.local()  # .gate is set while a command from the phone runs (see telegram.Gate)
 SLOW = re.compile(r"\b(and|then|also|after|before|remind|reminder|draft|email|write|note|find|search|"
                   r"research|create|shut|shutdown|restart|suspend|play|pause|message|send)\b")
 MUTE = re.compile(r"(?:please )?mute(?: the| my)?(?: sound| volume| audio| laptop| speakers)?(?: please)?")
@@ -115,10 +116,10 @@ def dedupe(plans):
 
 AGENTS = {
     "coder": ("build_project", "run_project", "fix_last_error", "add_feature", "edit_file", "find_bugs", "explain_file", "git_init_project",
-              "install_deps", "apply_edit"),
+              "install_deps", "apply_edit", "make_website", "preview_site", "stop_preview", "export_site"),
     "research": ("research", "research_topic", "help_topic", "open_sources"),
     "notes": ("search_docs", "reindex_notes", "take_note", "quick_note", "read_notes", "append_to_note", "summarise_file", "ask_about_file", "search_notes"),
-    "study": ("quiz_me", "teach_me", "study_progress", "roadmap_next", "roadmap_done", "log_today", "week_summary"),
+    "study": ("quiz_from_notes", "review_due", "weak_note_topics", "quiz_me", "teach_me", "study_progress", "roadmap_next", "roadmap_done", "log_today", "week_summary"),
 }
 
 
@@ -136,27 +137,45 @@ def do_tool(action, args, spoken=""):
             voice.say("That one is already open.")
             return
         _recent[key] = time.time()
+    gate = getattr(REMOTE, "gate", None)
+    if gate and gate.blocked(action):
+        voice.say(gate.blocked(action))
+        return
     group = agent_of(action)
     events.agent_start(group)
     traces.note(tool=action)
+    chip = action.replace("_", " ")
     try:
         result = tools.TOOLS[action]["fn"](args)
     except tools.ToolError as e:
-        traces.fail(str(e))
+        traces.fail(str(e), tool=action)
+        events.emit("tool", f"{chip}: failed")
         voice.say(str(e))
         return
     except Exception as e:
         print(f"  (tool failed: {type(e).__name__})")
-        traces.fail("tool crashed: " + type(e).__name__)
+        traces.fail("tool crashed: " + type(e).__name__, tool=action)
+        events.emit("tool", f"{chip}: failed")
         voice.say("Oops, that did not work. Something broke on my side.")
         return
     finally:
         events.agent_end(group)
+    events.emit("tool", f"{chip}: done")
     voice.say(result or spoken or "Done.")
 
 
 def run_tool(action, args, spoken):
     t = tools.TOOLS[action]
+    gate = getattr(REMOTE, "gate", None)
+    if gate and t["risk"] == "confirm":
+        if gate.blocked(action):
+            voice.say(gate.blocked(action))
+            return
+        try:
+            voice.say(gate.ask(action, args, t["describe"](args)))
+        except tools.ToolError as e:
+            voice.say(str(e))
+        return
     if t["risk"] == "confirm":
         skip = False
         if t["skip"]:
@@ -196,7 +215,7 @@ def _verdict(words):
 
 def check_pending(text):
     """True if this sentence answered a pending yes or no question. The question is used up either way."""
-    if not PENDING:
+    if not PENDING or getattr(REMOTE, "gate", None):
         return False
     if time.time() > PENDING["until"]:
         PENDING.clear()
@@ -226,10 +245,39 @@ def _waiting():
 
 
 DIRECT = [
+    (re.compile(r"^(?:please )?(?:use|open) (?:the |my )?browser to (.+)$|^(?:please )?(?:go online|search online|browse the web) and (.+)$|^(?:please )?do this (?:in|on) the browser:? (.+)$", re.I),
+     "browse_agent", lambda m: {"goal": m.group(1) or m.group(2) or m.group(3)}),
+    (re.compile(r"^(?:please )?what (?:do you|did you|have you) remember(?:ed)?(?: about)? (.+)$", re.I), "recall_memory",
+     lambda m: {"topic": m.group(1)}),
+    (re.compile(r"^(?:please )?show (?:me )?my memor(?:y|ies)$|^(?:please )?what (?:do you|have you) remember$", re.I), "show_memory", lambda m: {}),
+    (re.compile(r"^(?:please )?forget (?:everything |all )?(?:about )?(.+)$", re.I), "forget",
+     lambda m: {"what": m.group(1)} if m.group(1).lower() not in ("it", "that", "this", "me") and (facts.search(m.group(1), 1) or memory.find_facts(m.group(1), 1)) else None),
+    (re.compile(r"^(?:please )?(?:turn |switch )?crowd mode (on|off)$|^(?:please )?(?:turn|switch) (on|off) crowd mode$", re.I),
+     "crowd_mode", lambda m: {"on": (m.group(1) or m.group(2)).lower() == "on"}),
+    (re.compile(r"^(?:please )?(?:look up|search wikipedia for|ask wikipedia(?: about)?|wikipedia|wiki|offline wiki) (.+)$", re.I), "wiki_answer", lambda m: {"query": m.group(1)}),
+    (re.compile(r"^(?:please )?(?:what(?:'| i)?s|what is|what are|who is|who was|tell me about|explain) (?:an? |the )?(.+)$", re.I), "wiki_answer",
+     lambda m: {"query": m.group(1)} if len(m.group(1).split()) <= 5 and not research_live.is_live(m.group(1)) else None, lambda: config.offline() and research_wiki.ready()),
     (re.compile(r"^(.+)$"), "play_media", lambda m: play.answer(m.group(1)), play.asking),
     (re.compile(r"^(.+)$"), "live_answer", lambda m: {"query": m.group(1)} if research_live.is_live(m.group(1)) else None),
     (re.compile(r"^(?:please )?(?:what(?:'| i)?s|what is|whats|is there anything|anything) (?:important|urgent|new)(?: in| on)? (?:my )?(?:e-?mail|mail|inbox)s?$", re.I),
      "check_email", lambda m: {}),
+    (re.compile(r"^(?:please )?(?:what(?:'| i)?s|what is|whats|when(?:'| i)?s|when is) (?:my |the )?next class$|^next class$|^(?:what|which) class (?:do i have |is )?next$", re.I),
+     "next_class", lambda m: {}),
+    (re.compile(r"^(?:please )?(?:what(?:'| i)?s|what is|whats|show me|read) (?:my )?(?:today(?:'| i)?s|today s) (?:schedule|classes|timetable)$|"
+                r"^(?:please )?(?:what(?:'| i)?s|what is|whats) (?:my )?(?:schedule|classes|timetable)(?: for)? today$|^what classes do i have(?: today)?$|"
+                r"^(?:please )?(?:what(?:'| i)?s|what is|whats|show me) (?:my )?timetable$", re.I), "today_schedule", lambda m: {}),
+    (re.compile(r"^(?:please )?(?:what(?:'| i)?s|what is|whats|what do i have) due(?: this week| soon| today)?$|^(?:please )?(?:show|list|read)(?: me)?(?: my| the)? deadlines$|"
+                r"^(?:any|my) deadlines(?: this week)?$", re.I), "whats_due", lambda m: {}),
+    (re.compile(r"^(?:please )?add (?:a )?deadline:? (.+?) (?:on|for|by|due) (.+)$", re.I), "add_deadline", lambda m: {"item": m.group(1), "on": m.group(2)}),
+    (re.compile(r"^(?:please )?add (?:a )?class:? (.+)$", re.I), "add_class", lambda m: {"text": m.group(1)}),
+    (re.compile(r"^(?:please )?(?:add (?:a )?task|new task)[:,-]? (.+)$|^(?:please )?task[:,-] ?(.+)$", re.I), "add_task", lambda m: {"text": m.group(1) or m.group(2)}),
+    (re.compile(r"^(?:please )?(?:list|show|read)(?: out)?(?: my)?(?: open)? tasks$|^what(?:'| i)?s? (?:are )?my tasks$|^what(?:'| i)?s? my tasks$", re.I), "list_tasks", lambda m: {}),
+    (re.compile(r"^(?:please )?(?:done|finished|complete|completed) (?:with )?(?:task )?(?:number )?(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten)$|"
+                r"^(?:please )?(?:mark )?task (?:number )?(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten) (?:as )?(?:done|finished|complete|completed)$", re.I),
+     "task_done", lambda m: {"number": m.group(1) or m.group(2)}),
+    (re.compile(r"^(?:please )?clear (?:the |my )?(?:done|finished|completed)(?: tasks)?$", re.I), "clear_done_tasks", lambda m: {}),
+    (re.compile(r"^(?:please )?(?:show|list|read)(?: me)?(?: my| the)? alerts$|^(?:any|what) alerts(?: do i have)?$", re.I), "show_alerts", lambda m: {}),
+    (re.compile(r"^(?:please )?clear (?:the |my )?alerts$", re.I), "clear_alerts", lambda m: {}),
     (re.compile(r"^(?:please )?(?:what(?:'| i)?s|what is|whats|show me|read) (?:on |in )?my (?:calendar|schedule|agenda)(?: for)?\s*(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)?$", re.I),
      "calendar_today", lambda m: {"day": m.group(1) or "today"}),
     (re.compile(r"^(?:please )?(?:what(?:'| i)?s|what is|whats) (?:on|in) (?:the )?calendar(?: (today|tomorrow))?$", re.I), "calendar_today", lambda m: {"day": m.group(1) or "today"}),
@@ -296,6 +344,16 @@ DIRECT = [
     (re.compile(r"^(?:please )?(?:summari[sz]e|summary of) (it|that|this)$", re.I), "summarise_file", lambda m: {"path": ""}),
     (re.compile(r"^(?:please )?(?:summari[sz]e|summary of) (?!what i copied|my clipboard|the clipboard|this page)(?:the |my )?(.+)$", re.I),
      "summarise_file", lambda m: {"path": m.group(1)}),
+    (re.compile(r"^(?:please )?(?:make|build|create|generate) (?:me )?(?:a |an )?(?:static |simple |responsive )?(?:web ?site|web ?page|landing page|site)(?: for| about| on| of) (.+)$", re.I),
+     "make_website", lambda m: {"topic": m.group(1)}),
+    (re.compile(r"^(?:please )?preview (?:it|the (?:site|website|page)|my (?:site|website))$|^(?:please )?(?:serve|show) (?:the |my )?(?:site|website) locally$", re.I),
+     "preview_site", lambda m: {}),
+    (re.compile(r"^(?:please )?stop (?:the )?(?:site |website )?preview$", re.I), "stop_preview", lambda m: {}),
+    (re.compile(r"^(?:please )?export (?:it|the (?:site|website)|my (?:site|website))$", re.I), "export_site", lambda m: {}),
+    (re.compile(r"^(?:please )?(?:quiz|test) me (?:from|on|using) my (?:notes|pdfs?|syllabus)(?: (?:on|about) (?:the )?(.+))?$", re.I), "quiz_from_notes",
+     lambda m: {"topic": m.group(1) or ""}),
+    (re.compile(r"^(?:please )?(?:review|revise|go over) (?:my )?(?:due )?(?:questions|cards|flash ?cards)$|^(?:please )?review due questions$", re.I), "review_due", lambda m: {}),
+    (re.compile(r"^(?:which|what) (?:note )?topics (?:am i|are my) (?:weak|weakest)(?: (?:on|in) (?:my )?notes)?$|^my weak (?:note )?topics$", re.I), "weak_note_topics", lambda m: {}),
     (re.compile(r"^(?:please )?quiz me(?: (?:on|about) (?:the )?(.+))?$", re.I), "quiz_me", lambda m: {"topic": m.group(1) or ""}),
     (re.compile(r"^(?:another|next) question$", re.I), "quiz_me", lambda m: {"topic": study._last["topic"]}, lambda: bool(study._last["topic"])),
     (re.compile(r"^(?:please )?teach me (?:about |how )?(.+)$", re.I), "teach_me", lambda m: {"topic": m.group(1)}),
@@ -480,6 +538,7 @@ def fuzzy(text):
     if action not in tools.TOOLS:
         return False
     print("  [direct command]")
+    events.emit("tier", "local")
     run_tool(action, args, "")
     return True
 
@@ -496,6 +555,7 @@ def direct(text):
                 continue
             print("  [direct command]")
             events.emit("route", "direct " + action)
+            events.emit("tier", "local")
             run_tool(action, args, "")
             return True
     return fuzzy(t)
@@ -551,11 +611,12 @@ def fast_path(text):
         return False
     print("  [quick command]")
     events.emit("route", "quick " + action)
+    events.emit("tier", "local")
     do_tool(action, args)
     return True
 
 
-def execute(plan, addressed=False):
+def execute(plan, addressed=False, streamed=0):
     action = str(plan.get("action", "chat"))
     args = plan.get("args")
     if not isinstance(args, dict):
@@ -563,7 +624,7 @@ def execute(plan, addressed=False):
     spoken = str(plan.get("say") or "").strip()
     if action in ("ask", "chat"):
         if spoken:
-            voice.say(spoken)
+            voice.say(spoken, skip=streamed, limit=brain.QUALITY_SENTENCES if action == "chat" and brain.quality() else None)
     elif action == "none":
         if addressed:
             traces.fail("not understood")
@@ -606,6 +667,7 @@ def handle(text, via_wake=True):
             traces.end()
 
 
+WEB_STOP = re.compile(r"^(?:please )?(?:stop|cancel|abort|end) (?:the |that )?(?:web |browser )?(?:task|agent|browsing|job)$")
 APP_STOP = re.compile(r"^(?:please )?(?:(?:stop|kill|close) (?:the (?:app|server|project|website|site))|stop running)$")
 APP_STOP_IT = re.compile(r"^(?:please )?(?:stop|kill) it$")
 
@@ -636,6 +698,10 @@ def _handle(text, via_wake=True):
             voice.stop()
         PENDING.clear()
         state.update(touched_at=time.time())
+        return False
+    if web_agent.running() and (STOP.match(plain) or WEB_STOP.match(plain)):
+        web_agent.abort()
+        voice.stop()
         return False
     if STOP.match(plain) and (spoke or not PENDING):
         voice.stop()
@@ -674,40 +740,46 @@ def _handle(text, via_wake=True):
         if fast_path(text):
             return False
         t0 = time.time()
-        names = tools.pick_tools(text)
-        events.emit("route", "brain " + (",".join(names) if names else "chat"))
-        plan = brain.think(text, tools.prompt(names), names) if names else brain.chat(text)
+        names = agent.pick(text)
+        remote = getattr(REMOTE, "gate", None)
+        asked = False
+        if names:
+            line = agent.turn(text, names)
+        else:
+            events.emit("route", "brain chat")
+            streamer = None if remote else voice_stream.Streamer()
+            try:
+                plan = brain.chat(text, on_delta=streamer.feed if streamer else None)
+            finally:
+                if streamer:
+                    streamer.finish()
+            line = None if plan is None else str(plan.get("say") or "")
+            asked = bool(line) and line.rstrip().endswith("?")
+            if line is not None and streamer and streamer.spoken:
+                voice.say(line, skip=streamer.spoken, limit=brain.QUALITY_SENTENCES if brain.quality() else None)
+                line = ""
+            elif line is not None:
+                voice.say(line, limit=brain.QUALITY_SENTENCES if brain.quality() else None)
+                line = ""
         print(f"  [brain {time.time() - t0:.1f}s ~{brain.take_tokens()} tokens]")
-        if plan is None:
+        if line is None:
             traces.fail("no brain")
-            voice.say("I cannot reach my brain right now, so only quick things like time, volume and reminders will work.")
+            voice.say(brain.outage_line())
             return False
-        plans = plan.get("actions") if isinstance(plan.get("actions"), list) else [plan]
-        plans = [p for p in plans if isinstance(p, dict)][:3]
-        plans = dedupe(plans)
-        plans.sort(key=lambda p: 1 if tools.TOOLS.get(str(p.get("action")), {}).get("risk") == "confirm" else 0)
-        for p in plans:
-            execute(p, via_wake)
-        return bool(PENDING) or files.waiting() or any(str(p.get("action")) == "ask" for p in plans)
+        if line:
+            voice.say(line)
+        return bool(PENDING) or files.waiting() or asked or line.rstrip().endswith("?")
     finally:
         if not voice.SPEAKING.is_set():
             state.update(activity="idle", activity_at=time.time())
 
 
 def greet():
+    """At start only what is useful: today's reminders, if there are any."""
     now = datetime.now()
-    part = "morning" if now.hour < 12 else "afternoon" if now.hour < 17 else "evening"
-    who = config.PET_NAME or "there"
-    me = config.ASSISTANT
-    line = random.choice([
-        f"Good {part}, {who}. {me} reporting for duty.",
-        f"Hey {who}. {me} is awake and ready to help.",
-        f"Welcome back, {who}. What are we building today?",
-    ])
     today = [r for r in reminders.pending() if datetime.fromisoformat(r["due"]).date() == now.date()]
     if today:
-        line += f" You have {len(today)} reminder{'s' if len(today) > 1 else ''} today."
-    voice.say(line)
+        voice.say(f"You have {len(today)} reminder{'s' if len(today) > 1 else ''} today.")
 
 
 def _on_signal(signum, frame):
@@ -716,6 +788,9 @@ def _on_signal(signum, frame):
 
 def start(watch_reminders=True):
     state.update(paused=False)
+    threads.attach()
+    threads.changed.append(facts.on_new_chat)
+    facts.watch()
     atexit.register(brain.finish)
     atexit.register(mpvctl.stop)
     if threading.current_thread() is threading.main_thread():
@@ -725,9 +800,12 @@ def start(watch_reminders=True):
         digest.watch(lambda text: voice.say(voice.Full(text)))
         monitor.watch()
     rag.start()
+    telegram.start()
     routine_runner.start(lambda text: voice.say(voice.Full(text)))
     pomodoro.resume()
     dictate.start(voice.say)
+    ptt.start()
+    web_agent.start_hotkey()
     companion.start()
     proactive.start()
     if guard.enabled():
@@ -744,6 +822,7 @@ def check_stop_key(seen):
     at = float(state.read()["stop_at"] or 0)
     if at > seen:
         mpvctl.stop()
+        web_agent.abort()
         return at
     return seen
 
@@ -772,7 +851,17 @@ def listen():
     Ears(handle).run()
 
 
+def utf8_streams():
+    """Printing Hindi, Kannada or a smart quote must never crash a log line, whatever the terminal's locale says."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main():
+    utf8_streams()
     if "--text" not in sys.argv and "--no-ui" not in sys.argv:
         from ..ui import dashboard
         return dashboard.run()

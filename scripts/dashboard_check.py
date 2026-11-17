@@ -87,7 +87,7 @@ win = window.Dashboard()
 win.show()
 pump(0.3)
 check("the window opens", win.isVisible() and win.windowTitle() == "JARVIS")
-check("the sidebar has the nine pages", list(win.nav) == ["Home", "Media", "Code", "Notes", "Study", "Jobs", "Web", "Stats", "Settings"])
+check("the rail has the eleven pages", list(win.nav) == ["Home", "Chat", "Activity", "Media", "Code", "Notes", "Study", "Jobs", "Web", "Stats", "Settings"])
 
 # ---- every page ----
 for name in win.nav:
@@ -103,10 +103,10 @@ win.show_study()
 check("Study appears with STUDY=on", not win.nav["Study"].isHidden())
 os.environ.pop("STUDY")
 win.show_study()
-check("the top bar shows the brain mode", win.brain_chip.text() == "BRAIN HYBRID", win.brain_chip.text())
+check("the status pill shows the brain mode", "HYBRID" in win.pill.text(), win.pill.text())
 os.environ["BRAIN"] = "offline"
 win.refresh_page()
-check("the top bar follows BRAIN=offline", win.brain_chip.text() == "BRAIN OFFLINE")
+check("the status pill follows BRAIN=offline", "OFFLINE" in win.pill.text())
 os.environ.pop("BRAIN")
 win.go("Notes")
 check("the Notes page shows the indexed file count", "indexed" in win.pages["Notes"].count.text(), win.pages["Notes"].count.text())
@@ -239,8 +239,8 @@ with mock.patch.object(core, "handle", lambda text, via_wake=True: seen.append(t
     window.events.emit("provider", "groq")
     pump(0.2)
     check("route and provider fill in the feed row", win.ctx.feed[-1]["route"] == "quick time_date" and win.ctx.feed[-1]["provider"] == "groq")
-    win.pages["Home"].refresh()
-    check("the feed panel shows the row", "quick time_date" in win.pages["Home"].feed.text())
+    win.pages["Activity"].refresh()
+    check("the routing panel shows the row", "quick time_date" in win.pages["Activity"].feed.text())
     del seen[:]
     quick = [a for a in win.quick.menu().actions() if a.text() == "start focus 25"][0]
     quick.trigger()
@@ -425,10 +425,10 @@ check("the window process stays under 180 MB at idle", rss < 180, f"{rss:.0f} MB
 
 
 # ---- redesign ----
-check("the presets include Amber and Ice, with Cyan first", "amber" in themes.PRESETS and "ice" in themes.PRESETS and themes.ORDER[0] == "cyan")
+check("the presets include Amber and Ice, with Ice first", "amber" in themes.PRESETS and "ice" in themes.PRESETS and themes.ORDER[0] == "ice")
 red = QColor(themes.PRESETS["red"]["accent"])
 check("red is less saturated than before", red.hsvSaturation() < QColor("#ff3b4e").hsvSaturation(), str(red.hsvSaturation()))
-check("a fresh install starts on Cyan", (lambda: (os.remove(themes.voices.SETTINGS) if themes.voices.SETTINGS.exists() else None, themes.load()[0])[1])() == "cyan")
+check("a fresh install starts on Ice", (lambda: (os.remove(themes.voices.SETTINGS) if themes.voices.SETTINGS.exists() else None, themes.load()[0])[1])() == "ice")
 check("the default window is 1280 by 760", themes.load_window() == (1280, 760))
 win.resize(1100, 700)
 pump(1.0)
@@ -439,15 +439,18 @@ pump(1.0)
 home = win.pages["Home"]
 win.go("Home")
 orb = home.orb
-check("the core is large: about 55% of the centre area", 0.5 <= (orb.core_radius() * 2) / min(orb.width(), orb.height()) <= 0.6, str((orb.core_radius() * 2) / min(orb.width(), orb.height())))
+check("the core is large: about 55% of its area", 0.5 <= (orb.core_radius() * 2) / min(orb.area().width(), orb.area().height()) <= 0.6)
 check("the core carries its title and subtitle", orb.TITLE == "J.A.R.V.I.S" and orb.SUBTITLE == "AI CORE")
-check("the core is at least 380 px wide in the default window", orb.width() >= 380 and orb.height() >= 380, str(orb.size()))
+check("the core is a background layer over the whole page", orb.width() >= home.width() - 2 and orb.height() >= home.height() - 2 and orb.core_radius() * 2 >= 220, str(orb.size()))
+check("it sits between the side panels and the chat, not under them", home.left_holder.geometry().right() <= orb.area().left() + 1 and orb.area().right() <= home.chat_panel.geometry().left() + 1)
+act = win.pages["Activity"]
 check("the three providers are cards with a state", len(home.cards) == 3 and all(c.name for c in home.cards), str([c.name for c in home.cards]))
 check("providers show Groq, OpenRouter and Ollama", [c.name for c in home.cards] == ["Groq", "OpenRouter", "Ollama"])
 window.pages.brain.LATENCY["groq"] = 0.42
 home.refresh()
 check("a provider card shows the last latency", home.cards[0].latency == 0.42)
-check("the memory panel counts notes and says when it was indexed", "indexed" in home.mem.text())
+act.refresh()
+check("the memory panel counts notes and says when it was indexed", "indexed" in act.mem.text())
 for name in ("Coder", "Browser", "Research", "Notes", "Study"):
     check(f"the {name} agent is listed", name in home.agents.text())
 check("agents start idle", home.agents.text().count("idle") == 5, home.agents.text())
@@ -455,32 +458,32 @@ window.events.agent_start("research")
 home.refresh()
 check("a running agent shows as running", home.agents.text().count("running") == 1 and "Research" in home.agents.text())
 window.events.agent_end("research")
-check("the timeline and the feed have placeholders, not empty panels", "no reminders today" in home.today.text() and "Nothing heard yet" in home.feed.text() or home.ctx.feed)
+check("the timeline and the feed have placeholders, not empty panels", "no reminders today" in act.today.text() and ("Nothing heard yet" in act.feed.text() or home.ctx.feed))
 for k in range(15):
     win.ctx.feed.append(dict(time="10:%02d" % k, heard=f"command number {k}", route="direct x", provider="groq"))
-home.refresh()
-check("the feed lists the newest first", home.feed.text().index("command number 14") < home.feed.text().index("command number 10"))
-check("the feed is capped to what fits", "command number 2<" not in home.feed.text())
-check("the waveform strip sits in the bottom bar", win.wave.width() == 220 and win.wave.parent() is win)
+act.refresh()
+check("the feed lists the newest first", act.feed.text().index("command number 14") < act.feed.text().index("command number 10"))
+check("the feed is capped to what fits", "command number 2<" not in act.feed.text())
+check("the waveform strip sits in the bottom bar", win.wave.width() == 220 and win.wave.isVisible())
 window.events.set_level(0.2)
 for _ in range(40):
     win.wave.advance()
 check("the waveform follows the mic level", max(win.wave.values) > 0.3 and len(win.wave.values) == 40)
 window.events.set_level(0.0)
 check("quick commands live in a popover", win.quick.menu() is not None and len(win.quick.menu().actions()) == len(window.pages.QUICK))
-check("the sidebar has an icon and a label per page", all(not b.icon().isNull() and b.text().strip() for b in win.nav.values()))
+check("the rail has an icon and a tooltip per page, and no text", all(not b.icon().isNull() and b.toolTip() and not b.text() for b in win.nav.values()) and win.nav["Home"].parent().width() == 56)
 with mock.patch.object(window.psutil, "virtual_memory", lambda: mock.Mock(available=0.8 * 2 ** 30, percent=95)):
     win._ticks = 9
     win.tick()
-check("under 1 GB free: low power turns on and the low RAM chip shows", win.low_auto and win.clock.interval >= 66 and not win.ram_chip.isHidden())
+check("under 1 GB free: low power turns on and the pill says LOW RAM", win.low_auto and win.clock.interval >= 66 and "LOW RAM" in win.pill.text(), win.pill.text())
 with mock.patch.object(window.psutil, "virtual_memory", lambda: mock.Mock(available=1.2 * 2 ** 30, percent=80)):
     win._ticks = 9
     win.tick()
-check("between 1 and 1.5 GB low power stays on without the chip", win.low_auto and win.ram_chip.isHidden())
+check("between 1 and 1.5 GB low power stays on without the warning", win.low_auto and "LOW RAM" not in win.pill.text())
 with mock.patch.object(window.psutil, "virtual_memory", lambda: mock.Mock(available=3 * 2 ** 30, percent=40)):
     win._ticks = 9
     win.tick()
-check("with enough memory both go away", not win.low_auto and win.ram_chip.isHidden())
+check("with enough memory both go away", not win.low_auto and "LOW RAM" not in win.pill.text())
 
 # a preview of Home in every theme
 previews = root / "data" / "ui-previews"
@@ -509,9 +512,190 @@ for name in themes.ORDER + ["custom"]:
     img.save(str(path))
     check(f"Home renders in {name} and the preview is saved", path.exists() and path.stat().st_size > 20000 and img.width() >= 1000, str(path))
 window.events.set_level(0.0)
-win.set_theme("cyan")
+win.set_theme("ice")
 pump(0.5)
 print(f"     previews: {previews}")
+
+
+# ---- dashboard v3 ----
+from jarvis.ui.dashboard import privacy  # noqa: E402
+from jarvis.ui.dashboard.theme import Theme, contrast  # noqa: E402
+from jarvis.memory import threads  # noqa: E402
+
+th = win.theme
+low = []
+for name in themes.ORDER + ["custom"]:
+    if name == "custom":
+        th.set_hue(40, animate=False, save=False)
+    else:
+        th.set_name(name, animate=False)
+    for label, fg, bg in th.contrast_pairs():
+        if contrast(fg, bg) < 4.5:
+            low.append((name, label, round(contrast(fg, bg), 2)))
+check("all text reads at 4.5 to 1 or better in every theme", not low, str(low[:4]))
+for hue in (0, 60, 120, 200, 280, 330):
+    th.set_hue(hue, animate=False, save=False)
+    low += [(hue, l) for l, f, b in th.contrast_pairs() if contrast(f, b) < 4.5]
+check("and in custom hues", not low, str(low[:4]))
+win.set_theme("ice")
+pump(0.5)
+check("Ice is the default theme and has two accents", themes.PRESETS["ice"]["secondary"] != themes.PRESETS["ice"]["accent"] and themes.DEFAULT == "ice")
+check("Amber pairs amber with red", QColor(themes.PRESETS["amber"]["secondary"]).hue() < 15)
+check("the background is charcoal in every preset", all(max(QColor(v["bg"]).getRgb()[:3]) <= 32 and max(QColor(v["bg"]).getRgb()[:3]) - min(QColor(v["bg"]).getRgb()[:3]) <= 12 for v in themes.PRESETS.values()))
+bd = win.theme.backdrop(800, 600)
+check("the grid and scan lines are one pre-rendered layer", win.theme.backdrop(800, 600) is bd and bd.width() == 800)
+check("the grid layer is drawn by the window", "backdrop" in Path(window.__file__).read_text())
+
+# rail, top bar, pill
+rail = win.nav["Home"].parent()
+check("the rail is thin and icon only", rail.width() == 56 and all(not b.text() for b in win.nav.values()))
+check("the top bar shows date and time", re.search(r"\d{2}:\d{2}", win.clock_label.text()) and re.search(r"[A-Z]{3} \d{2} [A-Z]{3}", win.clock_label.text()), win.clock_label.text())
+win.update_pill()
+check("one status pill has mode, state and warnings", win.pill.text().count("\u00b7") >= 1 and win.theme_btn.text() == "THEME")
+check("the pill detail is closed until clicked", win.pill_detail.isHidden())
+win.pill.click()
+pump(0.1)
+check("clicking the pill opens the details", not win.pill_detail.isHidden() and "Mode" in win.pill_text.text() and "Groq" in win.pill_text.text(), win.pill_text.text())
+win.pill.click()
+check("and clicking again closes them", win.pill_detail.isHidden())
+
+# orb states are clearly different
+frames = {}
+orb = win.pages["Home"].orb
+window.events.set_level(0.08)
+window.events.set_out_level(0.8)
+for mode in ("idle", "listening", "thinking", "speaking", "error"):
+    orb.set_mode(mode)
+    orb.angle = 1.0
+    orb.last_ripple = 0
+    orb.mic = 0.5
+    orb.voice = 0.8
+    orb.ripples = [time.monotonic() - 0.4] if mode == "speaking" else []
+    img = QImage(orb.size(), QImage.Format.Format_ARGB32)
+    img.fill(0)
+    orb.render(img)
+    frames[mode] = bytes(img.constBits().asarray(img.sizeInBytes()))
+check("the five orb states each look different", len(set(frames.values())) == 5)
+err = QImage(orb.size(), QImage.Format.Format_ARGB32)
+err.fill(0)
+orb.set_mode("error")
+orb.render(err)
+def reddish(img):
+    return sum(1 for x in range(0, img.width(), 2) for y in range(0, img.height(), 2) if (c := QColor(img.pixel(x, y))).alpha() > 60 and c.red() > c.blue() + 40)
+
+
+orb.set_mode("idle")
+idle = QImage(orb.size(), QImage.Format.Format_ARGB32)
+idle.fill(0)
+orb.render(idle)
+check("the error state is red and the others are not", reddish(err) > 60 and reddish(err) > 5 * (reddish(idle) + 1), f"{reddish(err)} vs {reddish(idle)}")
+orb.set_mode("idle")
+window.events.set_level(0.0)
+window.events.set_out_level(0.0)
+check("the animation runs at 30 fps and 15 in low power", win.clock.interval in (33, 34) or win.clock.low, str(win.clock.interval))
+
+# chat cards, chips, cursor, copy
+win.go("Home")
+home = win.pages["Home"]
+chat = home.chat
+threads.add("user", "what is in my pictures folder, mail me@example.com or call +91 98765 43210")
+pump(0.2)
+events_mod = window.events
+events_mod.emit("tool", "list folder: done")
+events_mod.emit("tool", "play music: failed")
+pump(0.1)
+threads.add("assistant", "Pictures has 6 items.", tier="fast")
+pump(0.3)
+user_b = next(b for b in chat.bubbles if b.role == "user" and "pictures" in b.raw)
+bot_b = next(b for b in chat.bubbles if b.role == "assistant" and "Pictures has" in b.raw)
+check("user and assistant messages are separate cards", user_b.objectName() == "bubble_user" and bot_b.objectName() == "bubble_bot")
+check("message text is large and sans", "font-size: 15px" in bot_b.body.styleSheet() and "mono" not in win.styleSheet().split("QWidget {")[1][:200].lower())
+chips = [bot_b.chips.itemAt(i).widget().text() for i in range(bot_b.chips.count()) if bot_b.chips.itemAt(i).widget()]
+check("tool chips sit under the reply", chips == ["list folder: done", "play music: failed"], str(chips))
+check("a failed tool chip is styled as failed", [bot_b.chips.itemAt(i).widget().objectName() for i in range(2)] == ["chip_ok", "chip_bad"])
+check("each card has a copy button", bot_b.copy.text() == "Copy")
+events_mod.emit("stream", "Hello wor")
+pump(0.4)
+check("a streaming reply shows a cursor", chat.live is not None and "\u258d" in chat.live.body.toPlainText(), chat.live.body.toPlainText() if chat.live else "no live bubble")
+events_mod.emit("stream_end", "")
+pump(0.2)
+check("and the cursor goes when it ends", chat.live is None or "\u258d" not in chat.live.body.toPlainText())
+chat.live = None
+
+# masking
+check("phone numbers and emails are masked in the chat", "98765" not in user_b.body.toPlainText() and "me@example.com" not in user_b.body.toPlainText() and "[email]" in user_b.body.toPlainText(), user_b.body.toPlainText())
+window.events.emit("sys", "routine ran for me@example.com")
+pump(0.2)
+win.go("Activity")
+act = win.pages["Activity"]
+act.refresh()
+check("the activity log masks them by default", "me@example.com" not in act.log.toPlainText() and "[email]" in act.log.toPlainText())
+win.pill.click()
+win.reveal.setChecked(True)
+pump(0.3)
+act.refresh()
+check("the reveal switch shows them", "me@example.com" in act.log.toPlainText() and privacy.state["reveal"] is True)
+win.reveal.setChecked(False)
+pump(0.3)
+act.refresh()
+check("and hides them again", privacy.state["reveal"] is False and "me@example.com" not in act.log.toPlainText())
+win.pill.click()
+
+# three separate records
+window.events.emit("build", "wrote index.html for +91 98765 43210")
+pump(0.2)
+win.go("Activity")
+act = win.pages["Activity"]
+act.refresh()
+win.go("Code")
+code = win.pages["Code"]
+code.refresh()
+in_chat = " ".join(b.body.toPlainText() for b in chat.bubbles + win.pages["Chat"].view.bubbles)
+check("system messages go to Activity only", "routine ran" in act.log.toPlainText() and "routine ran" not in code.log.toPlainText() and "routine ran" not in in_chat)
+check("coder output goes to the Build log only", "wrote index.html" in code.log.toPlainText() and "wrote index.html" not in act.log.toPlainText() and "wrote index.html" not in in_chat)
+check("conversation stays in Chat only", "Pictures has" in in_chat and "Pictures has" not in act.log.toPlainText() and "Pictures has" not in code.log.toPlainText())
+check("masking applies to the activity and build logs", "[email]" in act.log.toPlainText() and "[number]" in code.log.toPlainText() and "98765" not in code.log.toPlainText())
+
+# the drawer
+win.go("Media")
+win.dock_open = False
+win.toggle_dock()
+pump(0.1)
+check("the chat drawer opens on other pages", not win.drawer.isHidden() and win.dock_btn.isChecked())
+win.split.setSizes([700, 480])
+pump(0.1)
+check("and is resizable with the splitter", win.drawer.width() > 440, str(win.drawer.width()))
+win.go("Home")
+check("Home and Chat have their own chat, so the drawer steps aside", win.drawer.isHidden())
+win.go("Media")
+win.toggle_dock()
+check("the drawer closes again", win.drawer.isHidden())
+
+# the Code page has content on both sides
+win.go("Code")
+pump(0.2)
+left = code.list.parent()
+check("Code: projects and the build box are on one side", code.list.isVisible() and code.box_in.isVisible() and code.list.mapTo(win, code.list.rect().center()).x() < code.log.mapTo(win, code.log.rect().center()).x())
+check("Code: the build log and the run controls are on the other", code.log.isVisible() and any(b.text() == "Run" and b.isVisible() for b in code.findChildren(type(win.theme_btn))))
+check("Code: the log is never an empty box", len(code.log.toPlainText().strip()) > 0)
+
+# previews of every page in the default theme
+for old in previews.glob("page-*.png"):
+    old.unlink()
+win.set_theme("ice")
+win.resize(1280, 760)
+pump(0.5)
+win.ctx.activity[:] = ["10:41 ROUTE   direct time_date", "10:41 TOOL    time date: done", "10:42 SYS     notes reindexed"]
+for name in win.nav:
+    if win.nav[name].isHidden():
+        continue
+    win.go(name)
+    pump(0.25)
+    img = win.grab()
+    img.save(str(previews / f"page-{name.lower()}.png"))
+check("a preview of every page is saved", len(list(previews.glob("page-*.png"))) >= 9)
+rss = psutil.Process().memory_info().rss / 2 ** 20
+check("the UI stays under 180 MB with every page built", rss < 180, f"{rss:.0f} MB")
 
 # ---- close to tray, quit kills everything ----
 class FakeTray:

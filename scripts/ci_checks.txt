@@ -2,6 +2,7 @@
 # A second word "linux" marks a check that only makes sense on Linux; it is skipped on macOS with a message.
 platform_check
 echo_check
+listen_check
 jobs_check
 doctor_check
 traces_check
@@ -37,3 +38,13 @@ screen_check linux
 player_check linux
 stop_check linux
 dashboard_check linux
+chat_check linux
+telegram_check
+timetable_check
+alerts_check
+digest_check
+study_notes_check
+wiki_check
+webproject_check
+core_check
+encoding_check linux

@@ -145,7 +145,7 @@ lines = set()
 clock, said, c = make()
 for _ in range(40):
     lines.add(c.line())
-check("lines vary", len(lines) >= 8, str(len(lines)))
+check("lines are factual and carry the idle minutes", all(any(ch.isdigit() for ch in l) for l in lines) and not any(w in l.lower() for l in lines for w in ("joke", "lonely", "sharper")), str(lines))
 check("no emoji or placeholders", all("{" not in l and l.isascii() for l in lines))
 
 spoken = []

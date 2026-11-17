@@ -15,6 +15,11 @@ def latest_eval():
     return jsonfile.read(files[-1])
 
 
+def core_rate():
+    """{'passed', 'total', 'at'} from the last run of scripts/core_check.py, or None."""
+    return jsonfile.read(config.DATA / "core-check.json", None, dict)
+
+
 def usage(days=7):
     """{provider: {'calls', 'tokens'}} summed over the last days, plus today's row."""
     data = jsonfile.read(config.DATA / "usage.json", None, dict)
@@ -43,6 +48,10 @@ def build():
                       f"averaging {ev['avg_tokens']} tokens per request.")
     else:
         lines.append("No eval yet. Run: python scripts/eval_phrases.py")
+    core = core_rate()
+    if core and core.get("total"):
+        lines.append(f"Core phrases {core['at']}: {core['passed']} of {core['total']} passed.")
+        spoken.append(f"The core phrase check passed {core['passed']} of {core['total']}.")
     if week:
         calls = sum(r["calls"] for r in week.values())
         tokens = sum(r["tokens"] for r in week.values())

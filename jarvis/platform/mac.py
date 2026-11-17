@@ -23,7 +23,7 @@ def _osa(*lines, timeout=5):
     cmd = ["osascript"]
     for line in lines:
         cmd += ["-e", line]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, encoding="utf-8", errors="replace")
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
@@ -225,7 +225,7 @@ def _agents():
 
 
 def service_active(name):
-    r = subprocess.run(["launchctl", "list"], capture_output=True, text=True, timeout=3)
+    r = subprocess.run(["launchctl", "list"], capture_output=True, text=True, timeout=3, encoding="utf-8", errors="replace")
     return f"com.jarvis.{name}" in r.stdout
 
 

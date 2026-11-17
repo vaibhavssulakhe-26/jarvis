@@ -71,11 +71,15 @@ def add_tokens(n):
         _current["tokens"] = _current.get("tokens", 0) + int(n)
 
 
-def fail(reason=""):
+def fail(reason="", tool=None):
+    """Mark the request failed. The reason is also kept as `error` next to the route and tool, so a failure can be traced back."""
     if _current:
         _current["ok"] = False
+        if tool:
+            _current["tool"] = tool
         if reason:
             _current["reason"] = redact.mask(reason)[:80]
+            _current["error"] = redact.mask(reason)[:160]
 
 
 def end():
@@ -97,7 +101,7 @@ def append(line):
         try:
             if p.exists() and p.stat().st_size >= MAX_BYTES:
                 p.replace(p.with_name(p.name + ".1"))
-            with p.open("a") as f:
+            with p.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
         except OSError:
             pass
@@ -108,7 +112,7 @@ def mark_corrected(trace_id):
     with _lock:
         p = path()
         try:
-            lines = p.read_text().splitlines()
+            lines = p.read_text(encoding="utf-8").splitlines()
         except OSError:
             return False
         for i in range(len(lines) - 1, max(-1, len(lines) - 6), -1):
@@ -119,7 +123,7 @@ def mark_corrected(trace_id):
             if row.get("id") == trace_id:
                 row["corrected"] = True
                 lines[i] = json.dumps(row, ensure_ascii=False)
-                p.write_text("\n".join(lines) + "\n")
+                p.write_text("\n".join(lines) + "\n", encoding="utf-8")
                 return True
     return False
 
@@ -129,7 +133,7 @@ def load(limit=None):
     rows = []
     for p in (path().with_name(path().name + ".1"), path()):
         try:
-            for line in p.read_text().splitlines():
+            for line in p.read_text(encoding="utf-8").splitlines():
                 try:
                     rows.append(json.loads(line))
                 except ValueError:

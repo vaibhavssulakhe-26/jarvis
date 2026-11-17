@@ -207,7 +207,7 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
 - Media: `play.rank` drops candidates that fail the ranking (live streams stay last as a fallback). `play._state["now"]` is the item that actually started;
   `play.now()` gives (item, queue index) for the Media page and returns None only when `mpvctl.active()` is false.
 - Notes page: reads `rag.scan()` (NOTES_DIR plus RAG_FOLDERS, .md .txt .pdf), links notes that share keywords, and shows indexed and on-disk counts.
-- Study: the sidebar entry is hidden unless `STUDY=on` (`window.show_study`); the page shows the next roadmap item as a 20 minute block with a Start button
+- Study: the rail entry is hidden unless `STUDY=on` (`window.show_study`); the page shows the next roadmap item as a 20 minute block with a Start button
   (`start focus 20`).
 - Voice: `voices.best()` picks the highest quality installed English voice when nothing is saved or set in `VOICE`; `voices.length_scale()` is 0.92 divided by
   `VOICE_SPEED`; `voice._speak` synthesises the next sentence while the current one plays; at most two sentences are spoken.
@@ -243,3 +243,54 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
   the confirm tool `job_mail_updates`), `jobs/interview.py` (spoken mock interview; `main._handle` calls `interview.take` after `study.take`),
   `actions/job_tools.py` (tools are registered only when JOBS=on) and the Jobs dashboard page.
 - Small JSON files under data/ are read and written through `core/jsonfile.py` (`read(path, default, kind)`, atomic `write`); settings.json goes through `voices.read_settings` / `write_settings`.
+
+- Listening in noise: `voice/vad.py` (Silero via onnxruntime, then webrtcvad, then loudness; `Endpointer` ends at 0.8 s of silence or `MAX_RECORD_SECONDS`, 12),
+  `voice/ptt.py` (`PTT_KEY` or the Talk button, hold to record, no wake word), `voice/listen.py` (crowd mode: `CROWD_MODE`, Settings, "crowd mode on/off"; wake word for
+  every command, no follow-up window, threshold from the noise floor). `Ears._finish` always returns to idle. `NOISE_SUPPRESS=on` runs `vad.denoise` on a recording.
+  `events.mic` holds floor, threshold, mode and detector for the meter and `doctor.check_listening`. `scripts/listen_check.py`.
+- Chat: `memory/threads.py` keeps one shared thread (typed and spoken, redacted) in `data/chats/`; `main.start` attaches it to the event bus. `ui/dashboard/chat.py` is
+  `ChatView` (the Chat page, and the compact dock on the other pages). `actions/attach.py` answers questions about a dropped PDF, text or image. `scripts/chat_check.py`.
+- Quality and tiers: `brain.chat` uses `quality_system`, 12 turns from the thread and `QUALITY_TOKENS` when `QUALITY_MODE` is on (default); tool routing is unchanged.
+  `brain.generate(messages, max_tokens, hard, on_delta, want_json)` returns `(text, tier)`: `strong` (`GROQ_STRONG_MODEL`, daily cap, rests a minute after 429), `fast`,
+  `offline`; local commands emit tier `local`. `brain.is_hard` and `brain.clarify_hint` decide. `route_check` measures the chat budget with quality off.
+- Streaming: `brain.chat(text, on_delta)`, `voice/stream.py` (`Streamer` speaks the first sentence early), `voice.say(text, skip, limit)`, `speech.shorten(text, limit)`; events
+  `stream` and `stream_end` feed the chat bubble.
+- Long-term memory: `memory/facts.py` writes `data/memory.jsonl` (redacted, one fact per line) and searches it with an in-memory FTS table; `allowed()` refuses secrets,
+  health words and other people; extraction runs after five quiet minutes, on new chat and at exit. Tools in `actions/recall.py` (`recall_memory`, `show_memory`, `forget`).
+- Browser agent: `actions/web_agent.py` (`browse_agent`): `make_plan` on the strong tier, `decide` on the fast tier, `observe` reads `aria_snapshot` plus text, `act` reuses
+  `browser._inspect`, `risky_click`, `browse_type` and `_guard`. `confirm` uses `main.PENDING` with the `agent_confirm` tool. `abort()` is called by the Stop button,
+  `check_stop_key`, the stop words and `AGENT_ABORT_KEY`. `RUN` feeds the Web page. `scripts/agent_check.py` needs Playwright and a browser.
+
+- Telegram: `telegram.py` (TELEGRAM=on, `TELEGRAM_BOT_TOKEN`, requests long polling against `TELEGRAM_API`, which only the check changes). The first private chat that sends the six
+  digit code printed at start becomes the owner (`data/telegram.json`); strangers get no reply and five wrong guesses change the code. Owner text runs through `main.handle` with
+  `main.REMOTE.gate` set and `voice.capture()` collecting what would be spoken. `Gate.blocked` refuses send/delete/power tools (`NEVER`) and coder/browser agent tools unless
+  `TELEGRAM_ALLOW_AGENT`; confirm-risk tools are held in `telegram._s["pending"]` for a yes/no from that chat (`check_pending` is off for remote commands). Forwarded
+  messages are never commands; text is capped, masked in logs, rate limited (`TELEGRAM_RATE`). `notify` / `notify_once` send reminders, briefs, digests and alerts.
+  Slash commands: /brief /email /tasks /status /stop. `python -m jarvis.telegram --unpair`. Doctor line `telegram`.
+- Planner: `timetable.py` (data/timetable.md, data/deadlines.md, `parse_date`, `parse_class`, `brief_lines`, `focus_hint`), `tasks.py` (data/tasks.md), `alerts.py`
+  (data/alerts.jsonl, `add(source, message, quiet_for=)`, `describe(exc)`), tools in `actions/planner_tools.py`, direct phrases in `main.DIRECT`. `routines.run_one`, the runner loop and the
+  reminder, page watch and old digest loops write alerts; the dashboard top bar shows an ALERTS chip.
+- Brief: `morning.gather` adds classes, deadlines, tasks, the study set and the alert count; one brain call (`MAX_PROMPT_TOKENS` 640 plus `OUT_TOKENS` 150), template fallback with
+  `timetable.focus_hint`. `routines.runner.push` shows it on the dashboard, `telegram.notify_once("briefing_pushed")` sends it once a day, `announce` speaks it.
+- Email digest: `routines/maildigest.py` (`digest`, `rule_category`, `sort`; unclear ones go to one brain call with sender and subject only; instruction-like mail is withheld).
+  `mail.fetch_recent` reads `SINCE` the day, read only, PEEK. The routine line `digest-time` uses `EMAIL_DIGEST_TIME` (18:00); `routines.seed_digest` adds it once to an older routines file.
+- Notes quiz: `actions/notes_quiz.py` (`quiz_from_notes`, `review_due`, `weak_note_topics`, Leitner `grade_card`, `daily_set`). The round lives in `study._session` with kind "notes"
+  (`study.take` hands over to `notes_quiz.take`); cards are `data["cards"]` in data/study.json.
+- Offline wiki: `research/wiki.py` (`OFFLINE_WIKI`, optional libzim, `set_pack` for tests, `wiki_answer`), doctor line `offline wiki`. "what is X" uses it only while `config.offline()`.
+- Web helper: `actions/webproject.py` (`make_website` via `coder.build_project`, `a11y_pass`, `preview_site` on 127.0.0.1 with a free port, `stop_preview`, `export_site`).
+  Its tools belong to the "coder" agent group, so the phone gate treats them as agent tasks. Nothing deploys or pushes.
+- New checks: `telegram_check`, `timetable_check`, `alerts_check`, `digest_check`, `study_notes_check`, `wiki_check`, `webproject_check`.
+
+- Agent: `brain/agent.py` (`pick` = `tools.rank_tools(text, 6)`, `turn`, `execute`, `reply_from`). The local router in `main` (direct, fast_path, pending, study, files) runs first; otherwise `agent.turn` when tools matched,
+  else the streaming `brain.chat` (whose system prompt now holds `brain.self_block()`). `brain.tool_turn` is native function calling on Groq (`_groq_tools`) and strict JSON through `route` elsewhere
+  (`_flatten`). At most 3 tool rounds, 3 calls a round; all-ok runs of one or two tools skip the second model call unless the tool is in `DATA_TOOLS`. A `failed` tool still failed at the end becomes
+  `failure_sentence` and replaces the model's text; `Ask` (core/errors) is a question, never a failure; confirm tools go through `main.run_tool` (and the Telegram gate). Offline replies start with "(offline)".
+  Tests must patch `brain._groq_tools` (route_check and evalkit do) or they reach the network when a key is set.
+- Brain state: `brain.FAILED`, `RETRY` (Retry-After or "try again in 5m"), `why_down`, `provider_status`, `_go_offline` (one line per outage), `outage_line`, `LAST_PROVIDER`.
+- Files: `core/access.py` (`readable`, `denied`, `FILE_DENY`) is applied in `actions/files.py`, `memory/rag.py`, `actions/documents.py` and `actions/file_tools.py` (`list_folder`, `open_file`, `read_text_file`, `describe_image`;
+  a position such as "4th" is resolved against the sorted list and confirmed). `handoff.send` reads its line back.
+- UTF-8: every text file, `read_text`/`write_text`, `open` and text-mode subprocess call names `encoding="utf-8"`; streamed API replies set `r.encoding`; `main.utf8_streams()` runs at start.
+- Traces keep `route`, `tool` and `error` for a failure (`traces.fail(reason, tool=)`). `scripts/core_check.py` writes `data/core-check.json` (`stats.core_rate`).
+- Dashboard v3: `ui/dashboard/window.py` (icon rail, slim top bar with `pill`, QSplitter drawer, `backdrop` painted by the window), `theme.py` (`readable`, `contrast_pairs`, `backdrop`, `accent_text`, `surface`),
+  `themes.py` (Ice default, charcoal), `privacy.py` (`show`, reveal), `pages.py` (`Home` with the orb as a background layer and `chat`, `Activity`, `Code`), `chat.py` (cards, chips from the `tool` event, cursor).
+  Events: `sys`, `route`, `tool`, `alert`, `provider` go to Activity; `build` to the Code page; the chat thread only holds the conversation. Colour values live only in `themes.py`.

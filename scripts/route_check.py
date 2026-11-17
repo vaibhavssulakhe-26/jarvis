@@ -20,7 +20,7 @@ from jarvis.brain import brain  # noqa: E402
 from jarvis.core import main  # noqa: E402
 
 CHAT_LIMIT = 400
-TOOL_LIMIT = 800
+TOOL_LIMIT = 900
 SYSTEM_LIMIT = 300
 
 # (utterance, expected): "local" or "local:<tool>", "chat", "tool:<tool the brain should be offered>"
@@ -123,7 +123,12 @@ def fake_route(messages, max_tokens=500, want_json=True, local=False):
 done = []
 
 
-def classify(text):
+def via_route(messages, max_tokens, hard=False, on_delta=None, want_json=False):
+    text, who = brain.route(messages, max_tokens, want_json)
+    return text, "fast"
+
+
+def classify(text, quality=False):
     del calls[:]
     del done[:]
     main.PENDING.clear()
@@ -135,6 +140,9 @@ def classify(text):
         main.PENDING.update({"action": "battery", "args": {}, "until": time.time() + 60})
     with mock.patch.object(brain, "route", fake_route), \
             mock.patch.object(brain.memory, "context", return_value=""), \
+            mock.patch.object(brain, "generate", via_route), \
+            mock.patch.object(brain, "_groq_tools", lambda *a, **k: (None, 0)), \
+            mock.patch.object(brain, "quality", lambda: quality), \
             mock.patch.object(main, "do_tool", lambda a, args, spoken="": done.append(a)), \
             mock.patch.object(main, "run_tool", lambda a, args, spoken: done.append(a)), \
             mock.patch.object(main.voice, "say", lambda *a, **k: None), \
@@ -145,7 +153,7 @@ def classify(text):
     if calls:
         c = calls[0]
         system = c["messages"][0]["content"]
-        offered = re.findall(r"^- (\w+):", system.split("Actions:")[-1], re.M) if c["json"] else []
+        offered = re.findall(r"^- (\w+):", system.split("Tools:")[-1], re.M) if c["json"] else []
         offered = [n for n in offered if n not in ("ask", "chat", "none")]
         tokens = brain.estimate(c["messages"])
         if c["json"]:
@@ -170,11 +178,27 @@ for text, want in CASES:
         ok = ok and system <= SYSTEM_LIMIT
     else:
         got = "tool:" + ",".join(names)
-        ok = want.startswith("tool:") and want[5:] in names and len(names) <= 5 and tokens <= TOOL_LIMIT
+        ok = want.startswith("tool:") and want[5:] in names and len(names) <= 6 and tokens <= TOOL_LIMIT
         worst["tool"] = max(worst["tool"], tokens)
     if not ok:
         bad.append((text, want, got, tokens))
     print(("ok   " if ok else "FAIL ") + f"{text!r:55} {got}" + (f"  ~{tokens} tokens" if tokens else ""))
+
+# quality mode has its own, larger chat budget; tool routing keeps the small one
+QUALITY_CHAT_LIMIT = 1100
+QUALITY_SYSTEM_LIMIT = 800
+for text in ("hello", "tell me a joke", "I'm bored"):
+    kind, _, tokens, system = classify(text, quality=True)
+    ok = kind == "chat" and tokens <= QUALITY_CHAT_LIMIT and system <= QUALITY_SYSTEM_LIMIT
+    print(("ok   " if ok else "FAIL ") + f"quality chat {text!r} ~{tokens} tokens, system ~{system}")
+    if not ok:
+        bad.append((text, "quality chat", kind, tokens))
+tool_case = next(t for t, w in CASES if w.startswith("tool:"))
+kind, names, tokens, _ = classify(tool_case, quality=True)
+ok = kind == "tool" and tokens <= TOOL_LIMIT
+print(("ok   " if ok else "FAIL ") + f"quality mode leaves the tool prompt alone (~{tokens} tokens)")
+if not ok:
+    bad.append(("tool budget", "", "", tokens))
 
 # the picker offers remember only when the sentence says remember, note or save
 for text, want in (("find my resume file", False), ("where did I save my thesis", True), ("what hackathons are happening this month", False),

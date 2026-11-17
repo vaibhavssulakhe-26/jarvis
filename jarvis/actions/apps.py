@@ -36,7 +36,7 @@ def app_list():
             if f.name in seen:
                 continue
             try:
-                text = f.read_text(errors="ignore")
+                text = f.read_text(errors="ignore", encoding="utf-8")
             except OSError:
                 continue
             name, hidden, kind = None, False, ""

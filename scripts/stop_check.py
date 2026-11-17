@@ -358,7 +358,7 @@ importlib.reload(_config)
 heard_said = []
 with mock.patch.object(main.voice, "say", lambda t: heard_said.append(str(t))), mock.patch.object(main.config, "PET_NAME", "Vib"):
     main.greet()
-check("the greeting uses Vib", "Vib" in " ".join(heard_said), str(heard_said))
+check("the start-up line is facts only, no greeting", "Vib" not in " ".join(heard_said) and "duty" not in " ".join(heard_said), str(heard_said))
 with mock.patch.object(_brain.config, "PET_NAME", "Vib"), mock.patch.object(_brain.memory, "context", lambda t: ""):
     check("the chat prompt names Vib", "Vib" in _brain.chat_system("hello"))
 check("the voice says Vib as written", voice.pronounce("Hello Vib") == "Hello Vib")

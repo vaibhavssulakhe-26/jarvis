@@ -91,7 +91,7 @@ def build():
     now = datetime.now()
     pet = config.PET_NAME or "there"
     part = "morning" if now.hour < 12 else "afternoon" if now.hour < 17 else "evening"
-    parts = [(0, f"Good {part}, {pet}. It is {now:%A}, {now.day} {now:%B}.")]
+    parts = [(0, f"It is {now:%A}, {now.day} {now:%B}.")]
     parts.append((3, weather_line()))
     mine = today_reminders()
     if mine:
@@ -145,5 +145,7 @@ def watch(speak):
                     run(speak)
             except Exception as e:
                 print(f"  (morning briefing failed: {type(e).__name__})")
+                from .. import alerts
+                alerts.add("morning digest", "the morning digest failed: " + alerts.describe(e), quiet_for=3600)
             time.sleep(30)
     threading.Thread(target=loop, daemon=True).start()

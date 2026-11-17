@@ -19,7 +19,7 @@ def _have(tool):
 
 
 def _run(cmd, timeout=3):
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, encoding="utf-8", errors="replace")
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
@@ -124,7 +124,7 @@ def _kwin_active():
     if not _have("gdbus") or not _have("journalctl"):
         return None
     fd, path = tempfile.mkstemp(suffix=".js")
-    with os.fdopen(fd, "w") as f:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(KWIN_SCRIPT)
     name = "jarvis-active"
     kwin = ["gdbus", "call", "--session", "--dest", "org.kde.KWin", "--object-path"]
@@ -274,7 +274,7 @@ def _wp(*a):
 
 
 def volume_get():
-    r = subprocess.run(["wpctl", "get-volume", SINK], capture_output=True, text=True, timeout=5)
+    r = subprocess.run(["wpctl", "get-volume", SINK], capture_output=True, text=True, timeout=5, encoding="utf-8", errors="replace")
     m = re.search(r"([0-9.]+)", r.stdout)
     return round(float(m.group(1)) * 100) if m else None
 
@@ -321,7 +321,7 @@ def media_status():
     if not _have("playerctl"):
         return ""
     try:
-        return subprocess.run(["playerctl", "status"], capture_output=True, text=True, timeout=1.5).stdout.strip()
+        return subprocess.run(["playerctl", "status"], capture_output=True, text=True, timeout=1.5, encoding="utf-8", errors="replace").stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return ""
 
@@ -414,10 +414,10 @@ def install_schedule(name, command, every_minutes, description, workdir):
     unit.mkdir(parents=True, exist_ok=True)
     (unit / f"{name}.service").write_text(
         f"[Unit]\nDescription={description}\n\n[Service]\nType=oneshot\nWorkingDirectory={workdir}\n"
-        f"ExecStart={' '.join(str(c) for c in command)}\nMemoryMax=600M\nTimeoutStartSec=300\n")
+        f"ExecStart={' '.join(str(c) for c in command)}\nMemoryMax=600M\nTimeoutStartSec=300\n", encoding="utf-8")
     (unit / f"{name}.timer").write_text(
         f"[Unit]\nDescription={description}, every {every_minutes} minutes\n\n[Timer]\nOnBootSec=2min\n"
-        f"OnUnitActiveSec={every_minutes}min\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n")
+        f"OnUnitActiveSec={every_minutes}min\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n", encoding="utf-8")
     if not _have("systemctl"):
         return f"wrote the unit files in {unit}; systemctl is missing, so enable them yourself"
     subprocess.run(["systemctl", "--user", "daemon-reload"], timeout=15)
@@ -430,5 +430,5 @@ def install_autostart(name, command):
     folder = Path.home() / ".config" / "autostart"
     folder.mkdir(parents=True, exist_ok=True)
     (folder / f"{name}.desktop").write_text(
-        f"[Desktop Entry]\nType=Application\nName={name}\nExec={' '.join(str(c) for c in command)}\nX-GNOME-Autostart-enabled=true\n")
+        f"[Desktop Entry]\nType=Application\nName={name}\nExec={' '.join(str(c) for c in command)}\nX-GNOME-Autostart-enabled=true\n", encoding="utf-8")
     return f"autostart entry written to {folder / (name + '.desktop')}"

@@ -143,7 +143,7 @@ def research(args):
         md.append(f"{it['n']}. **{it['name']}** - {it['date']} - {it['place']}")
         if it["url"]:
             md.append(f"   {it['url']}")
-    path.write_text("\n".join(md) + "\n")
+    path.write_text("\n".join(md) + "\n", encoding="utf-8")
     speech = str(out.get("speech") or "").strip() or "I found a few options."
     return speech + " The full list is on screen and saved in your research folder."
 

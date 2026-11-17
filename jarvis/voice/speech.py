@@ -45,7 +45,8 @@ def too_long(text):
     return bool(STRUCTURED.search(t)) or "\n\n" in t.strip() or len(sentences(t)) > MAX_SENTENCES or len(t) > MAX_CHARS
 
 
-def shorten(spoken):
-    """At most two sentences are spoken; the full text stays on screen."""
+def shorten(spoken, limit=None):
+    """At most two sentences are spoken (`limit` allows more, as quality chat does); the full text stays on screen."""
+    limit = limit or SHORT_SENTENCES
     parts = sentences(spoken)
-    return " ".join(parts[:SHORT_SENTENCES]) if len(parts) > SHORT_SENTENCES else spoken
+    return " ".join(parts[:limit]) if len(parts) > limit else spoken

@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 
 from ..brain import brain
+from ..core import access
 from ..memory import rag
 from . import events, files
 from ..voice.speech import Full
@@ -68,6 +69,8 @@ def _docx(path):
 def extract(path):
     """Plain text of a PDF, text, markdown or Word file, cached until the file changes."""
     path = Path(path)
+    if access.denied(path):
+        raise ToolError("I am not allowed to open that file.")
     stamp = (path.stat().st_mtime, path.stat().st_size)
     hit = _text_cache.get(path)
     if hit and hit[0] == stamp:
@@ -79,7 +82,7 @@ def extract(path):
         text = _docx(path)
     elif kind in (".txt", ".md", ".csv", ".log", ".rtf"):
         try:
-            text = path.read_text(errors="replace")
+            text = path.read_text(errors="replace", encoding="utf-8")
         except OSError as e:
             print(f"  (could not read {path.name}: {e})")
             text = None

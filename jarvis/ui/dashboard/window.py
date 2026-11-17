@@ -10,19 +10,23 @@ from datetime import datetime
 import psutil
 from PyQt6.QtCore import QObject, QSize, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QIcon, QKeySequence, QPainter, QShortcut
-from PyQt6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QStackedWidget,
+from PyQt6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QSplitter, QStackedWidget,
                              QSystemTrayIcon, QToolButton, QVBoxLayout, QWidget)
 
 from ... import platform
-from ...actions import events, mpvctl
+from ...actions import events, mpvctl, web_agent
 from ...core import config, state
-from . import icons, pages, themes
+from ...voice import ptt
+from . import icons, pages, privacy, themes
 from .theme import Theme
-from .widgets import Clock, Waveform
+from .chat import ChatView
+from .widgets import Clock, MicMeter, Waveform
 
-NAV = (("Home", pages.Home), ("Media", pages.Media), ("Code", pages.Code), ("Notes", pages.Notes), ("Study", pages.Study), ("Jobs", pages.Jobs),
-       ("Web", pages.Web), ("Stats", pages.Stats), ("Settings", pages.Settings))
+NAV = (("Home", pages.Home), ("Chat", pages.Chat), ("Activity", pages.Activity), ("Media", pages.Media), ("Code", pages.Code), ("Notes", pages.Notes),
+       ("Study", pages.Study), ("Jobs", pages.Jobs), ("Web", pages.Web), ("Stats", pages.Stats), ("Settings", pages.Settings))
+RAIL_WIDTH = 56
 POLL_MS = 500
+DRAWER_WIDTH = 360
 PAGE_MS = 2000
 LOW_RAM_GB = 1.5
 CHIP_RAM_GB = 1.0
@@ -75,11 +79,13 @@ class Dashboard(QWidget):
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        root.addWidget(self._sidebar())
+        root.addWidget(self._rail())
         main = QVBoxLayout()
-        main.setContentsMargins(14, 10, 14, 10)
-        main.setSpacing(10)
+        main.setContentsMargins(14, 8, 14, 10)
+        main.setSpacing(8)
         main.addLayout(self._topbar())
+        self.pill_detail = self._pill_detail()
+        main.addWidget(self.pill_detail)
         self.confirm = pages.ConfirmBar(self.ctx)
         main.addWidget(self.confirm)
         self.stack = QStackedWidget()
@@ -89,11 +95,29 @@ class Dashboard(QWidget):
             self.stack.addWidget(page)
         main.addWidget(self.stack, 1)
         main.addLayout(self._bottombar())
-        root.addLayout(main, 1)
+        holder = QWidget()
+        holder.setLayout(main)
+        self.drawer = QFrame()
+        self.drawer.setObjectName("drawer")
+        dbox = QVBoxLayout(self.drawer)
+        dbox.setContentsMargins(8, 10, 8, 10)
+        self.dock_chat = ChatView(self.ctx, compact=True)
+        dbox.addWidget(self.dock_chat)
+        self.split = QSplitter(Qt.Orientation.Horizontal)
+        self.split.setChildrenCollapsible(False)
+        self.split.addWidget(holder)
+        self.split.addWidget(self.drawer)
+        self.split.setStretchFactor(0, 1)
+        self.split.setStretchFactor(1, 0)
+        self.split.setSizes([self.width() - RAIL_WIDTH - DRAWER_WIDTH, DRAWER_WIDTH])
+        self.split.splitterMoved.connect(lambda *_: self._size_timer.start(800))
+        root.addWidget(self.split, 1)
+        self.dock_open = bool(themes.load()[2].get("chat_dock", False))
 
         self.theme.changed.connect(self.restyle)
         self.restyle()
         QShortcut(QKeySequence("Ctrl+."), self).activated.connect(self.stop_all)
+        QShortcut(QKeySequence("Ctrl+J"), self).activated.connect(self.toggle_dock)
         QShortcut(QKeySequence("Ctrl+Q"), self).activated.connect(self.quit_all)
         QShortcut(QKeySequence("F11"), self).activated.connect(self.toggle_full)
         self.poll = QTimer(self)
@@ -109,31 +133,43 @@ class Dashboard(QWidget):
         self.check_ollama()
 
     # ---------- building ----------
-    def _sidebar(self):
-        side = QWidget()
-        side.setFixedWidth(176)
-        box = QVBoxLayout(side)
-        box.setContentsMargins(0, 14, 0, 14)
-        title = QLabel("J.A.R.V.I.S")
-        title.setObjectName("brand")
-        title.setContentsMargins(16, 4, 8, 16)
-        title.setMinimumHeight(40)
-        box.addWidget(title)
+    def _rail(self):
+        """A thin strip of icons down the left edge. Names are in the tooltips, not on screen."""
+        rail = QWidget()
+        rail.setFixedWidth(RAIL_WIDTH)
+        box = QVBoxLayout(rail)
+        box.setContentsMargins(0, 10, 0, 10)
+        box.setSpacing(2)
+        brand = QLabel("J")
+        brand.setObjectName("brand")
+        brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        brand.setMinimumHeight(36)
+        box.addWidget(brand)
         self.group = QButtonGroup(self)
         self.group.setExclusive(True)
         self.nav = {}
         for name, _ in NAV:
-            b = QPushButton("  " + name.upper())
-            b.setObjectName("nav")
-            b.setIconSize(QSize(20, 20))
+            b = QPushButton()
+            b.setObjectName("rail")
+            b.setIconSize(QSize(22, 22))
+            b.setToolTip(name)
+            b.setAccessibleName(name)
             b.setCheckable(True)
             b.clicked.connect(lambda _=False, n=name: self.go(n))
             self.group.addButton(b)
             self.nav[name] = b
             box.addWidget(b)
         box.addStretch(1)
+        self.dock_btn = QPushButton()
+        self.dock_btn.setObjectName("rail")
+        self.dock_btn.setIconSize(QSize(22, 22))
+        self.dock_btn.setCheckable(True)
+        self.dock_btn.setToolTip("Chat drawer (Ctrl+J)")
+        self.dock_btn.setAccessibleName("Chat drawer")
+        self.dock_btn.clicked.connect(self.toggle_dock)
+        box.addWidget(self.dock_btn)
         self.show_study()
-        return side
+        return rail
 
     def show_study(self):
         """The Study button appears only when STUDY=on."""
@@ -145,30 +181,38 @@ class Dashboard(QWidget):
         row = QHBoxLayout()
         self.clock_label = QLabel("")
         self.clock_label.setObjectName("clock")
-        self.ram_chip = QLabel("LOW RAM")
-        self.ram_chip.setObjectName("cap")
-        self.ram_chip.setContentsMargins(10, 2, 10, 2)
-        self.ram_chip.setVisible(False)
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("search notes")
-        self.search.setMaximumWidth(280)
-        self.search.returnPressed.connect(self.global_search)
-        self.chip = QLabel("")
-        self.chip.setObjectName("cap")
-        self.chip.setContentsMargins(10, 2, 10, 2)
-        self.brain_chip = QLabel("BRAIN " + config.brain_mode().upper())
-        self.brain_chip.setObjectName("cap")
-        self.brain_chip.setContentsMargins(10, 2, 10, 2)
+        self.pill = QPushButton("")
+        self.pill.setObjectName("pill")
+        self.pill.setCheckable(True)
+        self.pill.setToolTip("Status. Click for details.")
+        self.pill.clicked.connect(lambda on: (self.pill_detail.setVisible(bool(on)), self.update_pill()))
         self.theme_btn = QPushButton("THEME")
         self.theme_btn.clicked.connect(lambda: self.set_theme(themes.pick("next", self.theme.name if self.theme.name != "custom" else "")))
         row.addWidget(self.clock_label)
         row.addStretch(1)
-        row.addWidget(self.search)
-        row.addWidget(self.brain_chip)
-        row.addWidget(self.ram_chip)
-        row.addWidget(self.chip)
+        row.addWidget(self.pill)
         row.addWidget(self.theme_btn)
         return row
+
+    def _pill_detail(self):
+        frame = QFrame()
+        frame.setObjectName("pill_detail")
+        box = QVBoxLayout(frame)
+        box.setContentsMargins(14, 10, 14, 10)
+        self.pill_text = QLabel("")
+        self.pill_text.setFont(pages.mono(9))
+        box.addWidget(self.pill_text)
+        self.reveal = QCheckBox("Show phone numbers and email addresses")
+        self.reveal.toggled.connect(self.set_reveal)
+        box.addWidget(self.reveal)
+        frame.setVisible(False)
+        return frame
+
+    def set_reveal(self, on):
+        privacy.set_reveal(on)
+        for view in (self.dock_chat, self.pages["Chat"].view, self.pages["Home"].chat):
+            view.load()
+        self.refresh_page()
 
     def _bottombar(self):
         row = QHBoxLayout()
@@ -176,7 +220,11 @@ class Dashboard(QWidget):
         self.wave = Waveform(self.theme, self.clock)
         self.talk_btn = QPushButton("Talk to Jarvis")
         self.talk_btn.setObjectName("talk")
+        self.talk_btn.setToolTip("Hold to talk, release to send. A quick click listens for one command.")
         self.talk_btn.clicked.connect(self.talk)
+        self.talk_btn.pressed.connect(ptt.press)
+        self.talk_btn.released.connect(ptt.release)
+        self.meter = MicMeter(self.theme, self.clock)
         self.cmd = QLineEdit()
         self.cmd.setPlaceholderText("type a command, or say " + config.wake_label().title() + " ...")
         self.cmd.returnPressed.connect(self.send)
@@ -192,7 +240,7 @@ class Dashboard(QWidget):
         self.stop_btn = QPushButton("STOP")
         self.stop_btn.setObjectName("stop")
         self.stop_btn.clicked.connect(self.stop_all)
-        for w in (self.wave, self.talk_btn):
+        for w in (self.wave, self.meter, self.talk_btn):
             row.addWidget(w)
         row.addWidget(self.cmd, 1)
         row.addWidget(self.quick)
@@ -203,7 +251,8 @@ class Dashboard(QWidget):
     def restyle(self):
         self.setStyleSheet(self.theme.qss())
         for name, button in self.nav.items():
-            button.setIcon(icons.make(name, self.theme.accent if button.isChecked() else self.theme.text))
+            button.setIcon(icons.make(name, self.theme.accent_text if button.isChecked() else self.theme.text))
+        self.dock_btn.setIcon(icons.make("Chat", self.theme.accent_text if self.dock_btn.isChecked() else self.theme.text))
         self.update()
 
     def set_theme(self, name):
@@ -220,7 +269,7 @@ class Dashboard(QWidget):
 
     def paintEvent(self, ev):
         p = QPainter(self)
-        p.fillRect(self.rect(), self.theme.bg)
+        p.drawPixmap(0, 0, self.theme.backdrop(self.width(), self.height()))
 
     # ---------- low power, visibility ----------
     def apply_low_power(self):
@@ -252,14 +301,28 @@ class Dashboard(QWidget):
             self.sync_visibility()
 
     # ---------- navigation and refresh ----------
+    def toggle_dock(self):
+        self.dock_open = not self.dock_open
+        themes.save(chat_dock=self.dock_open)
+        self.sync_dock()
+
+    def sync_dock(self):
+        """The drawer shows on pages that have no chat of their own: Home and Chat already are the chat."""
+        own = self.stack.currentWidget() in (self.pages.get("Chat"), self.pages.get("Home"))
+        self.drawer.setVisible(self.dock_open and not own)
+        self.dock_btn.setChecked(self.dock_open)
+        self.dock_btn.setVisible(not own)
+        self.restyle()
+
     def go(self, name):
         self.nav[name].setChecked(True)
         self.restyle()
         self.stack.setCurrentWidget(self.pages[name])
+        self.sync_dock()
         self.refresh_page()
 
     def refresh_page(self):
-        self.brain_chip.setText("BRAIN " + config.brain_mode().upper())
+        self.update_pill()
         self.show_study()
         if not self.isVisible() and not os.environ.get("JARVIS_DASH_TEST"):
             return
@@ -271,33 +334,51 @@ class Dashboard(QWidget):
             traceback.print_exc()
         self.confirm.refresh() if page is not self.pages["Web"] else None
 
-    def global_search(self):
-        q = self.search.text().strip()
+    def global_search(self, q=""):
+        q = q.strip()
         notes = self.pages["Notes"]
         notes.search.setText(q)
         self.go("Notes")
         notes.do_search()
+
+    def update_pill(self):
+        """The one status pill: brain mode, what the ears are doing, and warnings. Its detail panel lists the rest."""
+        from ... import alerts
+        from ...brain import brain
+        n = alerts.count()
+        free = psutil.virtual_memory().available / 2 ** 30
+        parts = [config.brain_mode().upper(), "ERROR" if time.time() < self.error_until else self.ctx.mode.upper()]
+        if free < CHIP_RAM_GB:
+            parts.append("LOW RAM")
+        if n:
+            parts.append(f"{n} ALERT{'S' if n != 1 else ''}")
+        self.pill.setText("  \u00b7  ".join(parts))
+        if self.pill_detail.isVisible():
+            st = brain.provider_status()
+            names = {"groq": "Groq", "openrouter": "OpenRouter", "ollama": "Offline model"}
+            lines = [f"Mode      {config.brain_mode()}", f"Ears      {'cloud' if config.stt_cloud() else 'this laptop'}, {self.ctx.mode}",
+                     f"Memory    {free:.1f} GB free" + ("  (low power)" if self.clock.low else "")]
+            lines += [f"{names[k]:<10}{v}" for k, v in st.items()]
+            if n:
+                lines.append(f"Alerts    {n}, say show alerts")
+            self.pill_text.setText(privacy.show("\n".join(lines)))
 
     def tick(self):
         self._ticks += 1
         mode = current_mode()
         self.ctx.mode = mode
         orb_mode = mode if mode in ("listening", "thinking", "speaking") else "idle"
-        self.pages["Home"].orb.set_mode(orb_mode)
         err = time.time() < self.error_until
+        self.pages["Home"].orb.set_mode("error" if err else orb_mode)
         self.theme.set_state("error" if err else orb_mode if orb_mode != "speaking" else "idle")
-        colour = self.theme.bad if err else self.theme.accent
-        self.chip.setText(("ERROR" if err else mode.upper()))
-        self.chip.setStyleSheet(f"color: {colour.name()}; border: 1px solid {colour.name()}; border-radius: 9px;")
-        self.clock_label.setText(datetime.now().strftime("%a %d %b  %H:%M:%S").upper())
+        self.clock_label.setText(datetime.now().strftime("%a %d %b  %H:%M").upper())
         at = float(state.get("theme_at") or 0)
         if at > self.seen_theme:
             self.seen_theme = at
             self.theme.reload_saved()
         if self._ticks % 10 == 0:
             free = psutil.virtual_memory().available / 2 ** 30
-            self.ram_chip.setVisible(free < CHIP_RAM_GB)
-            self.ram_chip.setStyleSheet(f"color: {self.theme.bad.name()}; border: 1px solid {self.theme.bad.name()}; border-radius: 9px;")
+            self.update_pill()
             if free < LOW_RAM_GB and not self.low_auto:
                 self.low_auto = True
                 self.apply_low_power()
@@ -318,20 +399,26 @@ class Dashboard(QWidget):
 
     # ---------- events from the voice loop ----------
     def on_event(self, kind, text):
+        """Three separate records: the chat thread (ChatView), the activity log (system and routing) and the build log (the coder only)."""
         stamp = datetime.now().strftime("%H:%M")
         feed = self.ctx.feed
         if kind == "you":
-            feed.append(dict(time=stamp, heard=text, route="", provider=""))
+            feed.append(dict(time=stamp, heard=text, route="", provider="", tier=""))
             del feed[:-30]
         elif kind == "route" and feed:
             feed[-1]["route"] = text
         elif kind == "provider" and feed:
             feed[-1]["provider"] = text
-        elif kind in ("sys", "jarvis"):
-            self.ctx.log.append(f"{stamp} {'JARVIS' if kind == 'jarvis' else 'SYS'}  {text[:300]}")
-            del self.ctx.log[:-200]
+        elif kind == "tier" and feed:
+            feed[-1]["tier"] = text
+        if kind in ("sys", "route", "tool", "alert", "provider"):
+            self.ctx.activity.append(f"{stamp} {kind.upper():<8}{text[:300]}")
+            del self.ctx.activity[:-300]
             if kind == "sys" and any(w in text.lower() for w in ("error", "stopped", "failed")):
                 self.error_until = time.time() + ERROR_SECONDS
+        elif kind == "build":
+            self.ctx.build.append(f"{stamp}  {text[:2000]}")
+            del self.ctx.build[:-100]
 
     # ---------- commands ----------
     def run_command(self, text):
@@ -360,6 +447,7 @@ class Dashboard(QWidget):
     def stop_all(self):
         state.update(stop_at=time.time())
         mpvctl.stop()
+        web_agent.abort()
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
@@ -413,6 +501,8 @@ class Dashboard(QWidget):
         ui.shutdown_all()
         if self._listener in events.listeners:
             events.listeners.remove(self._listener)
+        for view in (self.dock_chat, self.pages["Chat"].view, self.pages["Home"].chat):
+            view.stop_listening()
         if self.tray is not None:
             self.tray.hide()
         if exit_process:
@@ -422,6 +512,7 @@ class Dashboard(QWidget):
 
 def run(with_core=True):
     from PyQt6.QtCore import QLockFile
+    os.environ.setdefault("QT_LOGGING_RULES", "qt.text.font.db=false")
     if platform.name() == "linux":
         os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
     lock = QLockFile(str(platform.lock_dir() / f"jarvis_ui{'_' + config.PROFILE if config.PROFILE else ''}.lock"))

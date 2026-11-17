@@ -58,6 +58,12 @@ def fake_route(messages, max_tokens=500, want_json=True, local=False):
 _real_route = brain.route
 
 
+def via_route(messages, max_tokens, hard=False, on_delta=None, want_json=False):
+    """Stands in for brain.generate: the probe measures the request, so it goes through whichever route is patched in."""
+    text, who = brain.route(messages, max_tokens, want_json)
+    return text, ("offline" if who == "ollama" else "fast") if text else None
+
+
 def spy_route(messages, max_tokens=500, want_json=True, local=False):
     entry = {"messages": messages, "json": want_json}
     calls.append(entry)
@@ -77,6 +83,9 @@ def run_one(text, setup="", live=False):
     brain.LAST_ACTION[0] = None
     mpv = setup == "mpv"
     patches = [mock.patch.object(brain.memory, "context", return_value=""),
+               mock.patch.object(brain, "generate", via_route),
+               mock.patch.object(brain, "quality", lambda: False),
+               mock.patch.object(brain, "_groq_tools", lambda *a, **k: (None, 0)),
                mock.patch.object(main, "do_tool", lambda a, args, spoken="": done.append(a)),
                mock.patch.object(main, "run_tool", lambda a, args, spoken: done.append(a)),
                mock.patch.object(main.voice, "say", lambda *a, **k: None),
@@ -108,7 +117,7 @@ def run_one(text, setup="", live=False):
         who = c.get("provider") or (providers[0] if providers else "mock")
         if c["json"]:
             system = c["messages"][0]["content"]
-            offered = [n for n in re.findall(r"^- (\w+):", system.split("Actions:")[-1], re.M) if n not in ("ask", "chat", "none")]
+            offered = [n for n in re.findall(r"^- (\w+):", system.split("Tools:")[-1], re.M) if n not in ("ask", "chat", "none")]
             return "tool:" + ",".join(offered), tokens, ms, "tool", who
         return "chat", tokens, ms, "chat", who
     return "local:" + (done[0] if done else "?"), 0, ms, "local", "local"

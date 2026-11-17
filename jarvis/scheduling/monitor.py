@@ -214,5 +214,7 @@ def watch():
                 run_due()
             except Exception as e:
                 print(f"  (watch check failed: {type(e).__name__})")
+                from .. import alerts
+                alerts.add("page watches", "the page watch check failed: " + alerts.describe(e), quiet_for=3600)
             time.sleep(30)
     threading.Thread(target=loop, daemon=True).start()

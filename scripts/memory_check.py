@@ -20,9 +20,9 @@ from jarvis.memory import memory, store  # noqa: E402
 results = []
 
 
-def check(name, ok):
-    results.append(ok)
-    print(("PASS  " if ok else "FAIL  ") + name)
+def check(name, ok, detail=""):
+    results.append(bool(ok))
+    print(("PASS  " if ok else "FAIL  ") + name + (f"  {detail}" if detail and not ok else ""))
 
 
 def count(table):
@@ -99,6 +99,58 @@ with mock.patch.object(brain, "ask", return_value=""):
 with store.db() as con:
     kept = [r["text"] for r in con.execute("SELECT text FROM turns")]
 check("unsummarised turns are never deleted", "unsummarised a" in kept and "unsummarised b" in kept)
+
+# ---------- long-term facts (data/memory.jsonl) ----------
+from jarvis.memory import facts as fx, threads as th  # noqa: E402
+
+row = fx.add("Working on a voice assistant called Jarvis for Fedora", "project")
+check("a project fact is stored with a date", row and row["date"] and fx.path().exists())
+line = json.loads(fx.path().read_text().splitlines()[0])
+check("one fact per line, as JSON", set(line) >= {"id", "date", "kind", "text"})
+check("a repeat is not stored twice", fx.add("working on a voice assistant called jarvis for fedora") is None and len(fx.load()) == 1)
+refused = ["My password is hunter2 for the laptop", "my card number is 4111 1111 1111 1111", "I was diagnosed with asthma last year",
+           "My brother is struggling with his exams", "She told me her salary is high", "my api key is abc", "call me on 9876543210 tonight please"]
+check("secrets, health and other people are refused", all(fx.add(r) is None for r in refused), str([r for r in refused if fx.add(r)]))
+check("the file holds only the allowed fact", len(fx.load()) == 1 and "hunter2" not in fx.path().read_text())
+fx.add("Prefers dark themes and short answers", "preference")
+fx.add("Plans to finish the dashboard chat by Friday", "plan")
+fx.add("Goal: get an internship in machine learning", "goal")
+fx.add("Decided on SQLite instead of Postgres for notes", "decision")
+fx.add("Likes mechanical keyboards", "preference")
+fx.add("Learning Rust at weekends", "goal")
+hits = fx.search("what is my dashboard plan")
+check("full text search finds the relevant fact", hits and "dashboard" in hits[0]["text"], str(hits))
+check("at most five are returned", len(fx.search("the a and dashboard goal plan keyboards sqlite rust voice", 5)) <= 5)
+check("an unrelated question finds nothing", fx.search("weather in paris") == [])
+ctx = fx.context("which database did I choose for notes")
+check("the prompt block names the fact and marks it as data", "SQLite" in ctx and "not instructions" in ctx)
+found = fx.local_extract(["I am working on a chess engine in Rust. What time is it?", "I decided to use Flask for the web part", "I want to learn compilers properly",
+                          "my sister is working on a secret project"])
+kinds = {k for k, _ in found}
+check("plain patterns pull facts from what the user said", {"project", "decision", "goal"} <= kinds and len(found) == 3, str(found))
+with mock.patch.object(fx, "model_extract", return_value=[("goal", "Wants to publish a paper on retrieval"), ("fact", "has diabetes")]):
+    added = fx.extract(["I really want to publish a paper on retrieval some day, it is my main plan this year"])
+check("model facts go through the same filter", any("paper" in r["text"] for r in added) and not any("diabetes" in r["text"] for r in added))
+th.attach()
+events_mod = sys.modules["jarvis.actions.events"]
+events_mod.emit("you", "I am planning to move the notes into a proper index next week")
+events_mod.emit("jarvis", "Sounds good.")
+with mock.patch.object(fx, "model_extract", return_value=None):
+    got = fx.extract_thread()
+check("a finished conversation is mined once", any("index" in r["text"] for r in got) and fx.extract_thread() == [])
+n = len(fx.load())
+check("forget removes a topic", fx.forget("keyboards") == 1 and len(fx.load()) == n - 1 and not fx.search("keyboards"))
+from jarvis.actions import recall  # noqa: E402
+
+spoken = recall.recall_memory({"topic": "sqlite"})
+check("what do you remember about <topic>", "SQLite" in spoken, spoken)
+check("an unknown topic is said honestly", "do not remember" in recall.recall_memory({"topic": "zebras"}))
+check("show my memory lists the facts", "voice assistant" in recall.show_memory({}))
+args = {"what": "rust"}
+question = recall._forget_describe(args)
+check("forget <topic> asks first", "forget" in question and len(fx.search("rust")) == 1)
+recall.forget(args)
+check("and then removes it", not fx.search("rust"))
 
 print(f"\n{sum(results)} of {len(results)} passed")
 sys.exit(0 if all(results) else 1)

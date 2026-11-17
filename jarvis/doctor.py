@@ -49,6 +49,21 @@ def live_level():
         return None
 
 
+def check_listening():
+    """The measured background level, the active mode and the speech detector."""
+    from .actions import events
+    from .core import state
+    from .voice import listen, ptt, vad
+    floor = events.mic.get("floor") or state.get("noise_floor")
+    backend = events.mic.get("vad") or vad.Detector().backend
+    key = ptt.key_name()
+    detail = (f"{listen.mode_label()} mode, background {floor:.3f}" if floor else f"{listen.mode_label()} mode, background not measured yet")
+    detail += f", detector {backend}, push to talk " + (key[4:] if key else "off")
+    if floor > 0.05:
+        return item("listening", WARN, detail, "The background is loud: lower the input volume, or try crowd mode or push to talk")
+    return item("listening", PASS, detail)
+
+
 def check_wake():
     files = config.wake_files()
     try:
@@ -130,6 +145,30 @@ def check_venv():
     return item("virtual environment", WARN, f"running from {active}", "Run: source .venv/bin/activate")
 
 
+def check_telegram():
+    from . import telegram
+    state = telegram.status()
+    if state == "off":
+        return item("telegram", PASS, "off")
+    if not telegram.token():
+        return item("telegram", WARN, "on, token not set", "Add TELEGRAM_BOT_TOKEN to .env (from @BotFather)")
+    if state == "not paired":
+        return item("telegram", WARN, "not paired", "Start Jarvis, then send the pairing code to your bot")
+    return item("telegram", PASS, "paired")
+
+
+def check_wiki():
+    from .research import wiki
+    why, detail = wiki.state()
+    if why == "off":
+        return item("offline wiki", PASS, "pack not set (optional)", "Set OFFLINE_WIKI to a ZIM file, see the README")
+    if why == "ready":
+        return item("offline wiki", PASS, f"pack found: {detail}")
+    if why == "no libzim":
+        return item("offline wiki", WARN, "pack found, python-libzim is not installed", "pip install libzim")
+    return item("offline wiki", WARN, f"pack not found: {detail}", "Check the OFFLINE_WIKI path in .env")
+
+
 def check_brain_mode():
     mode = config.brain_mode()
     return item("brain mode", PASS, mode, "")
@@ -141,10 +180,13 @@ def run(level=None, skip_mic=False):
     for make in (
         lambda: item("microphone", WARN, "skipped") if skip_mic else check_mic(level or live_level),
         check_wake,
+        check_listening,
         lambda: key_status("Groq key", "GROQ_API_KEY"),
         lambda: key_status("OpenRouter key", "OPENROUTER_API_KEY"),
         lambda: key_status("Gmail login", "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD"),
         check_brain_mode,
+        check_telegram,
+        check_wiki,
         check_ollama,
         lambda: check_tool("mpv", "sudo dnf install mpv"),
         lambda: check_tool("tesseract", "sudo dnf install tesseract"),

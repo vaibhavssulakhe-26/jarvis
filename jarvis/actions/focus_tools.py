@@ -73,7 +73,7 @@ def good_morning(args):
     now = datetime.now()
     part = "morning" if now.hour < 12 else "afternoon" if now.hour < 17 else "evening"
     who = config.PET_NAME
-    sentences = [f"Good {part}{', ' + who if who else ''}, it is {now:%A}, {now.day} {now:%B}."]
+    sentences = [f"It is {now:%A}, {now.day} {now:%B}."]
     mine = _today_reminders()
     if mine:
         sentences.append(f"You have {len(mine)} reminder{'s' if len(mine) > 1 else ''} today, starting with {mine[0]}.")
@@ -100,7 +100,7 @@ def quick_note(args):
     path = inbox_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     first = not path.exists()
-    with path.open("a") as f:
+    with path.open("a", encoding="utf-8") as f:
         if first:
             f.write("# Inbox\n\n")
         f.write(f"- [{datetime.now():%Y-%m-%d %H:%M}] {text}\n")

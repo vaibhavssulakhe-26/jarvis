@@ -10,6 +10,11 @@ def _draw(name, p):
     if name == "Home":
         p.drawPolyline(QPolygonF([QPointF(3, 10), QPointF(10, 3.5), QPointF(17, 10)]))
         p.drawPolyline(QPolygonF([QPointF(5, 9), QPointF(5, 16.5), QPointF(15, 16.5), QPointF(15, 9)]))
+    elif name == "Chat":
+        p.drawRoundedRect(QRectF(2.5, 3.5, 15, 10.5), 2, 2)
+        p.drawPolyline(QPolygonF([QPointF(6.5, 14), QPointF(6, 17.5), QPointF(10, 14)]))
+    elif name == "Activity":
+        p.drawPolyline(QPolygonF([QPointF(2.5, 11), QPointF(6, 11), QPointF(8, 5), QPointF(11, 16), QPointF(13, 9), QPointF(14.5, 11), QPointF(17.5, 11)]))
     elif name == "Media":
         p.drawEllipse(r)
         p.drawPolygon(QPolygonF([QPointF(8.5, 7), QPointF(8.5, 13), QPointF(13.5, 10)]))

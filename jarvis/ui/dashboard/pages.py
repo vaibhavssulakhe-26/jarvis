@@ -2,19 +2,21 @@
 import time
 from pathlib import Path
 from datetime import datetime
+from html import escape
 
 import psutil
 from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QPainter, QPen
-from PyQt6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPushButton, QSlider,
+from PyQt6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QSlider,
                              QSpinBox, QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget)
 
 from ...actions import coder, events, mpvctl, play, procs, stats, study
 from ...brain import brain
 from ...core import config, state
-from ...memory import notes as notes_store, rag
+from ...memory import facts, notes as notes_store, rag
 from ...scheduling import pomodoro, reminders
-from . import themes
+from ...voice import listen
+from . import privacy, themes
 from .theme import alpha
 from .widgets import MemoryGraph, Orb, Panel, RingGauge, mono
 
@@ -30,7 +32,8 @@ class Context:
         self.feed = []
         self.ollama = False
         self.mode = "idle"
-        self.log = []
+        self.activity = []
+        self.build = []
 
 
 def cap(text):
@@ -157,12 +160,26 @@ def agent_running(key):
     return False
 
 
+class Chat(Page):
+    """The full chat: conversation list on the left, the thread in the middle."""
+
+    def __init__(self, ctx):
+        super().__init__(ctx)
+        from .chat import ChatView
+        self.view = ChatView(ctx)
+        self.root.addWidget(self.view, 1)
+
+
 class Home(Page):
+    """The core as a background layer, glass panels on the left, and the chat as the main panel on the right."""
     FEED_ROWS = 12
 
     def __init__(self, ctx):
         super().__init__(ctx)
+        from .chat import ChatView
         t = ctx.theme
+        self.orb = Orb(t, ctx.clock, self)
+        self.orb.lower()
         row = QHBoxLayout()
         row.setSpacing(12)
         left = QVBoxLayout()
@@ -175,62 +192,71 @@ class Home(Page):
         gauges.box.addLayout(g)
         self.up = value_label("")
         gauges.box.addWidget(self.up)
-        prov = Panel(t, "Providers")
+        prov = Panel(t, "Brains")
         self.cards = [Card(t) for _ in range(3)]
         for c in self.cards:
             prov.box.addWidget(c)
-        mem = Panel(t, "Memory")
-        self.mem = value_label("")
-        mem.box.addWidget(self.mem)
-        core = Panel(t, "Core")
-        self.core = value_label("")
-        self.core.setTextFormat(Qt.TextFormat.RichText)
-        core.box.addWidget(self.core)
-        core.box.addStretch(1)
-        for w in (gauges, prov, mem):
-            left.addWidget(w)
-        left.addWidget(core, 1)
-        centre = QVBoxLayout()
-        self.orb = Orb(t, ctx.clock)
-        self.status = QLabel("")
-        self.status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status.setObjectName("state")
-        centre.addWidget(self.orb, 1)
-        centre.addWidget(self.status)
-        right = QVBoxLayout()
-        right.setSpacing(10)
-        feed = Panel(t, "Live feed")
-        self.feed = value_label("")
-        self.feed.setTextFormat(Qt.TextFormat.RichText)
-        self.feed.setAlignment(Qt.AlignmentFlag.AlignTop)
-        feed.box.addWidget(self.feed, 1)
-        agents = Panel(t, "Active agents")
-        self.agents = value_label("")
-        self.agents.setTextFormat(Qt.TextFormat.RichText)
-        agents.box.addWidget(self.agents)
-        brief = Panel(t, "Briefing and routines")
+        brief = Panel(t, "Briefing")
         self.brief = value_label("")
         self.brief.setTextFormat(Qt.TextFormat.RichText)
         self.brief.setWordWrap(True)
-        brief.box.addWidget(self.brief)
-        mission = Panel(t, "Mission timeline")
-        self.today = value_label("")
-        self.today.setTextFormat(Qt.TextFormat.RichText)
-        mission.box.addWidget(self.today)
-        right.addWidget(feed, 1)
-        right.addWidget(brief)
-        right.addWidget(agents)
-        right.addWidget(mission)
-        for col, stretch in ((left, 3), (centre, 6), (right, 3)):
-            holder = QWidget()
-            holder.setLayout(col)
-            col.setContentsMargins(0, 0, 0, 0)
-            row.addWidget(holder, stretch)
+        self.brief.setAlignment(Qt.AlignmentFlag.AlignTop)
+        brief.box.addWidget(self.brief, 1)
+        agents = Panel(t, "Agents")
+        self.agents = value_label("")
+        self.agents.setTextFormat(Qt.TextFormat.RichText)
+        agents.box.addWidget(self.agents)
+        left.addWidget(gauges)
+        left.addWidget(prov)
+        left.addWidget(brief, 1)
+        left.addWidget(agents)
+        holder = QWidget()
+        holder.setLayout(left)
+        holder.setFixedWidth(300)
+        self.left_holder = holder
+        left.setContentsMargins(0, 0, 0, 0)
+        chat = Panel(t, "Chat")
+        self.chat = ChatView(ctx, compact=True, header=False)
+        chat.box.addWidget(self.chat, 1)
+        chat.setMinimumWidth(420)
+        row.addWidget(holder)
+        row.addStretch(1)
+        row.addWidget(chat, 0)
+        chat.setMaximumWidth(560)
+        chat.setSizePolicy(chat.sizePolicy().horizontalPolicy(), chat.sizePolicy().verticalPolicy())
         self.root.addLayout(row, 1)
+        self.chat_panel = chat
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self.orb.setGeometry(0, 0, self.width(), self.height())
+        self.orb.lower()
+        left, right = self.left_holder.geometry().right(), self.chat_panel.geometry().left()
+        self.orb.box = QRectF(left, 0, max(200, right - left), self.height())
+
+    def refresh(self):
+        t = self.ctx.theme
+        dim, acc = t.dim.name(), t.accent_text.name()
+        self.cpu.set_value(psutil.cpu_percent(None))
+        self.ram.set_value(psutil.virtual_memory().percent)
+        self.disk.set_value(psutil.disk_usage("/").percent)
+        self.up.setText(f"free memory {psutil.virtual_memory().available / 2 ** 30:.1f} GB")
+        states = provider_states()
+        states.append(("Ollama", "connected" if self.ctx.ollama else "offline", "ok" if self.ctx.ollama else "bad", brain.LATENCY.get("ollama")))
+        for card, (name, label, level, lat) in zip(self.cards, states):
+            card.set(name, label, level, lat)
+        self.brief.setText(privacy.show(self.brief_html(dim, acc)))
+        lines = []
+        for name, key in AGENTS:
+            on = agent_running(key)
+            colour = t.ok.name() if on else dim
+            lines.append(f'<span style="color:{colour}">&#9679;</span> {name:<9}<span style="color:{colour}">{"running" if on else "idle"}</span>')
+        self.agents.setText("<br>".join(lines))
 
     def brief_html(self, dim, acc):
         from html import escape
-        from ...routines import load, morning
+        from ...routines import load, maildigest, morning
+        from ... import timetable
         got = morning.latest()
         if got:
             body = f'{escape(got["spoken"][:260])}'
@@ -241,22 +267,68 @@ class Home(Page):
             nxt = nxt[0] if nxt else (load() or [None])[0]
         except OSError:
             nxt = None
+        digest = maildigest.latest()
+        if digest and digest["at"][:10] == datetime.now().date().isoformat():
+            c = digest["counts"]
+            top = [r for r in digest["groups"]["needs"][:2]]
+            body += (f'<br><br><span style="color:{acc}">Email digest</span> {c["needs"]} need attention, {c["know"]} good to know, {c["promo"]} promotions'
+                     + "".join(f'<br>&nbsp;&nbsp;{escape(r["name"])}: {escape(r["subject"] or "(text withheld)")[:50]}' for r in top))
+        try:
+            soon = [d for d in timetable.due_within(7) if d["date"] >= datetime.now().date()][:2]
+            body += "".join(f'<br><span style="color:{dim}">due {escape(timetable.say_deadline(d))}</span>' for d in soon)
+        except OSError:
+            pass
         later = f'<br><span style="color:{dim}">next routine {nxt["time"]} {escape(nxt["name"])}</span>' if nxt else ""
         cmds = '<br><span style="color:%s">say: morning briefing, what is on my calendar, what is important in my email, list routines</span>' % dim
         return body + later + cmds
 
+
+class Activity(Page):
+    """What the system is doing: how each command was routed and answered, system messages, core facts and today's timeline. No conversation here."""
+    FEED_ROWS = 12
+
+    def __init__(self, ctx):
+        super().__init__(ctx)
+        t = ctx.theme
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        feed = Panel(t, "Routing")
+        self.feed = value_label("")
+        self.feed.setTextFormat(Qt.TextFormat.RichText)
+        self.feed.setAlignment(Qt.AlignmentFlag.AlignTop)
+        feed.box.addWidget(self.feed, 1)
+        log = Panel(t, "Activity log")
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setFont(mono(9))
+        log.box.addWidget(self.log, 1)
+        side = QVBoxLayout()
+        side.setSpacing(10)
+        core = Panel(t, "Core")
+        self.core = value_label("")
+        self.core.setTextFormat(Qt.TextFormat.RichText)
+        core.box.addWidget(self.core)
+        mem = Panel(t, "Memory")
+        self.mem = value_label("")
+        mem.box.addWidget(self.mem)
+        mission = Panel(t, "Today")
+        self.today = value_label("")
+        self.today.setTextFormat(Qt.TextFormat.RichText)
+        mission.box.addWidget(self.today)
+        for w in (core, mem, mission):
+            side.addWidget(w)
+        side.addStretch(1)
+        holder = QWidget()
+        holder.setLayout(side)
+        side.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(feed, 3)
+        row.addWidget(log, 4)
+        row.addWidget(holder, 3)
+        self.root.addLayout(row, 1)
+
     def refresh(self):
         t = self.ctx.theme
-        dim, acc = t.dim.name(), t.accent.name()
-        self.cpu.set_value(psutil.cpu_percent(None))
-        self.ram.set_value(psutil.virtual_memory().percent)
-        self.disk.set_value(psutil.disk_usage("/").percent)
-        self.up.setText(f"free memory {psutil.virtual_memory().available / 2 ** 30:.1f} GB")
-        states = provider_states()
-        states.append(("Ollama", "connected" if self.ctx.ollama else "offline", "ok" if self.ctx.ollama else "bad",
-                       brain.LATENCY.get("ollama")))
-        for card, (name, label, level, lat) in zip(self.cards, states):
-            card.set(name, label, level, lat)
+        dim, acc = t.dim.name(), t.accent_text.name()
         count = rag.count()
         stamp = rag.last_indexed()
         self.mem.setText(f"{count} notes and documents indexed<br>" + (
@@ -270,30 +342,23 @@ class Home(Page):
         self.core.setText("<br>".join(f'<span style="color:{dim}">{k:<9}</span>{v}' for k, v in info))
         rows = []
         for r in self.ctx.feed[-self.FEED_ROWS:][::-1]:
-            rows.append(f'<span style="color:{dim}">{r["time"]}</span> {r["heard"][:40]}<br>'
-                        f'&nbsp;&nbsp;<span style="color:{acc}">{r["route"] or "..."}</span> <span style="color:{dim}">{r["provider"]}</span>')
+            rows.append(f'<span style="color:{dim}">{r["time"]}</span> {escape(privacy.show(r["heard"][:40]))}<br>'
+                        f'&nbsp;&nbsp;<span style="color:{acc}">{r["route"] or "..."}</span> <span style="color:{dim}">{r["provider"]}</span> <span style="color:{acc}">{r.get("tier", "")}</span>')
         self.feed.setText("<br><br>".join(rows) or
-                          f'<span style="color:{dim}">Nothing heard yet.<br><br>Say "{config.wake_label().title()}" and ask for the time, '
-                          f'or type a command below. Every command shows up here with how it was routed and which brain answered.</span>')
-        self.brief.setText(self.brief_html(dim, acc))
-        lines = []
-        for name, key in AGENTS:
-            on = agent_running(key)
-            colour = t.ok.name() if on else dim
-            lines.append(f'<span style="color:{colour}">&#9679;</span> {name:<9}<span style="color:{colour}">{"running" if on else "idle"}</span>')
-        self.agents.setText("<br>".join(lines))
+                          f'<span style="color:{dim}">Nothing heard yet.<br><br>Every command shows up here with how it was routed and which brain answered.</span>')
+        self.log.setPlainText(privacy.show("\n".join(self.ctx.activity[-80:])) or "No activity yet.")
+        self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
         now = datetime.now()
         todo = sorted((r for r in reminders.pending() if datetime.fromisoformat(r["due"]).date() == now.date()), key=lambda r: r["due"])
-        out = [f'<span style="color:{acc}">&#9679;</span> {datetime.fromisoformat(r["due"]):%H:%M} {r["text"][:30]}' for r in todo[:3]]
+        out = [f'<span style="color:{acc}">&#9679;</span> {datetime.fromisoformat(r["due"]):%H:%M} {escape(r["text"][:30])}' for r in todo[:3]]
         out = out or [f'<span style="color:{dim}">&#9675; no reminders today: say "remind me to ... at 7 pm"</span>']
         cur = pomodoro.status()
         out.append(f'<span style="color:{acc}">&#9679;</span> focus {pomodoro.left() / 60:.0f} min left ({cur["kind"]})' if cur else
                    f'<span style="color:{dim}">&#9675; no focus timer: say "start focus 25"</span>')
         nxt = study.next_item()
-        out.append(f'<span style="color:{acc}">&#9679;</span> next: {nxt[:34]}' if nxt else
+        out.append(f'<span style="color:{acc}">&#9679;</span> next: {escape(nxt[:34])}' if nxt else
                    f'<span style="color:{dim}">&#9675; no roadmap yet: add data/roadmap.md</span>')
         self.today.setText("<br>".join(out))
-        self.status.setText(self.ctx.mode.upper())
 
 
 class Media(Page):
@@ -352,21 +417,19 @@ class Media(Page):
 
 
 class Code(Page):
+    """Left: the projects and what to build. Right: the build log and the run controls."""
+
     def __init__(self, ctx):
         super().__init__(ctx)
         t = ctx.theme
         row = QHBoxLayout()
+        row.setSpacing(12)
+        left = QVBoxLayout()
+        left.setSpacing(10)
         proj = Panel(t, "Projects")
         self.list = QListWidget()
         self.list.currentTextChanged.connect(self.pick)
         proj.box.addWidget(self.list, 1)
-        run = QHBoxLayout()
-        for text, fn in (("Run", lambda: ctx.run("run it")), ("Stop", lambda: procs.stop(coder.PROJECT)),
-                         ("Fix last error", lambda: ctx.run("fix the last error")), ("Git init", lambda: ctx.run("git init this project"))):
-            b = QPushButton(text)
-            b.clicked.connect(lambda _=False, f=fn: f())
-            run.addWidget(b)
-        proj.box.addLayout(run)
         build = Panel(t, "Build")
         self.box_in = QLineEdit()
         self.box_in.setPlaceholderText("a flask app that shows the time")
@@ -377,13 +440,25 @@ class Code(Page):
         line.addWidget(self.box_in, 1)
         line.addWidget(go)
         build.box.addLayout(line)
+        left.addWidget(proj, 1)
+        left.addWidget(build)
+        right = Panel(t, "Build log")
+        run = QHBoxLayout()
+        for text, fn in (("Run", lambda: ctx.run("run it")), ("Stop", lambda: procs.stop(coder.PROJECT)),
+                         ("Fix last error", lambda: ctx.run("fix the last error")), ("Git init", lambda: ctx.run("git init this project"))):
+            b = QPushButton(text)
+            b.clicked.connect(lambda _=False, f=fn: f())
+            run.addWidget(b)
+        right.box.addLayout(run)
         self.log = QTextEdit()
         self.log.setReadOnly(True)
         self.log.setFont(mono(9))
-        build.box.addWidget(cap("Build log"))
-        build.box.addWidget(self.log, 1)
-        row.addWidget(proj, 2)
-        row.addWidget(build, 3)
+        right.box.addWidget(self.log, 1)
+        holder = QWidget()
+        holder.setLayout(left)
+        left.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(holder, 2)
+        row.addWidget(right, 3)
         self.root.addLayout(row, 1)
 
     def pick(self, name):
@@ -405,10 +480,10 @@ class Code(Page):
             self.list.clear()
             self.list.addItems(names)
             self.list.blockSignals(False)
-        lines = [l for l in self.ctx.log[-60:]]
         folder = coder.last.get("dir")
         tail = procs.tail(folder / ".run.log", 12) if folder and (folder / ".run.log").exists() else ""
-        self.log.setPlainText("\n".join(lines) + (("\n--- run log ---\n" + tail) if tail else ""))
+        text = "\n".join(self.ctx.build[-30:]) + (("\n--- run log ---\n" + tail) if tail else "")
+        self.log.setPlainText(privacy.show(text) or "Nothing built yet. Type what to build on the left, for example: a flask app that shows the time.")
         self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
 
 
@@ -446,8 +521,16 @@ class Notes(Page):
         self.inbox.setReadOnly(True)
         self.inbox.setMaximumHeight(110)
         ip.box.addWidget(self.inbox)
+        mp = Panel(t, "Memory")
+        self.memory = QListWidget()
+        self.memory.setMaximumHeight(130)
+        forget = QPushButton("Forget selected")
+        forget.clicked.connect(self.forget_selected)
+        mp.box.addWidget(self.memory)
+        mp.box.addWidget(forget)
         side.addWidget(rp)
         side.addWidget(vp, 1)
+        side.addWidget(mp)
         side.addWidget(ip)
         row.addWidget(gp, 3)
         holder = QWidget()
@@ -505,10 +588,33 @@ class Notes(Page):
         if not self.results.count():
             self.results.addItem("nothing found")
 
+    def load_memory(self):
+        rows = facts.listing()
+        sig = tuple(r["id"] for r in rows)
+        if sig == getattr(self, "_mem_sig", None):
+            return
+        self._mem_sig = sig
+        self.memory.clear()
+        for r in rows[:100]:
+            item = QListWidgetItem(f"{r['date']}  {r['kind']}: {r['text']}")
+            item.setData(Qt.ItemDataRole.UserRole, r["id"])
+            self.memory.addItem(item)
+        if not rows:
+            self.memory.addItem("nothing remembered yet")
+
+    def forget_selected(self):
+        for item in self.memory.selectedItems():
+            fid = item.data(Qt.ItemDataRole.UserRole)
+            if fid:
+                facts.delete(fid)
+        self._mem_sig = None
+        self.load_memory()
+
     def refresh(self):
         self.load_graph()
+        self.load_memory()
         inbox = notes_store.NOTES_DIR / "inbox.md"
-        self.inbox.setPlainText("\n".join(inbox.read_text(errors="replace").splitlines()[-8:]) if inbox.exists() else "no inbox yet")
+        self.inbox.setPlainText("\n".join(inbox.read_text(errors="replace", encoding="utf-8").splitlines()[-8:]) if inbox.exists() else "no inbox yet")
 
 
 class Study(Page):
@@ -526,6 +632,9 @@ class Study(Page):
         quiz = QPushButton("Quiz me")
         quiz.clicked.connect(lambda: ctx.run("quiz me"))
         sc.box.addWidget(quiz)
+        review = QPushButton("Review due questions")
+        review.clicked.connect(lambda: ctx.run("review due questions"))
+        sc.box.addWidget(review)
         ci = Panel(t, "Daily check-in")
         form = QGridLayout()
         self.sleep = QLineEdit()
@@ -597,6 +706,12 @@ class Study(Page):
             colour = (t.bad if acc < study.WEAK_BELOW else t.ok).name()
             rows.append(f'{topic:<14}<span style="color:{colour}">{acc * 100:.0f}%</span> of {r["asked"]}')
         weak = study.weak_topics(data)
+        from ...actions import notes_quiz
+        cards = data.get("cards", [])
+        if cards:
+            due = len(notes_quiz.due_cards(data))
+            rows.append(f'<br><span style="color:{t.dim.name()}">notes cards: {len(cards)}, {due} due</span>')
+            rows += [f'weak: {name} <span style="color:{t.bad.name()}">{share * 100:.0f}%</span> right' for name, share in notes_quiz.weak_topics(data)]
         self.scores.setText("<br>".join(rows) or "no quizzes yet")
         self.streak.setText(f"streak {study.streak(data)} days" + (f"   weak: {', '.join(weak[:2])}" if weak else ""))
         lines, items = study.roadmap_items()
@@ -658,12 +773,32 @@ class Web(Page):
         st = Panel(t, "Browser agent")
         self.state = value_label("")
         st.box.addWidget(self.state)
+        row = QHBoxLayout()
+        self.goal = QLineEdit()
+        self.goal.setPlaceholderText("give the browser a task, for example: find the cheapest USB-C cable on amazon")
+        self.goal.returnPressed.connect(self.go)
+        go = QPushButton("Go")
+        go.clicked.connect(self.go)
+        self.stop = QPushButton("Stop")
+        self.stop.setObjectName("stop")
+        self.stop.clicked.connect(self.abort)
+        row.addWidget(self.goal, 1)
+        row.addWidget(go)
+        row.addWidget(self.stop)
+        st.box.addLayout(row)
         self.confirm = ConfirmBar(ctx)
         self.root.addWidget(st)
         self.root.addWidget(self.confirm)
+        sp = Panel(t, "Steps")
+        self.steps = QListWidget()
+        self.head = value_label("")
+        sp.box.addWidget(self.head)
+        sp.box.addWidget(self.steps, 1)
+        self.root.addWidget(sp, 1)
         rules = Panel(t, "Safety rules")
         rules.box.addWidget(value_label("Never types passwords, cards, codes or keys. Asks before submit, send, post, buy, delete and login clicks. "
-                                        "Asks before any download. Page text is data, never instructions. Own profile in data/browser-profile."))
+                                        "Asks before any download. Stops at a captcha. Page text is data, never instructions. "
+                                        "Ctrl+. , the Stop button, the word stop or AGENT_ABORT_KEY end a task. Own profile in data/browser-profile."))
         self.root.addWidget(rules)
         quick = QHBoxLayout()
         for text in ("close the browser", "new tab", "read this page"):
@@ -671,10 +806,20 @@ class Web(Page):
             b.clicked.connect(lambda _=False, c=text: ctx.run(c))
             quick.addWidget(b)
         self.root.addLayout(quick)
-        self.root.addStretch(1)
+        self._seen = None
+
+    def go(self):
+        text = self.goal.text().strip()
+        if text:
+            self.goal.clear()
+            self.ctx.run("use the browser to " + text)
+
+    def abort(self):
+        from ...actions import web_agent
+        web_agent.abort()
 
     def refresh(self):
-        from ...actions import browser
+        from ...actions import browser, web_agent
         if not browser.playwright_ok():
             msg = "Playwright is not installed. Run: pip install playwright"
         elif not browser.ready():
@@ -682,6 +827,19 @@ class Web(Page):
         else:
             msg = "browser open" if browser.active() else "browser closed, ready"
         self.state.setText(msg)
+        run = web_agent.RUN
+        self.stop.setEnabled(web_agent.running())
+        self.head.setText((f"{run['status'].upper()}  step {len(run['steps'])} of {web_agent.max_steps()}  {run['goal'][:80]}" if run["goal"] else "no task yet")
+                          + (f"\n{run['note'][:120]}" if run["note"] else ""))
+        sig = (len(run["steps"]), run["status"], tuple(run["plan"]))
+        if sig != self._seen:
+            self._seen = sig
+            self.steps.clear()
+            for i, s in enumerate(run["plan"], 1):
+                self.steps.addItem(f"plan {i}: {s}")
+            for s in run["steps"]:
+                self.steps.addItem(f"{s['n']}. {s['action']} {s['detail']} -> {s['result']}")
+            self.steps.scrollToBottom()
         self.confirm.refresh()
 
 
@@ -713,6 +871,9 @@ class Stats(Page):
             self.eval_text.setText(f"{ev['passed']}/{ev['total']} passed   {ev['avg_tokens']} tokens avg   {ev['date']}")
         else:
             self.eval_text.setText("no eval yet: python scripts/eval_phrases.py")
+        core = stats.core_rate()
+        if core:
+            self.eval_text.setText(self.eval_text.text() + f"   core {core['passed']}/{core['total']}")
         from ... import bench
         latest = bench.latest()
         self.bench.setText(bench.describe(latest) if latest else "no benchmark yet: python -m jarvis.bench")
@@ -764,7 +925,9 @@ class Settings(Page):
         self.cycle.toggled.connect(lambda on: window.set_ui_flag("cycle", on))
         self.mute = QCheckBox("Mute Jarvis's voice")
         self.mute.toggled.connect(lambda on: state.update(muted=bool(on)))
-        for w in (self.low, self.tint, self.cycle, self.mute):
+        self.crowd = QCheckBox("Crowd mode (wake word for every command, no follow-up window)")
+        self.crowd.toggled.connect(listen.set_crowd)
+        for w in (self.low, self.tint, self.cycle, self.mute, self.crowd):
             opt.box.addWidget(w)
         keys = Panel(t, "Keys")
         self.keys = value_label("")
@@ -820,7 +983,7 @@ class Settings(Page):
             b.blockSignals(True)
             b.setChecked(name == th.name)
             b.blockSignals(False)
-        for box, value in ((self.low, self.window.low_manual), (self.tint, th.state_colours), (self.cycle, th.cycle), (self.mute, state.get("muted"))):
+        for box, value in ((self.low, self.window.low_manual), (self.tint, th.state_colours), (self.cycle, th.cycle), (self.mute, state.get("muted")), (self.crowd, listen.crowd())):
             box.blockSignals(True)
             box.setChecked(bool(value))
             box.blockSignals(False)
@@ -833,4 +996,8 @@ class Settings(Page):
         if self._doctor["results"] is not None and not self._doctor["running"]:
             self.doctor_text.setText(self.doctor_html())
             self.doctor_btn.setEnabled(True)
-        self.keys.setText("\n".join(f"{k}: {'set' if config.get(k) else 'not set'}" for k in KEYS))
+        from ... import telegram
+        lines = [f"{k}: {'set' if config.get(k) else 'not set'}" for k in KEYS]
+        code = telegram.pairing_code()
+        lines.append("telegram: " + telegram.status() + (f", pairing code {code}" if code else ""))
+        self.keys.setText("\n".join(lines))

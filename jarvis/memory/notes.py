@@ -43,7 +43,7 @@ def _write_copy(topic):
     with store.db() as con:
         rows = con.execute("SELECT ts, text FROM notes WHERE lower(topic)=? ORDER BY id", (topic.lower(),)).fetchall()
     if rows:
-        path.write_text("".join(f"[{r['ts'][:16].replace('T', ' ')}] {r['text']}\n" for r in rows))
+        path.write_text("".join(f"[{r['ts'][:16].replace('T', ' ')}] {r['text']}\n" for r in rows), encoding="utf-8")
     elif path.exists():
         path.unlink()
     return path

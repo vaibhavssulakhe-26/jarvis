@@ -37,7 +37,7 @@ def profile_path():
 
 def read_profile():
     try:
-        text = profile_path().read_text()
+        text = profile_path().read_text(encoding="utf-8")
     except OSError:
         return ""
     return text

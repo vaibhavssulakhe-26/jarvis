@@ -124,7 +124,7 @@ def run_research(topic, max_pages=RESULTS):
     notes.NOTES_DIR.mkdir(parents=True, exist_ok=True)
     path = notes.NOTES_DIR / f"research-{notes._slug(topic)}.md"
     listing = "\n".join(f"[{i}] {site(u)} - {u}" for i, u in enumerate(links, 1))
-    path.write_text(f"# {topic}\n\nResearched {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n{note}\n\nSources\n{listing}\n")
+    path.write_text(f"# {topic}\n\nResearched {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n{note}\n\nSources\n{listing}\n", encoding="utf-8")
     copied = write_clip("\n".join(links))
     events.emit("sys", f"Research note saved: {path.name}")
     result = said + " I saved the cited note" + (" and put the links on your clipboard." if copied else ".")

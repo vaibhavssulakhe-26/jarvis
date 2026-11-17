@@ -6,6 +6,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from ..core import access
+
 HOME = Path.home()
 STANDARD = ("Downloads", "Documents", "Desktop", "Pictures")
 HINTS = {"downloads": "Downloads", "download": "Downloads", "desktop": "Desktop", "documents": "Documents",
@@ -93,7 +95,7 @@ def _walk_dirs(base, depth):
 
 def _skip_dir(entry):
     name = entry.name
-    return name.startswith(".") or name.lower() in SKIP_NAMES or any(entry.path.endswith(s) for s in SKIP_PATHS)
+    return access.denied(entry.path) or name.startswith(".") or name.lower() in SKIP_NAMES or any(entry.path.endswith(s) for s in SKIP_PATHS)
 
 
 def _files_under(base, depth, budget):
@@ -113,7 +115,7 @@ def _files_under(base, depth, budget):
                 if e.is_dir(follow_symlinks=False):
                     if level + 1 < depth and not _skip_dir(e):
                         stack.append((e.path, level + 1))
-                elif e.is_file() and not e.name.startswith("."):
+                elif e.is_file() and not e.name.startswith(".") and not access.denied(e.path):
                     yield e
             except OSError:
                 continue

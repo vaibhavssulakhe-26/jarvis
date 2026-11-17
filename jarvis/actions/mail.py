@@ -5,9 +5,10 @@ import email
 import imaplib
 import re
 import time
+from datetime import datetime
 from email import policy
 from email.message import EmailMessage
-from email.utils import parseaddr
+from email.utils import parseaddr, parsedate_to_datetime
 from urllib.parse import quote
 
 from ..brain import brain
@@ -79,13 +80,19 @@ def parse(raw, uid=""):
     msg = email.message_from_bytes(raw, policy=policy.default)
     name, address = parseaddr(str(msg.get("From", "")))
     body = _text_of(msg)
+    try:
+        ts = parsedate_to_datetime(str(msg.get("Date", ""))).timestamp()
+    except (TypeError, ValueError, IndexError):
+        ts = 0.0
+    bulk = bool(msg.get("List-Id")) or str(msg.get("Precedence", "")).lower() in ("bulk", "list", "junk")
     return {"uid": str(uid), "name": name or address, "address": address.lower(), "subject": str(msg.get("Subject", "")).strip(),
-            "body": body[:BODY_CHARS], "reply": bool(msg.get("In-Reply-To")),
+            "body": body[:BODY_CHARS], "reply": bool(msg.get("In-Reply-To")), "ts": ts, "bulk": bulk,
             "unsub": bool(msg.get("List-Unsubscribe")) or "unsubscribe" in body.lower()}
 
 
-def fetch(folder="inbox", limit=None):
-    """Headers and the first part of the text of the latest messages. Read only; messages stay unread."""
+def fetch(folder="inbox", limit=None, since=None):
+    """Headers and the first part of the text of the latest messages. Read only; messages stay unread.
+    With `since` (a date) it lists every message from that day on, read or not, instead of the unread ones."""
     if not configured():
         raise ToolError("Add GMAIL_ADDRESS and GMAIL_APP_PASSWORD to the .env file first. "
                         "The password is a Gmail app password, not your normal one.")
@@ -99,9 +106,10 @@ def fetch(folder="inbox", limit=None):
         status, _ = con.select(FOLDERS[folder], readonly=True)
         if status != "OK":
             raise ToolError("I could not open that mail folder.")
-        status, found = con.uid("SEARCH", None, "UNSEEN" if folder == "inbox" else "ALL")
+        wanted = f"SINCE {since:%d-%b-%Y}" if since else "UNSEEN" if folder == "inbox" else "ALL"
+        status, found = con.uid("SEARCH", None, wanted)
         every = (found[0] or b"").split() if status == "OK" else []
-        if folder == "inbox":
+        if folder == "inbox" and not since:
             LAST_UNREAD[0] = len(every)
         uids = every[-limit:]
         out = []
@@ -117,6 +125,13 @@ def fetch(folder="inbox", limit=None):
             con.logout()
         except (imaplib.IMAP4.error, OSError):
             pass
+
+
+def fetch_recent(hours=24, limit=50):
+    """The messages that arrived in the last `hours` hours, read or unread, newest first. Read only."""
+    cutoff = time.time() - hours * 3600
+    items = fetch("inbox", limit, since=datetime.fromtimestamp(cutoff).date())
+    return [m for m in items if m["ts"] >= cutoff or not m["ts"]]
 
 
 def _vip():

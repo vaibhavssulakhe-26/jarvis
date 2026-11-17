@@ -4,9 +4,11 @@ import threading
 import time
 from datetime import date, datetime
 
+from .. import alerts, telegram
+from ..actions import events
 from ..memory import store
 from ..scheduling import reminders
-from . import morning, run_due
+from . import find, maildigest, morning, run_due
 
 CHECK_SECONDS = 300
 
@@ -24,17 +26,43 @@ def announce(speak, now=None):
     return True
 
 
+def push(speak, now=None):
+    """The day's briefing goes to the dashboard and the phone once, then is spoken (see announce)."""
+    now = now or datetime.now()
+    got = morning.latest(now.date())
+    if got and store.claim("briefing_shown", now.date().isoformat()):
+        events.emit("sys", got["text"])
+        telegram.notify_once("briefing_pushed", got["text"])
+    return announce(speak, now)
+
+
+def deliver(done, speak):
+    """After scheduled routines ran: push a new briefing, speak and send a new digest."""
+    for name, ok, _ in done:
+        routine = find(name)
+        if not ok or not routine:
+            continue
+        if routine["action"] == "briefing":
+            push(speak)
+        elif routine["action"] == "maildigest":
+            got = maildigest.latest()
+            if got:
+                events.emit("sys", got["text"])
+                if got["counts"]["needs"] and not reminders.in_quiet(datetime.now()):
+                    speak(got["spoken"])
+
+
 def start(speak, first_delay=15):
     def loop():
         time.sleep(first_delay)
         first = True
         while True:
             try:
-                run_due()
+                deliver(run_due(), speak)
                 if first:
-                    announce(speak)
+                    push(speak)
                     first = False
             except Exception as e:
-                print(f"  (routines failed: {type(e).__name__})")
+                alerts.add("routines", "the routine loop failed: " + alerts.describe(e))
             time.sleep(CHECK_SECONDS)
     threading.Thread(target=loop, daemon=True).start()

@@ -27,14 +27,13 @@ def start():
                 if pct is not None:
                     if status == "discharging" and pct <= 20 and not warned and not _quiet():
                         warned = True
-                        voice.say(f"Heads up, {pet}. Battery is at {pct} percent and not charging. Charger time.")
+                        voice.say(f"Battery is at {pct} percent and not charging.")
                     elif status != "discharging" or pct >= 35:
                         warned = False
                 now = datetime.now()
                 if now.hour >= 23 and night_day != now.date() and not _quiet():
                     night_day = now.date()
-                    voice.say(f"It is past eleven, {pet}. Your code will still be broken tomorrow, "
-                              "but you will be much better at fixing it after sleep.")
+                    voice.say("It is past eleven.")
             except Exception as e:
                 print(f"  (companion check failed: {type(e).__name__})")
             time.sleep(30)

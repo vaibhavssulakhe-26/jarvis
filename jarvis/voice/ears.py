@@ -18,7 +18,7 @@ from .. import platform, redact
 from ..actions import events, mpvctl
 from ..core import config, state
 from ..scheduling import reminders
-from . import echo, stt, voice
+from . import echo, listen, ptt, stt, vad, voice
 
 SR = stt.SR
 BLOCK = 1280  # 80 ms of audio per step
@@ -149,6 +149,11 @@ def media_playing():
 
 
 class Ears:
+    vad = None
+    ep = None
+    suppress = False
+    floor = 0.0
+
     def __init__(self, on_command):
         """on_command(text, via_wake) runs for each command; return True if you expect a reply."""
         self.on_command = on_command
@@ -185,6 +190,10 @@ class Ears:
         except ValueError:
             self.gain = 4.0
         self.oww = self._load_wake()
+        self.vad = vad.Detector()
+        self.ep = None
+        self.floor = 0.0
+        self.suppress = listen.suppress()
         self.chime = make_chime()
 
     def _init_echo(self):
@@ -254,13 +263,19 @@ class Ears:
         self.loud = 0
         self.quiet = 0
         self.chimed = False
+        self._fresh_vad()
+
+    def _fresh_vad(self):
+        if self.vad is not None:
+            self.vad.reset()
+        self.ep = vad.Endpointer()
 
     def _after(self, seconds):
-        """Open the window where the next command needs no wake word. Playback keeps it shut."""
+        """Open the window where the next command needs no wake word. Playback and crowd mode keep it shut."""
         time.sleep(0.3)
         self._drain()
         self._reset_wake()
-        if seconds <= 0:
+        if seconds <= 0 or listen.crowd():
             self.awake_until = 0.0
         elif mpvctl.ducked() or mpvctl.playing():
             mpvctl.duck()
@@ -276,6 +291,8 @@ class Ears:
         where = "Groq" if stt.CLOUD else "this laptop"
         print(f"  listening for {config.wake_label().title()} (threshold {self.wake_thr}); "
               f"speech is transcribed on {where}. Ctrl+C to stop.")
+        print(f"  speech detector: {self.vad.backend}; mode: {listen.mode_label()}"
+              + (f"; hold {ptt.key_name()[4:]} to talk" if ptt.key_name() else ""))
         print(f"  speech can be cut off by: the wake word while talking (threshold {self.barge_thr:.2f}), "
               "the spoken words stop / quiet / enough, the STOP button or Ctrl+. in the window, "
               "or python -m jarvis.voice.voice --stop")
@@ -299,6 +316,12 @@ class Ears:
             self._drain()
             self._reset()
             return
+        if ptt.held() and self.phase != "ptt":
+            self._start_ptt(block, now)
+            return
+        if self.phase == "ptt":
+            self._holding(block, now)
+            return
         output = voice.SPEAKING.is_set() or (self.phase is None and self._media_now(now))
         if self.gate.feed(block_rms(block), output and self.phase is None, now) and self.phase is None:
             self._barge(block, now)
@@ -321,6 +344,25 @@ class Ears:
             self._waiting(block, rms, now)
         else:
             self._recording(block, rms, now)
+
+    def _start_ptt(self, block, now):
+        """The talk key went down: stop any speech and record until it comes up. No wake word needed."""
+        if voice.SPEAKING.is_set():
+            voice.stop()
+        self._drain()
+        self.via_wake, self.barge_rec = True, False
+        self._begin(now, "ptt", list(self.roll)[-3:] + [block])
+
+    def _holding(self, block, now):
+        self.buf.append(block)
+        events.set_level(block_rms(block))
+        over = len(self.buf) >= int(vad.max_record_seconds() / (BLOCK / SR))
+        if ptt.held() and not over:
+            return
+        if len(self.buf) < 6:
+            self._reset()  # a tap: the Talk button's click (talk_request) opens the usual listening window
+            return
+        self._finish()
 
     def _media_now(self, now):
         """media_playing() runs a subprocess, so it is asked at most once a second."""
@@ -354,7 +396,11 @@ class Ears:
         self.n += 1
         if self.n % 25 == 0 and len(self.noise) >= 50:
             floor = float(np.percentile(self.noise, 10))
-            self.thr = min(0.25, max(0.015, 3.0 * floor))
+            self.floor = floor
+            self.thr = listen.speech_threshold(floor, listen.crowd())
+            events.mic.update(floor=floor, thr=self.thr, mode=listen.mode_label(), vad=self.vad.backend)
+            if self.n % 250 == 0 and abs(state.get("noise_floor") - floor) > 0.002:
+                state.update(noise_floor=floor)
             if not self.reported:
                 self.reported = True
                 print(f"  background {floor:.3f}, speech threshold {self.thr:.3f}")
@@ -373,13 +419,13 @@ class Ears:
             print(f"  wake (score {score:.2f})")
             events.emit("sys", "wake word heard")
             self.via_wake = True
-            before = take_preroll(self.roll, self.thr)
+            before = None if listen.crowd() else take_preroll(self.roll, self.thr)
             if before:
                 print("  (speech before the wake word is kept)")
                 self._begin(now, "record", before)
             else:
                 self._begin(now, "wait")
-        elif now < self.awake_until:
+        elif now < self.awake_until and not listen.crowd():
             if rms > self.thr:
                 self.loud += 1
                 if self.loud >= 2:
@@ -398,6 +444,7 @@ class Ears:
         if self.loud >= 2:
             self.phase = "record"
             self.quiet = 0
+            self._fresh_vad()
             return
         if len(self.buf) > 6:
             del self.buf[:-6]
@@ -413,22 +460,29 @@ class Ears:
 
     def _recording(self, block, rms, now):
         self.buf.append(block)
-        self.quiet = self.quiet + 1 if rms < self.thr * 0.7 else 0
-        if self.quiet >= 10 or len(self.buf) >= (30 if self.barge_rec else 150):
-            audio = np.concatenate(self.buf).astype(np.float32) / 32768.0
-            via, barge = self.via_wake, self.barge_rec
-            self._reset()
-            if len(audio) >= int(0.5 * SR):
-                try:
-                    self._handle(audio, via, barge)
-                except Exception:
-                    traceback.print_exc()
-                    voice.say("Something broke on my side, but I am still here.")
-            self._drain()
-            self._reset_wake()
+        speech = self.vad.is_speech(block, rms, self.thr * 0.7, listen.crowd())
+        verdict = self.ep.feed(speech)
+        if verdict or (self.barge_rec and len(self.buf) >= 30):
+            self._finish()
+
+    def _finish(self):
+        """Process what was recorded and go back to idle. Nothing keeps recording after this."""
+        audio = np.concatenate(self.buf).astype(np.float32) / 32768.0
+        via, barge = self.via_wake, self.barge_rec
+        self._reset()
+        if len(audio) >= int(0.5 * SR):
+            try:
+                self._handle(audio, via, barge)
+            except Exception:
+                traceback.print_exc()
+                voice.say("Something broke on my side, but I am still here.")
+        self._drain()
+        self._reset_wake()
 
     def _handle(self, audio, via_wake, barge=False):
         t0 = time.time()
+        if self.suppress:
+            audio = vad.denoise(audio)
         raw = stt.transcribe(audio)
         t1 = time.time()
         text = drop_name(strip_wake(raw))
@@ -442,6 +496,9 @@ class Ears:
                 print(f"  (ignored while Jarvis was talking: {redact.mask(repr(text))})")
             return
         named = named_anywhere(raw) or any(is_name(w) or is_wake_word(w, 0.7) for w in raw.split()[:3])
+        if listen.crowd() and not (via_wake or named):
+            print(f"  (crowd mode, no wake word: {redact.mask(repr(text))})")
+            return
         if not bare:
             if via_wake or named:
                 print("  (nothing after the wake word)")

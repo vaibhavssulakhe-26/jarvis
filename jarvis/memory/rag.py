@@ -5,7 +5,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from ..core import config
+from ..core import access, config
 
 DB = config.DATA / "rag.db"
 KINDS = (".md", ".txt", ".pdf")
@@ -47,7 +47,8 @@ def scan():
         for p in sorted(root.rglob("*")):
             if len(found) >= MAX_FILES:
                 return found
-            if p.suffix.lower() in KINDS and p.is_file() and not any(part.startswith(".") for part in p.relative_to(root).parts):
+            rel = p.relative_to(root)
+            if p.suffix.lower() in KINDS and p.is_file() and not any(part.startswith(".") for part in rel.parts) and not access.denied(rel):
                 st = p.stat()
                 found[str(p)] = (st.st_mtime, st.st_size)
     return found
@@ -55,10 +56,12 @@ def scan():
 
 def read_text(path):
     path = Path(path)
+    if access.denied(path):
+        return ""
     if path.suffix.lower() == ".pdf":
         from ..actions import documents
         return documents.extract(path)
-    return path.read_text(errors="replace")
+    return path.read_text(errors="replace", encoding="utf-8")
 
 
 def split(text, size=CHUNK_CHARS):

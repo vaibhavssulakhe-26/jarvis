@@ -303,6 +303,9 @@ def take(text):
         return _take_checkin(t)
     if COMMANDISH.match(t):
         return None
+    if _session["kind"] == "notes":
+        from . import notes_quiz
+        return notes_quiz.take(t)
     if CONTROL_NEXT.match(t):
         return ask_next(_session["topic"])
     if CONTROL_SKIP.match(t):
@@ -397,7 +400,7 @@ def roadmap_path():
 def roadmap_items():
     """[(line index, done, text)] from data/roadmap.md; headings and prose are not items."""
     try:
-        lines = roadmap_path().read_text().splitlines()
+        lines = roadmap_path().read_text(encoding="utf-8").splitlines()
     except OSError:
         return None, []
     items = []
@@ -452,7 +455,7 @@ def roadmap_done(args):
     m = ITEM.match(lines[index])
     lines[index] = f"{m.group(1)}- [x] {text}"
     tmp = roadmap_path().with_name("roadmap.md.tmp")
-    tmp.write_text("\n".join(lines) + "\n")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
     os.replace(tmp, roadmap_path())
     after = next_item()
     return f"Marked {text} done." + (f" Next is {after}." if after else " That was the last one.")

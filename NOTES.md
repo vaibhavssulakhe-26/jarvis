@@ -25,6 +25,15 @@
 - Phase 15: `jarvis/platform/` (Linux and Mac backends), setup wizard and `scripts/install.sh`, profiles, `scripts/platform_check.py`, GitHub Actions on Ubuntu and macOS.
 - Phase 16: job helper (`jobs/`, `actions/job_tools.py`, Jobs page, `scripts/jobs_check.py`).
 
+- Phase 22: Telegram bot (`telegram.py`), `scripts/telegram_check.py`.
+- Phase 23: timetable, deadlines and the daily brief (`timetable.py`, `actions/planner_tools.py`, `scripts/timetable_check.py`). The old `scripts/schedule_check.py`
+  (briefing and page monitor) is unchanged; the new check has its own name.
+- Phase 24: email digest (`routines/maildigest.py`, `mail.fetch_recent`, `scripts/digest_check.py`).
+- Phase 25: study from notes (`actions/notes_quiz.py`, `scripts/study_notes_check.py`).
+- Phase 26: alerts and quick tasks (`alerts.py`, `tasks.py`, `scripts/alerts_check.py`).
+- Phase 27: offline Wikipedia (`research/wiki.py`, `scripts/wiki_check.py`).
+- Phase 28: web project helper (`actions/webproject.py`, `scripts/webproject_check.py`).
+
 ## Skipped
 Nothing was skipped. Parts that could not be fully exercised here:
 - OCR with a real tesseract: not installed on this laptop (`sudo dnf install tesseract`). The tool and its error path are tested with fakes.
@@ -150,3 +159,106 @@ Slimming was small on purpose (about 100 lines in `jarvis/`; the package grew by
   and `scripts/make_icon.py` are documented tools. Long `if` chains such as `main.fast_path` were left as they are, since a table would not be simpler.
 - The git tag `pre-slim` points at a snapshot commit of the working tree taken just before slimming (the tree was not committed to any branch; HEAD and the branch are
   unchanged). `git diff pre-slim` shows what slimming changed. Delete it with `git tag -d pre-slim` when you no longer need it.
+
+## Phases 19 to 21
+
+### Phase 19: listening in noise
+- `voice/vad.py`: Silero VAD (the model that ships with openwakeword, or `models/silero_vad.onnx`) through onnxruntime, then webrtcvad if installed
+  (it is not, here), then a loudness test. `Endpointer` ends a recording after 0.8 s of silence and caps it at `MAX_RECORD_SECONDS` (12); after either,
+  `Ears._finish` processes the audio and goes back to idle. `denoise` is the light spectral gate behind `NOISE_SUPPRESS` (off by default).
+- `voice/ptt.py`: hold `PTT_KEY` (evdev, needs the input group) or the dashboard Talk button, release to send, no wake word. A tap under 0.5 s is left to
+  the button's old click (`talk_request`).
+- `voice/listen.py`: crowd mode (`CROWD_MODE`, Settings checkbox, voice "crowd mode on/off"): wake word for every command, no follow-up window, no pre-roll,
+  higher threshold from the measured floor, and a model probability of 0.7 instead of 0.5. The saved choice is in `data/settings.json`.
+- Doctor has a `listening` line (mode, noise floor, detector, push-to-talk key); the dashboard bottom bar has a mic meter with ticks for the floor and the threshold.
+- `scripts/listen_check.py` (synthetic noise and a voiced-sounding signal).
+
+### Phase 20: chat, memory, quality
+- `memory/threads.py` (data/chats/<id>.json, redacted), `ui/dashboard/chat.py` (`ChatView`: bubbles, markdown, copy, streaming, list, file drops), the Chat page
+  and a collapsible dock on every other page. Typed and spoken lines share one thread through the event bus.
+- `brain.generate` is the tier ladder: larger Groq model (`GROQ_STRONG_MODEL`, 40 calls a day, rests a minute after a 429) for hard questions, then the fast
+  model, then OpenRouter and Ollama. The tier reaches the feed and the chat bubble through the `tier` event. Quality mode (`QUALITY_MODE`, on) is for chat
+  turns only; tool routing keeps its small prompt. `route_check` now measures the chat budget with quality off and has a separate, larger limit for quality on.
+- Streaming: `voice/stream.py` speaks the first sentence as soon as it is complete (`voice.speak_part`), `voice.say(skip=, limit=)` speaks the rest (four
+  sentences in quality mode); the full text stays in the chat.
+- `memory/facts.py` (data/memory.jsonl, SQLite FTS built in memory, top 5 per chat turn), refusing secrets, health words and anything about other people.
+  Facts are mined five quiet minutes after a conversation, on "new chat", and at exit (local rules only at exit). "what do you remember about X",
+  "show my memory", "forget X"; viewer and per-fact forget button on the Notes page.
+- Drop a PDF, text or image on the chat (`actions/attach.py`); secrets are masked, the file goes in as data.
+- `scripts/chat_check.py`, and fact tests added to `scripts/memory_check.py`.
+
+### Phase 21: browser agent
+- `actions/web_agent.py` (`browse_agent`, "use the browser to ..."): plan once on the strong tier, then up to `AGENT_MAX_STEPS` (12) fast-tier steps, each
+  looking at the accessibility tree (`aria_snapshot`) plus visible text. Two failures re-plan (twice at most). Actions reuse the browser tool's own checks.
+- Risky clicks, login pages and downloads ask through the normal pending yes/no; a captcha ends the task; typed text may not contain links the goal did not
+  contain. Stop: dashboard button, Ctrl+., the word stop, `AGENT_ABORT_KEY` (KEY_PAUSE, needs the input group).
+- Web page shows the plan and steps live. `scripts/agent_check.py` runs real headless Chrome against a local site with a scripted model.
+
+### What needs your real mic, speakers or browser
+- Push to talk with a real key (`PTT_KEY`, input group) and the Talk button held down; crowd mode in a noisy room; whether 0.8 s feels right; `NOISE_SUPPRESS`.
+- Streaming reply: the first sentence starting while the rest arrives; four spoken sentences in quality mode; the larger model on your actual Groq quota
+  (`openai/gpt-oss-120b` is the default name; change `GROQ_STRONG_MODEL` if your account lists another).
+- Chat look and feel, drops of a real PDF and image, memory extraction with the live model (the check only uses fakes).
+- The agent on real sites: confirmations by voice, the abort key, and a real login page. Sites that block automation will hit the captcha stop.
+
+### Decisions and limits
+- webrtcvad is not installed; the Silero path was tested. The loudness fallback is tested with synthetic audio only.
+- The chat dock and page keep the last 30 and 60 bubbles on screen; the full history is on disk.
+- Facts are deliberately conservative: any sentence with he, she, they, a family word, a health word or a number sequence is not stored.
+- The agent cannot click things that have no accessible name, and it does not handle iframes or file pickers.
+
+## Phases 22 to 28
+
+### What was built
+- Telegram: long polling with requests, six digit pairing, owner only, confirmations, send/delete/power never from the phone, agent tasks behind `TELEGRAM_ALLOW_AGENT`,
+  `/brief /email /tasks /status /stop`, notifications for the brief, the email digest, alerts and reminders. Replies are collected with `voice.capture()`.
+- Timetable and deadlines (two hand-editable files), quick tasks, the brief with classes, deadlines, tasks, the study set and a focus line, pushed at `BRIEFING_TIME`
+  to the dashboard, the voice and Telegram.
+- Email digest (rules first, one model call for the unclear ones, injection mail withheld), notes quizzes with Leitner boxes (PDFs work), alerts with a dashboard chip,
+  the offline Wikipedia pack, and the website helper (scaffold, accessibility pass, local preview, zip export).
+
+### Decisions
+- The digest time is `EMAIL_DIGEST_TIME`, not `DIGEST_TIME`: that name already belongs to the old weather and news digest in `scheduling/digest.py`.
+- The new timetable check is `scripts/timetable_check.py`; `scripts/schedule_check.py` already tested the old briefing and page monitor.
+- Telegram drops messages that arrived while Jarvis was off, so an old command can never run by surprise.
+- "what is X" goes to the offline pack only when `BRAIN=offline` and a pack is ready; "look up X" always uses it.
+- The accessibility pass changes only what is safe (lang, viewport, alt text from the file name, skip link, focus style) and keeps a `.bak`; contrast and heading order are only reported.
+- Brief budget: the prompt is trimmed to 640 estimated tokens and the answer capped at 150, so the one call stays under 800.
+
+### Known flakes and limits
+- `focus_check` failed once at the start of this work (do-not-disturb over D-Bus, `RuntimeError`) and passed on a later run; it depends on the session bus.
+- `schedule_check` has a time-of-day dependence: a run that crosses midnight failed "deadline reminder is flagged" and passed after midnight.
+- python-libzim is not installed here, so the libzim glue in `research/wiki.py` was tested against a fake module shaped like the documented API, not a real ZIM file.
+- Telegram was tested against a fake Bot API on localhost, never against Telegram itself.
+
+### Needs your real phone, mailbox, calendar, mic or browser
+- Phone: create the bot with @BotFather, pair, and try the commands from a second account (it must get no reply). Check that the confirmation wording reads well on a small screen
+  and that notifications arrive when the app is closed (they do not: only the running app sends them, except the systemd timer, which also sends the brief and digest).
+- Mailbox: the digest with your real Gmail (the `SINCE` search and the Date headers of real mail), and how well the rules sort your actual senders.
+- Calendar: the brief with `CALENDAR_ICS_URL` next to the timetable.
+- Mic: "quiz me from my notes" and "review due questions" by voice, answers spoken at normal speed, the follow-up window staying open between questions.
+- Browser: "preview it" in Chrome, a real site made by the coder with your real model (the check uses canned files), and the GitHub Pages and Netlify steps.
+- A real ZIM file with `pip install libzim` (title suggestions and full text search differ between files).
+
+### How to test
+See "How to test phases 22 to 28" in README.md.
+
+## Phases 30 and 31
+
+### Built
+- Agent core (`brain/agent.py`), truthful tool results, self block, outage handling with cause and reset time, "(offline)" prefix, file tools with the deny list, verified hand-off, UTF-8 everywhere,
+  filler removed (start-up greeting, jokes, motivational lines, briefing greeting), `scripts/core_check.py` (25 phrases plus extras) with the rate on the Stats page, `scripts/encoding_check.py`.
+- Dashboard v3: icon rail, slim top bar and status pill, Home with the orb as a background layer and the chat as the main panel, tool chips, streaming cursor, masking with a reveal switch, separate Chat,
+  Activity and Build logs, resizable drawer, Ice default theme with a charcoal grid and scan line layer, five distinct orb states, 4.5 to 1 contrast asserted for every theme, previews in `data/ui-previews/`.
+
+### Decisions
+- A confirmed tool (open_file and friends with a position) is run by the router after the yes; its own result sentence is spoken, not rephrased by the model.
+- The chat thread on disk is already redacted (memory/threads.py), so the reveal switch affects the activity and build logs, the briefing card and the status details, not saved chat text.
+- `route_check` and `evalkit` now allow six offered tools and ~900 tokens, because the spec asks for the top six. They patch `brain._groq_tools` so nothing reaches the network.
+- Proactive check-ins (off by default) now state facts about idle time; there are no jokes left.
+
+### Needs your real screen, mic or phone
+- Screen: the layout at your real resolution and scale, how the glow and orb look on your panel, Devanagari and Kannada glyphs (the font stack lists Noto fonts; Qt printed OpenType warnings for them here, which are silenced).
+- Mic: that the tool chips and the "(offline)" prefix read well spoken, and that a failed tool being reported in one sentence sounds right.
+- Providers: native function calling against your real Groq model (`GROQ_MODEL`; a model that rejects tools falls back to the JSON form), and the outage line with a real 429.
+- Phone: the hand-off outbox actually syncing to the phone, and Telegram confirmations for the new file tools.

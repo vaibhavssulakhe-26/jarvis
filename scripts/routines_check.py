@@ -137,7 +137,7 @@ check("calendar: only GET is ever used", re.search(r"requests\.(post|put|delete|
 
 # ---------- the routine file ----------
 rows = routines.load()
-check("defaults: three routines are created", [r["action"] for r in rows] == ["briefing", "triage", "reindex"], rows)
+check("defaults: four routines are created", [r["action"] for r in rows] == ["briefing", "maildigest", "triage", "reindex"], rows)
 check("defaults: the briefing uses BRIEFING_TIME", rows[0]["time"] == "07:45")
 check("data/routines.md exists and is plain text", (tmp / "routines.md").read_text().startswith("# Routines"))
 routines.add("21:30", "evening reindex", "reindex notes and PDFs")
@@ -148,7 +148,7 @@ try:
 except ValueError:
     check("an instruction nobody can run is refused", True)
 (tmp / "routines.md").write_text((tmp / "routines.md").read_text() + "- 25:99 | broken | triage\nnot a routine line\n")
-check("bad lines are skipped by the parser", len(routines.load()) == 4)
+check("bad lines are skipped by the parser", len(routines.load()) == 5)
 from jarvis.actions import routine_tools  # noqa: E402
 check("voice times parse", routine_tools.parse_when("at 9 pm reindex my notes")[0] == "21:00"
       and routine_tools.parse_when("reindex my notes at 7:15 am")[0] == "07:15")
@@ -161,7 +161,7 @@ names = [r["name"] for r in routines.due(now, state)]
 check("missed routines run once at startup", "morning briefing" in names and "nightly inbox triage" in names, names)
 state["last"] = {r["name"]: "2026-01-11T08:00:00" for r in routines.load()}
 check("nothing is due right after a run", routines.due(now, state) == [])
-check("a routine becomes due at its time", sorted(r["name"] for r in routines.due(datetime(2026, 1, 11, 23, 5), state)) == ["evening reindex", "nightly inbox triage"])
+check("a routine becomes due at its time", sorted(r["name"] for r in routines.due(datetime(2026, 1, 11, 23, 5), state)) == ["email digest", "evening reindex", "nightly inbox triage"])
 check("a routine added today does not replay old slots", routines.due(datetime(2026, 1, 10, 12, 30), {"since": "2026-01-10T12:00:00", "last": {}}) == [])
 
 ran = []

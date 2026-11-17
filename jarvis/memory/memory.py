@@ -330,7 +330,7 @@ def migrate():
     if not old.is_absolute():
         old = config.ROOT / old
     try:
-        facts = json.loads(old.read_text()).get("facts", [])
+        facts = json.loads(old.read_text(encoding="utf-8")).get("facts", [])
     except (OSError, ValueError, AttributeError):
         facts = []
     for fact in facts:
@@ -340,7 +340,7 @@ def migrate():
     if notes.is_dir():
         with store.db() as con:
             for f in sorted(notes.glob("*.txt")):
-                for line in f.read_text(errors="replace").splitlines():
+                for line in f.read_text(errors="replace", encoding="utf-8").splitlines():
                     m = re.match(r"\[([^\]]+)\] (.*)", line)
                     if line.strip():
                         con.execute("INSERT INTO notes(ts, topic, text) VALUES(?,?,?)",

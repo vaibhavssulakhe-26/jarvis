@@ -94,7 +94,7 @@ def wait_port(port, proc=None, timeout=15.0):
 
 def tail(path, lines=40, chars=2500):
     try:
-        text = Path(path).read_text(errors="replace")
+        text = Path(path).read_text(errors="replace", encoding="utf-8")
     except OSError:
         return ""
     return "\n".join(text.splitlines()[-lines:])[-chars:]

@@ -139,14 +139,14 @@ def meta_path(folder):
 
 def load_meta(folder):
     try:
-        data = json.loads(meta_path(folder).read_text())
+        data = json.loads(meta_path(folder).read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
 
 
 def save_meta(folder, meta):
-    meta_path(folder).write_text(json.dumps(meta, indent=1))
+    meta_path(folder).write_text(json.dumps(meta, indent=1), encoding="utf-8")
 
 
 def py_for(folder):
@@ -164,7 +164,7 @@ def unsafe_files(folder):
     """Source files holding something I will never run: sudo, rm -rf and similar."""
     out = []
     for p in source_files(folder):
-        if p.suffix in (".py", ".js", ".sh") and UNSAFE.search(p.read_text(errors="ignore")):
+        if p.suffix in (".py", ".js", ".sh") and UNSAFE.search(p.read_text(errors="ignore", encoding="utf-8")):
             out.append(p.name)
     return out
 
@@ -179,14 +179,14 @@ def write_project_file(folder, rel, body, backup=False):
         bak = Path(str(target) + ".bak")
         if not bak.exists():
             shutil.copy2(target, bak)
-    target.write_text(body[:MAX_CHARS])
+    target.write_text(body[:MAX_CHARS], encoding="utf-8")
 
 
 def requirements(folder):
     """(valid package specs, rejected lines) from requirements.txt. Options, URLs and paths are rejected."""
     good, rejected = [], []
     try:
-        lines = (Path(folder) / "requirements.txt").read_text().splitlines()
+        lines = (Path(folder) / "requirements.txt").read_text(encoding="utf-8").splitlines()
     except OSError:
         return [], []
     for line in lines:
@@ -235,7 +235,7 @@ def fix_once(folder, meta, output, request, hint=None, backup=False):
                           system=FILE_SYSTEM + " " + KIND_NOTES.get(meta.get("kind"), ""))
         old = ""
     else:
-        old = target.read_text(errors="ignore")
+        old = target.read_text(errors="ignore", encoding="utf-8")
         if len(old) > MAX_CHARS:
             return None
         text = brain.code(f"Project: {request}\nFile {rel}:\n{old}\n\nRunning it failed with:\n{output[-1800:]}\n\nFix the problem.",
@@ -251,7 +251,7 @@ def fix_once(folder, meta, output, request, hint=None, backup=False):
 
 def _run_py(folder, args, seconds, **env):
     return subprocess.run([py_for(folder)] + args, cwd=folder, env=procs.clean_env(**env), capture_output=True, text=True,
-                          timeout=seconds, stdin=subprocess.DEVNULL)
+                          timeout=seconds, stdin=subprocess.DEVNULL, encoding="utf-8", errors="replace")
 
 
 def _combined(r):
@@ -267,7 +267,7 @@ def start_server(folder, meta):
     else:
         cmd = [py, "-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", str(port)]
     log = Path(folder) / ".run.log"
-    log.write_text("")
+    log.write_text("", encoding="utf-8")
     proc = procs.spawn(PROJECT, cmd, folder, procs.clean_env(PORT=port, PYTHONUNBUFFERED=1), log)
     return port, proc
 
@@ -292,7 +292,7 @@ def verify(folder, meta):
     if not (Path(folder) / entry).is_file():
         return False, f"{entry} is missing.", entry
     if kind == "static":
-        page = (Path(folder) / "index.html").read_text(errors="ignore")
+        page = (Path(folder) / "index.html").read_text(errors="ignore", encoding="utf-8")
         if not page.strip():
             return False, "index.html is empty.", "index.html"
         for ref in re.findall(r"""(?:src|href)=["']([^"'#:?]+)["']""", page):
@@ -300,7 +300,7 @@ def verify(folder, meta):
                 return False, f"index.html refers to {ref}, which does not exist.", ref
         if shutil.which("node"):
             for js in sorted(Path(folder).glob("*.js")):
-                r = subprocess.run(["node", "--check", str(js)], capture_output=True, text=True, timeout=30)
+                r = subprocess.run(["node", "--check", str(js)], capture_output=True, text=True, timeout=30, encoding="utf-8", errors="replace")
                 if r.returncode:
                     return False, r.stderr.strip(), js.name
         return True, "The page and the files it uses are there.", None
@@ -368,7 +368,7 @@ def check_and_fix(folder, meta, request, log, backup=False):
 def report(folder, ok, fixes, out, log, count=None):
     """One spoken sentence or two; the whole log goes to the screen and the clipboard."""
     full = "\n".join(log) + ("" if ok else "\n\nLast output:\n" + out[-1500:])
-    events.emit("sys", full)
+    events.emit("build", full)
     from .screen import write_clip
     write_clip(full)
     head = f"Built {count} file{'s' if count != 1 else ''} in {Path(folder).name}, saved at {folder}." if count else f"Updated {Path(folder).name}, saved at {folder}."
@@ -483,7 +483,7 @@ def install_deps(args):
         if not (venv / "bin" / "python").exists():
             subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, capture_output=True, timeout=120)
         r = subprocess.run([str(venv / "bin" / "python"), "-m", "pip", "install", "--disable-pip-version-check", "-q"] + pkgs,
-                           cwd=folder, env=procs.clean_env(), capture_output=True, text=True, timeout=400)
+                           cwd=folder, env=procs.clean_env(), capture_output=True, text=True, timeout=400, encoding="utf-8", errors="replace")
     except (subprocess.SubprocessError, OSError) as e:
         raise ToolError(f"I could not set up the environment: {type(e).__name__}.")
     if r.returncode:
@@ -538,7 +538,7 @@ def diff_summary(old, new):
 def stage(path, new, then_say):
     """Hold a change until the user says yes, using the shared yes or no question."""
     from ..core import main as core
-    old = path.read_text(errors="ignore")
+    old = path.read_text(errors="ignore", encoding="utf-8")
     if new.strip() == old.strip():
         return "That would not change anything."
     edit.clear()
@@ -556,7 +556,7 @@ def apply_edit(args):
     path, new = edit["path"], edit["new"]
     edit.clear()
     shutil.copy2(path, str(path) + ".bak")
-    path.write_text(new)
+    path.write_text(new, encoding="utf-8")
     return f"Done. The old version is saved as {path.name}.bak."
 
 
@@ -566,7 +566,7 @@ def edit_file(args):
     if not change:
         raise ToolError("What should I change?")
     path = locate(args.get("file"), ("edit_file", {"change": change}))
-    old = path.read_text(errors="ignore")
+    old = path.read_text(errors="ignore", encoding="utf-8")
     if len(old) > MAX_CHARS:
         raise ToolError("That file is too big for me to edit in one go.")
     text = brain.code(f"File {path.name}:\n{old}\n\nChange to make: {change}", FILE_TOKENS, system=EDIT_SYSTEM)
@@ -579,14 +579,14 @@ def check(path):
     """The compiler or linter output for a file, empty when it is clean. Raises ToolError for other languages."""
     ext = Path(path).suffix.lower()
     if ext == ".py":
-        r = subprocess.run([sys.executable, "-m", "py_compile", str(path)], capture_output=True, text=True, timeout=30)
+        r = subprocess.run([sys.executable, "-m", "py_compile", str(path)], capture_output=True, text=True, timeout=30, encoding="utf-8", errors="replace")
         out = r.stderr
         if r.returncode == 0:
-            lint = subprocess.run([sys.executable, "-m", "pyflakes", str(path)], capture_output=True, text=True, timeout=30)
+            lint = subprocess.run([sys.executable, "-m", "pyflakes", str(path)], capture_output=True, text=True, timeout=30, encoding="utf-8", errors="replace")
             out = lint.stdout if "No module named" not in lint.stderr else ""
         return out.strip()
     if ext in (".js", ".mjs") and shutil.which("node"):
-        r = subprocess.run(["node", "--check", str(path)], capture_output=True, text=True, timeout=30)
+        r = subprocess.run(["node", "--check", str(path)], capture_output=True, text=True, timeout=30, encoding="utf-8", errors="replace")
         return r.stderr.strip() if r.returncode else ""
     raise ToolError("I can check Python files, and JavaScript when node is installed.")
 
@@ -610,7 +610,7 @@ def find_bugs(args):
         if clipwatch.ERROR.search(text):
             return debug.debug_clipboard({"kind": "error"})
         scratch = config.runtime_file("clip_check" + (".js" if re.search(r"\b(const|let|function)\b|=>", text) else ".py"))
-        scratch.write_text(text)
+        scratch.write_text(text, encoding="utf-8")
         path, from_clip = scratch, True
     else:
         path, from_clip = locate(raw, ("find_bugs", {})), False
@@ -618,7 +618,7 @@ def find_bugs(args):
         output = check(path)
         if not output:
             return f"I found no errors in {'the clipboard code' if from_clip else path.name}."
-        lines = path.read_text(errors="ignore").splitlines()
+        lines = path.read_text(errors="ignore", encoding="utf-8").splitlines()
         a, b = error_window(output, lines)
         snippet = "\n".join(lines[a:b])
         reply = brain.code(f"Errors:\n{output[:1200]}\n\nLines {a + 1} to {b}:\n{snippet}", 800, system=BUG_SYSTEM)
@@ -629,7 +629,7 @@ def find_bugs(args):
         new_lines = lines[:a] + _fence(fixed).splitlines() + lines[b:]
         new = "\n".join(new_lines) + "\n"
         probe = path.with_name("probe_" + path.name)
-        probe.write_text(new)
+        probe.write_text(new, encoding="utf-8")
         try:
             still = check(probe)
         finally:
@@ -653,7 +653,7 @@ def run_target(args):
         raise ToolError("I only run files inside the code workspace.")
     if path.suffix.lower() not in (".py", ".js"):
         raise ToolError("I can run Python and JavaScript files. Open web pages in the browser instead.")
-    if re.search(r"\bsudo\b", path.read_text(errors="ignore")):
+    if re.search(r"\bsudo\b", path.read_text(errors="ignore", encoding="utf-8")):
         raise ToolError("That file uses sudo, so I will not run it.")
     return path
 
@@ -737,7 +737,7 @@ def run_background(folder, meta):
         open_web(web_url(port))
         return f"{Path(folder).name} is running and open in your browser. Say stop it when you are done."
     log = Path(folder) / ".run.log"
-    log.write_text("")
+    log.write_text("", encoding="utf-8")
     procs.spawn(PROJECT, [py_for(folder), meta.get("entry") or "main.py"], folder, procs.clean_env(), log)
     time.sleep(1.5)
     if not procs.alive(PROJECT):
@@ -756,14 +756,14 @@ def run_project(args):
     exe = [sys.executable] if path.suffix == ".py" else [shutil.which("node") or "node"]
     try:
         r = subprocess.run(exe + [str(path)], cwd=path.parent, capture_output=True, text=True,
-                           timeout=RUN_SECONDS, stdin=subprocess.DEVNULL, env=procs.clean_env())
+                           timeout=RUN_SECONDS, stdin=subprocess.DEVNULL, env=procs.clean_env(), encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired:
         return f"It was still running after {RUN_SECONDS} seconds, so I stopped it."
     except OSError:
         raise ToolError("I could not start that.")
     out = (r.stdout or "").strip().splitlines()
     err = (r.stderr or "").strip().splitlines()
-    events.emit("sys", "\n".join(out[-15:] + err[-15:]))
+    events.emit("build", "\n".join(out[-15:] + err[-15:]))
     if r.returncode:
         last["error"] = "\n".join(err[-40:])
         return "It failed: " + (err[-1][:160] if err else f"exit code {r.returncode}") + ". Say fix the last error to repair it."
@@ -818,7 +818,7 @@ def add_feature(args):
         if i:
             time.sleep(GAP)
         path = folder / rel
-        old = path.read_text(errors="ignore") if path.exists() else ""
+        old = path.read_text(errors="ignore", encoding="utf-8") if path.exists() else ""
         if len(old) > MAX_CHARS:
             continue
         prompt = (f"Project: {request}\nFeature to add: {feature}\n"
@@ -843,7 +843,7 @@ def add_feature(args):
 @tool("explain_file", 'args {"file": "<file name, or empty for the last project file>"} - explain what a code file does in a few sentences; for "explain this file", "explain main.py"')
 def explain_file(args):
     path = locate(args.get("file"), ("explain_file", {}))
-    text = path.read_text(errors="ignore")
+    text = path.read_text(errors="ignore", encoding="utf-8")
     if not text.strip():
         raise ToolError(f"{path.name} is empty.")
     reply = brain.code(f"File {path.name}:\n{text[:6000]}\n\nExplain in three short spoken sentences what this file does and how it is organised. "
@@ -862,10 +862,10 @@ def git_init_project(args):
         raise ToolError("Git is not installed.")
     if (folder / ".git").exists():
         return f"{folder.name} is already a git repository."
-    r = subprocess.run(["git", "init", "-q", "-b", "main"], cwd=folder, capture_output=True, text=True, timeout=30, env=procs.clean_env())
+    r = subprocess.run(["git", "init", "-q", "-b", "main"], cwd=folder, capture_output=True, text=True, timeout=30, env=procs.clean_env(), encoding="utf-8", errors="replace")
     if r.returncode:
         raise ToolError("Git could not start a repository there.")
     ignore = folder / ".gitignore"
     if not ignore.exists():
-        ignore.write_text(".venv/\n__pycache__/\n*.pyc\n*.bak\n.run.log\n.jarvis.json\n")
+        ignore.write_text(".venv/\n__pycache__/\n*.pyc\n*.bak\n.run.log\n.jarvis.json\n", encoding="utf-8")
     return f"Started a local git repository in {folder.name}. Nothing is committed and there is no remote."

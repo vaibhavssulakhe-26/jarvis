@@ -97,9 +97,9 @@ def download_voice(name, dest, fetch=urllib.request.urlopen):
 
 def read_env(path=ENV):
     try:
-        return path.read_text().splitlines()
+        return path.read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
-        return EXAMPLE.read_text().splitlines() if EXAMPLE.exists() and path == ENV else []
+        return EXAMPLE.read_text(encoding="utf-8").splitlines() if EXAMPLE.exists() and path == ENV else []
 
 
 def write_env(values, path=ENV):
@@ -116,7 +116,7 @@ def write_env(values, path=ENV):
         else:
             lines.append(new)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
-    with os.fdopen(fd, "w") as f:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
 

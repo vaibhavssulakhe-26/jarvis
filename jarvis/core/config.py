@@ -12,7 +12,7 @@ ENV_FILE = ROOT / ".env"
 
 def _read_env(path):
     try:
-        lines = path.read_text().splitlines()
+        lines = path.read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
         return
     for line in lines:
@@ -28,7 +28,7 @@ def _profile_name():
     name = os.environ.get("JARVIS_PROFILE", "")
     if not name:
         try:
-            m = re.search(r"^JARVIS_PROFILE\s*=\s*(\S+)", ENV_FILE.read_text(), re.M)
+            m = re.search(r"^JARVIS_PROFILE\s*=\s*(\S+)", ENV_FILE.read_text(encoding="utf-8"), re.M)
             name = m.group(1).strip("\"'") if m else ""
         except OSError:
             name = ""

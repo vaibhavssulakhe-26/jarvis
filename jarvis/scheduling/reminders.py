@@ -318,6 +318,8 @@ def notify(text):
     platform.notify("Reminder", text, urgent=True)
     pet = config.PET_NAME or "Hey"
     voice.say(f"{pet}, reminder: {text}.")
+    from .. import telegram
+    telegram.notify(f"Reminder: {text}")
 
 
 def watch(on_due):
@@ -333,6 +335,8 @@ def watch(on_due):
                     sweep(on_due)
             except Exception as e:
                 print(f"  (reminder check failed: {type(e).__name__})")
+                from .. import alerts
+                alerts.add("reminders", "the reminder check failed: " + alerts.describe(e), quiet_for=3600)
             time.sleep(1)
     threading.Thread(target=loop, daemon=True).start()
 
