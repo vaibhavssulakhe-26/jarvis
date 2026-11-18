@@ -262,3 +262,27 @@ See "How to test phases 22 to 28" in README.md.
 - Mic: that the tool chips and the "(offline)" prefix read well spoken, and that a failed tool being reported in one sentence sounds right.
 - Providers: native function calling against your real Groq model (`GROQ_MODEL`; a model that rejects tools falls back to the JSON form), and the outage line with a real 429.
 - Phone: the hand-off outbox actually syncing to the phone, and Telegram confirmations for the new file tools.
+
+## Phases 32 to 35 (holo, 3D models)
+
+### Phase 32: holo bridge client
+- `jarvis/holo.py` runs `<HANDCTL_DIR>/.venv/bin/python bridge.py open|load NAME|reset|close` and checks the viewer's socket only by connecting to it (no token read, no port, nothing listened on).
+  Tools in `actions/holo_tools.py`: open_holo, show_model, reset_holo, close_holo. Doctor line `holo: ready / not set up`.
+- handctl's viewer only loads files from its own `models/` folder and reads that folder once at start. So `show` links `models/<name>/model.stl` into `<HANDCTL_DIR>/models/jarvis-<name>.stl`
+  (a symlink, no copy, no handctl code touched) and restarts the viewer when the name is new to it. This writes symlinks into handctl's models folder; delete `jarvis-*.stl` there to undo.
+- The bridge answers ok as soon as a load is queued, so an unknown name is only seen on the viewer's own screen. Jarvis therefore checks names itself first. `bridge.py open` returns before the camera is
+  opened, so a busy camera shows up only as the socket never appearing; Jarvis waits 12 s and then says the viewer did not start. It cannot say the camera is the cause.
+- A viewer Jarvis started is closed at exit (atexit) and by "close holo"; one that was already running is left alone at exit.
+- After a good build, `modeler._show` shows the model only when `HOLO_AUTO=on` (default off; it starts the camera viewer); otherwise it says "Say show it to view it on the hologram."
+- Checks use `scripts/fakes/fake_handctl.py` (a fake bridge.py whose viewer holds a real Unix socket) so nothing touches the real viewer or `handctl/models`.
+- Not verified here: the real viewer with a real camera, that the viewer loads a symlinked STL (its `scan` uses `is_file()`, which follows links), and that a restart is quick enough.
+
+### Phases 33 to 35: built
+- `actions/modeler.py`, `scripts/model_check.py` (about 70 checks), 11 model and holo phrases in `core_check`, README section, `.env.example`, doctor line for openscad.
+- Checked once with the real openscad 2021.01: a cube with a hole builds and reports correctly, a syntax error gives the one-line error.
+
+### Needs the real thing
+- openscad with real model code from your brain (quality of the .scad, how often the first compile fails), the slicer (`flatpak run com.prusa3d.PrusaSlicer` is the default and untested here),
+  and the camera and holo viewer once the bridge exists.
+- The wall thickness estimate samples 60 rays and skips meshes over 40000 faces; treat it as a hint.
+

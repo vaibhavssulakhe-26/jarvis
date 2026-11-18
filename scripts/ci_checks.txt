@@ -46,5 +46,6 @@ digest_check
 study_notes_check
 wiki_check
 webproject_check
+model_check
 core_check
 encoding_check linux

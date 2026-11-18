@@ -39,6 +39,13 @@ TRIGGERS = {
     "list_tasks": "tasks task todo list",
     "task_done": "task done finished complete",
     "clear_done_tasks": "tasks done clear finished",
+    "open_holo": "holo hologram viewer open start",
+    "show_model": "show hologram holo model display view",
+    "reset_holo": "reset hologram holo view",
+    "close_holo": "close hologram holo viewer stop",
+    "make_model": "model design 3d stl openscad print make create bracket stand holder case",
+    "revise_model": "model taller shorter wider thicker thinner longer hole holes add change revise bigger smaller",
+    "prepare_print": "print slicer approve approved prepare",
     "make_website": "website web site page landing build make create hackathon",
     "preview_site": "preview serve site website",
     "stop_preview": "preview stop site website",
@@ -251,6 +258,7 @@ CATEGORIES = {
     "web and research": ("live_answer", "research_topic", "web_search", "wiki_answer"),
     "browser control": ("browse_agent", "browse_open"),
     "coding": ("build_project", "make_website"),
+    "3d models": ("make_model", "revise_model", "prepare_print", "show_model", "open_holo"),
     "study": ("quiz_me", "quiz_from_notes", "review_due"),
     "system": ("system_status", "battery", "lock_screen", "open_app"),
     "screen": ("describe_screen", "read_screen", "screenshot", "read_clipboard"),
@@ -589,6 +597,6 @@ def restart(args):
 
 
 # these modules register their tools on import, so they must load after the registry above
-from . import (apps, briefing, browser, capabilities, clipwatch, coder, debug, diag_tools, documents, file_tools, focus_tools, guard_tools, handoff, job_tools, listen_tools, mail, media, messaging,  # noqa: E402,F401
-               notes, notes_quiz, palette_tools, play, planner_tools, proactive_tools, rag_tools, recall, reminder_tools, routine_tools, screen, stats, study, theme_tools, translate, voice_tools, watches, web_agent, webproject)
+from . import (apps, briefing, browser, capabilities, clipwatch, coder, debug, diag_tools, documents, file_tools, focus_tools, guard_tools, handoff, holo_tools, job_tools, listen_tools, mail, media, messaging,  # noqa: E402,F401
+               modeler, notes, notes_quiz, palette_tools, play, planner_tools, proactive_tools, rag_tools, recall, reminder_tools, routine_tools, screen, stats, study, theme_tools, translate, voice_tools, watches, web_agent, webproject)
 from ..research import live, research, topic, wiki  # noqa: E402,F401

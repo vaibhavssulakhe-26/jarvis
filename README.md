@@ -213,6 +213,21 @@ resizable chat drawer (Ctrl+J). Text reads at 4.5 to 1 or better in every theme.
   "preview it" serves the folder on a free local port and opens it; "stop preview" stops it; "export it" makes a zip and prints the GitHub Pages and Netlify steps.
   Jarvis never deploys, pushes or publishes anything.
 
+## 3D models (design only)
+Say "make a 3D model of a bracket 40 by 20 millimeters" and Jarvis has the brain write OpenSCAD, builds `models/<name>/v1/model.stl` and checks it:
+size in millimeters, the printer bed (`BED_SIZE`, default 220x220x250), watertight, thin walls, loose or tiny pieces and big overhangs. The latest files are
+also copied to `models/<name>/model.scad`, `model.stl` and `description.md`; every revision keeps its own `v2`, `v3` folder.
+- Install: `sudo dnf install openscad`, and a slicer such as `flatpak install flathub com.prusa3d.PrusaSlicer`. `python -m jarvis.doctor` shows whether openscad is found.
+- Phrases: "make a 3D model of a phone stand" (for a phone, screw or similar it asks for the real measurement once), "make it 5 mm taller", "add a hole",
+  then "this is good" or "let's print it".
+- Jarvis will: write and build the model, tell you the size, copy the STL to `models/ready/` and open it in the slicer (`SLICER_CMD`, default
+  `flatpak run com.prusa3d.PrusaSlicer`). It says "Printing is yours to start."
+- Jarvis will not: talk to a printer in any way (no serial, OctoPrint or G-code upload; `scripts/model_check.py` scans for it). From Telegram it can build and
+  revise models but cannot open the slicer. The only thing sent out is the brain call that writes the `.scad`; with `BRAIN=offline` the local model writes it.
+- Hologram: "open holo", "show the bracket", "reset the hologram", "close holo" drive handctl's holo viewer through its local bridge (`HANDCTL_DIR`, default `~/Documents/handctl`, with its own
+  `.venv`). Set `HOLO_AUTO=on` to open every new model on the hologram by itself (off by default: Jarvis says "show it" to view). New models are linked into handctl's `models/` folder as `jarvis-<name>.stl`. A viewer Jarvis started is closed when Jarvis exits. `python -m jarvis.doctor` shows `holo: ready` or `not set up`.
+- Code the brain writes is refused when it reads a file outside `models/` or has a shell call. Builds stop after 60 seconds and 3 GB of memory.
+
 ## Wake word
 
 The wake phrase is "Hey Jarvis" (`WAKE_WORD=hey_jarvis`).

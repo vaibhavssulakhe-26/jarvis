@@ -22,6 +22,29 @@ from jarvis.voice import voice  # noqa: E402
 
 bad = []
 
+# the whole check runs on a fixed clock: Wednesday 18 November 2026, 10:00
+NOW = datetime(2026, 11, 18, 10, 0)
+
+
+class FixedDate(date):
+    @classmethod
+    def today(cls):
+        return NOW.date()
+
+
+class FixedDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return NOW
+
+
+import datetime as _dt  # noqa: E402
+
+for _mod in [m for n, m in list(sys.modules.items()) if n.startswith("jarvis") and m]:
+    for _name, _real, _fake in (("date", _dt.date, FixedDate), ("datetime", _dt.datetime, FixedDateTime)):
+        if getattr(_mod, _name, None) is _real:
+            setattr(_mod, _name, _fake)
+
 
 def check(name, ok, detail=""):
     print(("ok   " if ok else "FAIL ") + name + (f"  {detail}" if detail and not ok else ""))
@@ -51,7 +74,7 @@ check("class parse bare afternoon hour", timetable.parse_class("friday 2 to 4 ne
 check("class without a day asks", isinstance(timetable.parse_class("9 to 10 physics"), str))
 
 # the real weekday of today gets a class so the tools (which read the clock) have something to say
-wd = date.today().weekday()
+wd = today.weekday()
 name = timetable.DAYS[wd].title()
 other = timetable.DAYS[(wd + 2) % 7].title()
 with voice.capture() as out:
@@ -75,7 +98,7 @@ check("direct: today's schedule", "Algorithms" in said("what's today's schedule"
 check("direct: what's due is empty at first", "No deadlines" in said("what's due this week"))
 reply = said("add deadline DSA assignment on friday")
 check("add deadline by voice", "Saved" in reply and (tmp / "deadlines.md").exists(), reply)
-tomorrow = date.today() + timedelta(days=1)
+tomorrow = today + timedelta(days=1)
 reply = said(f"add deadline lab report on {tomorrow.day} {timetable.MONTHS[tomorrow.month - 1]}")
 check("deadline with a date in words", "tomorrow" in reply, reply)
 check("add deadline without a date asks", "Which date" in said("add deadline something on whenever"))
@@ -90,7 +113,7 @@ check("list tasks", "2 open tasks" in said("list tasks"), said("list tasks"))
 check("done by number", "buy a cable" in said("done 1"))
 check("done out of range", "1 open task" in said("done 7"))
 check("clear done", "Cleared 1" in said("clear done"))
-check("tasks file has the date", date.today().isoformat() in (tmp / "tasks.md").read_text())
+check("tasks file has the date", today.isoformat() in (tmp / "tasks.md").read_text())
 
 # the brief
 captured = {}
@@ -102,7 +125,7 @@ def fake_ask(prompt, tokens, system=None, **kw):
 
 
 with mock.patch.object(brain, "ask", fake_ask):
-    result = morning.build(datetime.now())
+    result = morning.build(NOW)
 total = brain.estimate([{"role": "system", "content": captured["system"]}, {"role": "user", "content": captured["prompt"]}]) + captured["tokens"]
 check("one brain call for the whole brief", captured["calls"] == 1)
 check("brief stays under 800 tokens in and out", total < 800, str(total))
@@ -111,7 +134,7 @@ check("brief note has the new sections", all(h in result["text"] for h in ("## C
 check("spoken brief is at most three sentences", len(morning.sentences(result["spoken"])) <= 3)
 
 with mock.patch.object(brain, "ask", side_effect=RuntimeError("no brain")):
-    plain = morning.build(datetime.now())
+    plain = morning.build(NOW)
 check("no brain gives a template", plain["source"] == "template" and "Algorithms" in plain["spoken"] or "Due soon" in plain["spoken"], plain["spoken"])
 check("template names a focus", "Focus on" in plain["spoken"] or "Next up" in plain["spoken"], plain["spoken"])
 check("template is at most three sentences", len(morning.sentences(plain["spoken"])) <= 3, plain["spoken"])

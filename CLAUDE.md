@@ -294,3 +294,12 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
 - Dashboard v3: `ui/dashboard/window.py` (icon rail, slim top bar with `pill`, QSplitter drawer, `backdrop` painted by the window), `theme.py` (`readable`, `contrast_pairs`, `backdrop`, `accent_text`, `surface`),
   `themes.py` (Ice default, charcoal), `privacy.py` (`show`, reveal), `pages.py` (`Home` with the orb as a background layer and `chat`, `Activity`, `Code`), `chat.py` (cards, chips from the `tool` event, cursor).
   Events: `sys`, `route`, `tool`, `alert`, `provider` go to Activity; `build` to the Code page; the chat thread only holds the conversation. Colour values live only in `themes.py`.
+- 3D models: `actions/modeler.py` (`make_model`, `revise_model`, `prepare_print`). The brain writes OpenSCAD through `brain.code`; `unsafe` refuses reads outside `models/`, shell calls and
+  empty drawings; `compile_scad` runs the openscad CLI (60 s, 3 GB limit, `_run` is what the checks replace); `inspect` uses trimesh and numpy for size, `BED_SIZE`, watertight, wall estimate,
+  loose pieces and overhangs. Files live in `models/<slug>/v<N>/` plus latest copies; a compile error is retried once with the first error line. A real-world fit word with no number
+  makes `make_model` ask once (`take_answer`). `prepare_print` copies to `models/ready/` and starts `SLICER_CMD`; nothing in `jarvis/` may talk to a printer (`model_check` greps for it).
+  Telegram: `prepare_` is in `NEVER`. After a good build the model is shown on the hologram only when `HOLO_AUTO` is on; otherwise the line ends with "Say show it to view it on the hologram."
+- Holo: `holo.py` (HANDCTL_DIR, bridge.py through handctl's venv python, `show` links the model into `<handctl>/models/jarvis-<name>.stl` and restarts the viewer for a new name, `stop` at exit only
+  closes a viewer Jarvis started) and `actions/holo_tools.py` (`open_holo`, `show_model`, `reset_holo`, `close_holo`). The `show ...` DIRECT entry sits first so "show the bracket" is not a video search.
+  Checks must use `scripts/fakes/fake_handctl.py` and set `HANDCTL_DIR`, or a build would start the real viewer.
+

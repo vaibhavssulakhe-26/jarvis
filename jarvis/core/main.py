@@ -10,10 +10,10 @@ import threading
 import time
 from datetime import datetime, timedelta
 
-from ..actions import apps, browser, events, web_agent, capabilities, clipwatch, coder, files, mail, mpvctl, play, procs, study, tools
+from ..actions import apps, browser, events, web_agent, capabilities, clipwatch, coder, files, mail, modeler, mpvctl, play, procs, study, tools
 from ..brain import agent, brain, companion
 from . import config, state
-from .. import telegram, traces
+from .. import holo, telegram, traces
 from ..research import live as research_live, topic as research_topic, wiki as research_wiki
 from ..jobs import interview
 from ..routines import find as routines_find, runner as routine_runner
@@ -245,6 +245,23 @@ def _waiting():
 
 
 DIRECT = [
+    (re.compile(r"^(?:please )?(?:open|start|launch|turn on) (?:the )?(?:holo|hologram|holo ?gram viewer|holo viewer)$", re.I), "open_holo", lambda m: {}),
+    (re.compile(r"^(?:please )?(?:close|stop|turn off|shut down|exit) (?:the )?(?:holo|hologram|holo viewer)$", re.I), "close_holo", lambda m: {}),
+    (re.compile(r"^(?:please )?reset (?:the )?(?:holo|hologram|holo view|hologram view)$", re.I), "reset_holo", lambda m: {}),
+    (re.compile(r"^(?:please )?(?:show|display|put|open|load) (?:me )?(.+?)(?: (?:on|in) (?:the )?(?:holo|hologram|holo viewer))?$", re.I),
+     "show_model", lambda m: {"name": m.group(1)} if holo.wants(m.group(1), "holo" in m.group(0).lower()) else None),
+    (re.compile(r"^(.+)$"), "make_model", lambda m: modeler.take_answer(m.group(1)), modeler.asking),
+    (re.compile(r"^(?:please )?(?:make|design|create|model) (?:me )?(?:a |an |the )?(?:3d|three d|three-d) (?:model|design)(?: of| for)? ?(.*)$|"
+                r"^(?:please )?(?:design|model|3d model) (?:me )?(?:a |an )(.+)$", re.I),
+     "make_model", lambda m: {"request": m.group(1) or m.group(2) or ""}),
+    (re.compile(r"^(?:please )?(?:this is good|that is good|that's good|that looks good|looks good|this looks good|i approve|approved|it is approved|"
+                r"(?:let's|lets|let us) print (?:it|this|that)|print (?:it|this|that)|ready to print|prepare (?:it )?for (?:print|printing)|open (?:it )?in the slicer|send (?:it )?to the slicer)$", re.I),
+     "prepare_print", lambda m: {}, modeler.recent),
+    (re.compile(r"^(?:please )?((?:make|set) (?:it|the (?:model|part)) .*?(?:taller|shorter|wider|narrower|thicker|thinner|longer|bigger|smaller|deeper|higher|lower).*|"
+                r"make (?:it )?(?:\d+(?:\.\d+)? ?(?:mm|millimeters?|cm|centimeters?) )?(?:taller|shorter|wider|narrower|thicker|thinner|longer|bigger|smaller|deeper|higher|lower)(?: by .*)?|"
+                r"add (?:a |an |two |three |four |some )?(?:\w+ )?(?:holes?|slots?|chamfers?|fillets?|rounded corners?|ribs?|lips?|feet|notch(?:es)?)(?: .*)?|"
+                r"remove (?:the |a )?(?:\w+ )?(?:holes?|slots?|ribs?|lips?|feet|notch(?:es)?)(?: .*)?)$", re.I),
+     "revise_model", lambda m: {"change": m.group(1)}, modeler.recent),
     (re.compile(r"^(?:please )?(?:use|open) (?:the |my )?browser to (.+)$|^(?:please )?(?:go online|search online|browse the web) and (.+)$|^(?:please )?do this (?:in|on) the browser:? (.+)$", re.I),
      "browse_agent", lambda m: {"goal": m.group(1) or m.group(2) or m.group(3)}),
     (re.compile(r"^(?:please )?what (?:do you|did you|have you) remember(?:ed)?(?: about)? (.+)$", re.I), "recall_memory",

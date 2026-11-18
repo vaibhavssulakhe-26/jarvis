@@ -169,6 +169,12 @@ def check_wiki():
     return item("offline wiki", WARN, f"pack not found: {detail}", "Check the OFFLINE_WIKI path in .env")
 
 
+def check_holo():
+    from . import holo
+    why = holo.problem()
+    return item("holo", WARN if why else PASS, "not set up" if why else "ready", why)
+
+
 def check_brain_mode():
     mode = config.brain_mode()
     return item("brain mode", PASS, mode, "")
@@ -187,9 +193,11 @@ def run(level=None, skip_mic=False):
         check_brain_mode,
         check_telegram,
         check_wiki,
+        check_holo,
         check_ollama,
         lambda: check_tool("mpv", "sudo dnf install mpv"),
         lambda: check_tool("tesseract", "sudo dnf install tesseract"),
+        lambda: check_tool("openscad", "sudo dnf install openscad"),
         check_browser,
         check_voice,
         check_ram,

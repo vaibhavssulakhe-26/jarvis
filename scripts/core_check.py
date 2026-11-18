@@ -18,6 +18,8 @@ os.environ["JARVIS_DATA"] = str(tmp / "data")
 os.environ["XDG_RUNTIME_DIR"] = str(tmp)
 os.environ["XDG_STATE_HOME"] = str(tmp / "state")
 os.environ["HANDOFF_DIR"] = str(tmp / "outbox")
+os.environ["HANDCTL_DIR"] = str(tmp / "handctl")
+os.environ["FAKE_LOG"] = str(tmp / "bridge.log")
 os.environ["NOTES_DIR"] = str(fake_home / "Documents" / "notes")
 os.environ["GROQ_API_KEY"] = "gsk-fake-key-for-the-check-only"
 os.environ["GROQ_VISION_MODEL"] = "fake-vision"
@@ -32,6 +34,9 @@ for name in ("IMG_0001.jpg", "IMG_0002.jpg", "IMG_0003.jpg", "IMG_0004.jpg", "IM
 (fake_home / "Documents" / "notes.txt").write_text("Meeting at five. Bring the report and the laptop charger.\n", encoding="utf-8")
 (fake_home / "Documents" / "personal-diary.txt").write_text("secret", encoding="utf-8")
 
+from scripts.fakes import fake_handctl  # noqa: E402
+
+fake_handctl.make(tmp / "handctl")
 from jarvis import platform  # noqa: E402
 from jarvis.actions import apps, file_tools, files, handoff, play, screen, tools  # noqa: E402
 from jarvis.brain import agent, brain  # noqa: E402
@@ -138,6 +143,38 @@ with mock.patch.object(brain, "tool_turn", model), mock.patch.object(brain, "cha
     case("self description", "who are you, are you offline", r"hybrid")
     case("tasks", "task: buy a cable", r"Task saved")
 
+    # 3D models: fake openscad, canned scad, fake slicer
+    import types
+    import trimesh
+    from jarvis.actions import modeler
+
+    def fake_scad(cmd, timeout):
+        trimesh.creation.box((30, 20, 10)).export(cmd[cmd.index("-o") + 1])
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+    os.environ["SLICER_CMD"] = "true"
+    model_patches = [mock.patch.object(modeler, "MODELS", tmp / "models"), mock.patch.object(modeler, "READY", tmp / "models" / "ready"),
+                     mock.patch.object(modeler, "SETTLE", 0), mock.patch.object(modeler, "_run", fake_scad),
+                     mock.patch.object(brain, "code", lambda *a, **k: "```\ncube([30, 20, 10]);\n```"),
+                     mock.patch.object(modeler, "_launch_slicer", lambda argv: types.SimpleNamespace(poll=lambda: None))]
+    for p in model_patches:
+        p.start()
+    if True:
+        case("approve with no model does nothing", "this is good", r".*", forbid=r"slicer|Opened")
+        case("make a model", "make a 3d model of a box 30 by 20 by 10 mm", r"Built .*version 1.*30 by 20 by 10", forbid=r"failed", calls=0)
+        case("revise a model", "make it 5 mm taller", r"version 2", forbid=r"failed", calls=0)
+        case("add a hole", "add a hole", r"version 3", forbid=r"failed", calls=0)
+        case("model needs a real measurement", "make a 3d model of a stand for my phone", r"measurements of the phone", forbid=r"failed", calls=0)
+        case("answer the measurement", "75 by 150 by 8", r"Built", forbid=r"failed", calls=0)
+        case("open holo", "open holo", r"hologram is open", forbid=r"failed|not at", calls=0)
+        case("show a model", "show the box", r"Showing box.* on the hologram", forbid=r"failed", calls=0)
+        case("reset the hologram", "reset the hologram", r"view is reset", forbid=r"failed", calls=0)
+        case("close holo", "close holo", r"hologram is closed", forbid=r"failed", calls=0)
+        case("approve a model", "let's print it", r"Opened in the slicer\. Printing is yours to start\.", forbid=r"failed", calls=0)
+    for p in model_patches:
+        p.stop()
+    from jarvis import holo
+    holo.stop()
+
     # ---- the rest: truthfulness, privacy and failure behaviour (not part of the 25) ----
     extra = []
 
@@ -214,5 +251,5 @@ if "--scratch" not in sys.argv:
     out_file = ROOT / "data" / "core-check.json"
     out_file.parent.mkdir(exist_ok=True)
     out_file.write_text(json.dumps({"passed": passed, "total": len(results), "at": time.strftime("%Y-%m-%d %H:%M")}), encoding="utf-8")
-bad = len(results) != 25 or passed != 25 or not all(ok for _, ok, _ in extra)
+bad = passed != len(results) or len(results) < 25 or not all(ok for _, ok, _ in extra)
 sys.exit(1 if bad else 0)

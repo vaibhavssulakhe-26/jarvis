@@ -24,8 +24,8 @@ CONFIRM_SECONDS = 60
 CODE_GUESSES = 5
 CODE_WINDOW = 600
 
-# never from the phone, even with a yes: sending, deleting, powering off, installing
-NEVER = re.compile(r"^(?:send_|delete_|message_|clear_|forget$|shutdown$|restart$|suspend$|install_|apply_|git_)")
+# never from the phone, even with a yes: sending, deleting, powering off, installing, opening the slicer
+NEVER = re.compile(r"^(?:send_|delete_|message_|clear_|forget$|shutdown$|restart$|suspend$|install_|apply_|git_|prepare_)")
 AGENT_TOOLS = {"build_project", "run_project", "stop_project", "fix_last_error", "add_feature", "edit_file", "find_bugs", "explain_file",
                "browse_agent", "make_website", "preview_site", "export_site"}
 HELP = ("I am Jarvis. Send a command like you would type it, or use /brief, /email, /tasks, /status and /stop. "
