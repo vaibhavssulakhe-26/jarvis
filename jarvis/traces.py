@@ -94,6 +94,11 @@ def end():
     return line
 
 
+def current_failed():
+    """True while the request being answered right now has already been marked failed."""
+    return bool(_current) and not _current.get("ok", True)
+
+
 def last_failed():
     """True when the request that just finished failed, so no follow-up window should open for it."""
     return not _last.get("ok", True)

@@ -156,7 +156,7 @@ class Stage(QWidget):
     def mouseMoveEvent(self, ev):
         pos = QPointF(ev.position())
         self.note_move(pos)
-        if self.press and self.press[2] and ev.buttons() & Qt.MouseButton.LeftButton:
+        if self.press and self.press[2] and self.budget.cursor and ev.buttons() & Qt.MouseButton.LeftButton:
             start = self.press[0]
             if not self.dragged and math.hypot(pos.x() - start.x(), pos.y() - start.y()) > DRAG_PIXELS:
                 self.dragged = True
@@ -276,8 +276,10 @@ class Stage(QWidget):
             self.note_move(pos)
         w, h = max(1, self.width()), max(1, self.height())
         near = pos is not None
-        active = near and (now - self.last_move < IDLE_SECONDS or self.dragged)
+        active = near and self.budget.cursor and (now - self.last_move < IDLE_SECONDS or self.dragged)
         self.engaged += ((1.0 if active else 0.0) - self.engaged) * min(1.0, dt * (4.0 if active else 0.9))
+        if not self.budget.cursor:
+            self.engaged = 0.0
         if self.engaged < 0.004 and not active:
             self.engaged = 0.0
         raw = (max(-1.0, min(1.0, (pos.x() / w - 0.5) * 2)), max(-1.0, min(1.0, (pos.y() / h - 0.5) * 2))) if near else (0.0, 0.0)

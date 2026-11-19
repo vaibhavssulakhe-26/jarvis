@@ -352,3 +352,9 @@ See "How to test phases 22 to 28" in README.md.
 - A real Groq and OpenRouter key: Check now, the usage numbers after real use, the OpenRouter picker against the live list, and an extra provider of your own.
 - Test voice and the speed slider with real Piper audio; a restart to confirm the profile, look and memory switches persist.
 - Whether the sensitive memory defaults (people and health off) match what you want for the "remember that my sister ..." flow.
+
+## Local model turn throttling and repeated errors
+- While a local call runs the window drops to 15 fps with no particles and the globe ignores the cursor; it is restored when the call ends, including after a failure or timeout. Nested calls count as one busy period.
+- Per turn, one Activity line: `local model turn: prompt N tokens, first word X s (warm|cold), total Y s, UI throttled yes|no`. Read these lines in real use to see whether the prompt, the cold start or the UI is the slow part.
+- Identical error replies in a chat collapse into one message with a count; the spoken reply is not collapsed.
+- Needs your real machine: whether 15 fps is enough of a drop on your CPU (it is the same as the low power mode; going lower is a one-line change in `design.budget(busy=True)`), and the real turn lines with the 1B model.

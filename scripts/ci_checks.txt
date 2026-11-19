@@ -57,3 +57,4 @@ messaging_check
 local_first_check
 ollama_check
 settings_check linux
+throttle_check linux

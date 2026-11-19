@@ -387,3 +387,10 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
   capabilities, usage from `data/usage.json` and `data/traces.jsonl`, errors). Extra providers: `EXTRA_PROVIDERS=name` with `NAME_URL`, `NAME_API_KEY`, `NAME_MODEL` (OpenAI-compatible; `brain._extra_call`, inserted
   before the local model by `brain._chain`). The model picked on the page is `config.chosen(provider)` (`settings.json` "models"), used by `brain.groq_model`, `brain.openrouter_models` and `pick_ollama_model`.
   `openrouter_models()` fetches the list when asked and caches it in `data/openrouter-models.json`. `scripts/settings_check.py` includes a scan that no key appears in any UI string, log, result or saved file.
+
+- CPU for the model: `local.Generation` wraps every local call (`brain._try_ollama`); `local.generating()` is true while one runs and `local.listeners` are told. `Dashboard.set_throttled` (both windows) makes the
+  clock low power and stamps `local.state["ui_throttled_at"]`; `design.budget(busy=True)` is 15 fps, no particles and `cursor=False`, which pauses tilt, light, trail, ripples, parallax, repulsion and dragging on the globe
+  (`Stage.engaged` drops to 0 at once). A user's own low power setting is left as it was. `local.log_turn` emits one `sys` Activity line per turn: prompt tokens (reported by Ollama, else estimated), time to the first
+  word (warm or cold), total time, "UI throttled yes/no"; a failed turn says "no answer after N s (kind)". The line avoids the words error, failed and stopped, so the globe does not turn red. `local.LAST["turn"]` keeps it for the doctor.
+- Repeated errors: `threads.add(..., error=True)` (set by `threads.is_error_reply`: the current trace is failed, or the words say so) does not append an error reply identical to the last assistant message; that message gets
+  `count` and listeners hear an `update` (the chat shows "(x3)"). A good answer in between ends the run. `scripts/throttle_check.py`.

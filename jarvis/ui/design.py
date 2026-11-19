@@ -214,11 +214,14 @@ class Budget:
     trail: int = 16
     ripples: bool = True
     inertia: bool = True
+    cursor: bool = True
 
 
-def budget(low=False, reduced=False, intensity=100, density=1.0):
+def budget(low=False, reduced=False, intensity=100, density=1.0, busy=False):
     """Reduced motion keeps what the hand drives (the light spot, dragging the globe) and drops what moves by itself: tilt, parallax, particles, trail, ripples, inertia."""
     i = max(0, min(100, intensity)) / 100
+    if busy:
+        return Budget(15, 0, int(420 * density), False, False, True, 0.3, False, 0, False, False, False)
     if reduced:
         return Budget(15, 0, int((420 if low else 700) * density), False, False, False, 0.0, False, 0, False, False)
     if low:
@@ -236,7 +239,8 @@ def reduced_motion():
 
 def current_budget():
     s = settings()
-    return budget(low_power(), reduced_motion(), s["intensity"], GLOBE_FACTORS["density"][s["globe"]["density"]])
+    from ..brain import local
+    return budget(low_power(), reduced_motion(), s["intensity"], GLOBE_FACTORS["density"][s["globe"]["density"]], busy=local.generating())
 
 
 _cache = {"bg": None, "glass": {}}

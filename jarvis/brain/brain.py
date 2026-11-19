@@ -524,12 +524,16 @@ def _try_ollama(messages, max_tokens, want_json):
         _unload_others(model, loaded)
         if not warm:
             local.state.update(warming=True, since=time.time(), model=model)
-        try:
-            text, meta = local.stream_chat(body, model, warm)
-        except local.LocalError as e:
-            return None, _fail_local(e)
-        finally:
-            local.state["warming"] = False
+        with local.Generation() as gen:
+            try:
+                text, meta = local.stream_chat(body, model, warm)
+            except local.LocalError as e:
+                code = _fail_local(e)
+                local.log_turn(estimate(messages), gen, err=e)
+                return None, code
+            finally:
+                local.state["warming"] = False
+            local.log_turn(estimate(messages), gen, meta=meta)
     local.ok(meta)
     _record("ollama", bool(text.strip()), 200 if text.strip() else -2)
     return text, (200 if text.strip() else -2)

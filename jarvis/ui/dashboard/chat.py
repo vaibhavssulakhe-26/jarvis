@@ -202,7 +202,7 @@ class ChatView(QWidget):
             self.to_end()
         else:
             self.load()
-        if kind in ("message", "new", "delete", "switch"):
+        if kind in ("message", "new", "delete", "switch", "update"):
             self.fill_list()
 
     def on_delta(self, delta):
@@ -236,7 +236,8 @@ class ChatView(QWidget):
         return b
 
     def add(self, m):
-        return self.make(m["role"], m["text"], m.get("tier", ""), m.get("via", ""))
+        n = int(m.get("count", 1))
+        return self.make(m["role"], m["text"] + (f"  (\u00d7{n})" if n > 1 else ""), m.get("tier", ""), m.get("via", ""))
 
     def to_end(self):
         QTimer.singleShot(30, lambda: self.scroll.verticalScrollBar().setValue(self.scroll.verticalScrollBar().maximum()))

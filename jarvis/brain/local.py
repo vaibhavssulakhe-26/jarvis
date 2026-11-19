@@ -170,7 +170,10 @@ def skipped(free):
 def report(err):
     """Say the failure where it can be seen: the console and the Activity page, with every detail. Returns the error."""
     from ..actions import events
+    turn = LAST.get("turn")
     LAST.clear()
+    if turn:
+        LAST["turn"] = turn
     LAST.update(ok=False, kind=err.kind, exc=err.exc, message=err.message, url=err.url, model=err.model, seconds=err.seconds, status=err.status, at=time.time())
     print("  (" + err.line() + ")")
     events.emit("sys", err.line())
@@ -261,7 +264,10 @@ def stream_chat(body, model, warm, on_delta=None):
 
 
 def ok(meta):
+    turn = LAST.get("turn")
     LAST.clear()
+    if turn:
+        LAST["turn"] = turn
     LAST.update(ok=True, kind="ok", message="answered", at=time.time(), **meta)
 
 
@@ -325,3 +331,67 @@ def preload(model, free=None, running=True):
 
 def warming():
     return bool(state["warming"])
+
+
+# ---------- the CPU belongs to the model while it generates ----------
+listeners = []
+_gen = {"n": 0}
+_gen_lock = threading.Lock()
+
+
+def generating():
+    """True while any local call is running. The window drops to low power and pauses the cursor effects for exactly this time."""
+    return _gen["n"] > 0
+
+
+def _tell(on):
+    for fn in list(listeners):
+        try:
+            fn(on)
+        except Exception:
+            pass
+
+
+class Generation:
+    """Context manager around one local call: marks the model as busy (the window listens) and times the turn."""
+
+    def __enter__(self):
+        self.t0 = time.time()
+        with _gen_lock:
+            _gen["n"] += 1
+            first = _gen["n"] == 1
+        if first:
+            _tell(True)
+        return self
+
+    def __exit__(self, *exc):
+        with _gen_lock:
+            _gen["n"] = max(0, _gen["n"] - 1)
+            last = _gen["n"] == 0
+        if last:
+            _tell(False)
+        return False
+
+    def throttled(self):
+        """Whether a window really dropped to low power during this call (it stamps state['ui_throttled_at'] when it does)."""
+        return state.get("ui_throttled_at", 0.0) >= self.t0
+
+
+def log_turn(prompt_tokens, gen, meta=None, err=None):
+    """One Activity line per local turn: prompt tokens, time to the first word, total time and whether the UI was throttled. It uses no word the
+    window treats as a fault, so a slow turn does not turn the globe red."""
+    from ..actions import events
+    seconds = time.time() - gen.t0
+    if meta:
+        reported = meta.get("prompt_eval_count")
+        prompt = f"prompt {reported} tokens" if reported else f"prompt about {prompt_tokens} tokens"
+        first = f"first word {meta.get('first_token', 0.0):.1f} s ({'warm' if meta.get('warm') else 'cold'})"
+    else:
+        prompt = f"prompt about {prompt_tokens} tokens"
+        first = f"no answer after {seconds:.1f} s ({err.kind})" if err else f"no answer after {seconds:.1f} s"
+    ui = "UI throttled yes (15 fps, no particles, cursor effects paused)" if gen.throttled() else "UI throttled no"
+    line = f"local model turn: {prompt}, {first}, total {seconds:.1f} s, {ui}"
+    print("  (" + line + ")")
+    events.emit("sys", line)
+    LAST["turn"] = {"prompt": prompt_tokens, "first": (meta or {}).get("first_token"), "total": round(seconds, 2), "throttled": gen.throttled()}
+    return line

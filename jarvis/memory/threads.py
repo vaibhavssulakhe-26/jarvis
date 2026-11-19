@@ -1,5 +1,6 @@
 """Chat threads: one shared conversation for typed and spoken messages, saved redacted in data/chats/<id>.json.
 `attach()` listens to the event bus ("you", "jarvis", "tier"), so anything said or typed lands in the current thread."""
+import re
 import threading
 import time
 from datetime import datetime
@@ -129,15 +130,36 @@ def rollover(now=None):
     return False
 
 
-def add(role, text, via="spoken", tier=""):
-    """Append one message (redacted) and return it. Empty text is ignored."""
+ERROR_REPLY = re.compile(r"\b(?:could not|couldn't|can't|cannot|did not work|something broke|failed|is down|not reachable|no brain|timed out|"
+                         r"warming up|rate limited|out of memory|refused|try again|not set up|not installed)\b", re.I)
+
+
+def is_error_reply(text):
+    """True for a reply that reports a fault: the request being answered was marked failed, or the words say so."""
+    from .. import traces
+    return traces.current_failed() or bool(ERROR_REPLY.search(str(text)))
+
+
+def add(role, text, via="spoken", tier="", error=False):
+    """Append one message (redacted) and return it. Empty text is ignored. An error reply identical to the last assistant message is not added
+    again: that message gets a count instead (`count`, shown as a multiplier), and listeners hear an "update"."""
     text = redact.mask(str(text)).strip()
     if not text:
         return None
     with _lock:
         rollover()
         t = current()
+        if role == "assistant" and error:
+            prev = next((m for m in reversed(t["messages"]) if m["role"] == "assistant"), None)
+            if prev and prev.get("error") and prev["text"] == text:
+                prev["count"] = int(prev.get("count", 1)) + 1
+                prev["at"] = _stamp()
+                save(t)
+                _notify("update", id=t["id"], message=prev)
+                return prev
         msg = {"role": role, "text": text, "at": _stamp(), "via": via}
+        if error and role == "assistant":
+            msg["error"] = True
         if tier:
             msg["tier"] = tier
         t["messages"].append(msg)
@@ -158,7 +180,7 @@ def on_event(kind, text):
         add("user", text, via)
     elif kind == "jarvis":
         tier, _cur["tier"] = _cur["tier"], ""
-        add("assistant", text, tier=tier)
+        add("assistant", text, tier=tier, error=is_error_reply(text))
 
 
 def attach():

@@ -37,6 +37,7 @@ ERROR_SECONDS = 5
 
 class Bus(QObject):
     line = pyqtSignal(str, str)
+    generating = pyqtSignal(bool)
 
 
 def current_mode():
@@ -69,6 +70,7 @@ class Dashboard(QWidget):
         self.low_manual = themes.load()[2]["low_power"]
         self.reduced = themes.load()[2]["reduced_motion"]
         self.on_power = None
+        self.throttled = False
         self.low_auto = False
         self.error_until = 0.0
         self.seen_theme = float(state.get("theme_at") or 0)
@@ -76,6 +78,9 @@ class Dashboard(QWidget):
         self.pages = {}
         self.bus = Bus()
         self.bus.line.connect(self.on_event)
+        self.bus.generating.connect(self.set_throttled)
+        self._gen_listener = self.bus.generating.emit
+        local.listeners.append(self._gen_listener)
         self._listener = lambda kind, text: self.bus.line.emit(kind, text)
         events.listeners.append(self._listener)
 
@@ -282,7 +287,7 @@ class Dashboard(QWidget):
 
     # ---------- low power, visibility ----------
     def apply_low_power(self):
-        low = self.low_manual or self.low_auto or self.reduced
+        low = self.low_manual or self.low_auto or self.reduced or self.throttled
         self.clock.set_low(low)
         home = self.pages.get("Home")
         if home:
@@ -293,6 +298,13 @@ class Dashboard(QWidget):
     def set_low_power(self, on):
         self.low_manual = bool(on)
         themes.save(low_power=bool(on))
+        self.apply_low_power()
+
+    def set_throttled(self, on):
+        """The local model is generating: give it the CPU (low power, no particles, cursor effects paused) and take it back afterwards."""
+        self.throttled = bool(on)
+        if on:
+            local.state["ui_throttled_at"] = time.time()
         self.apply_low_power()
 
     def set_reduced_motion(self, on):
@@ -516,6 +528,8 @@ class Dashboard(QWidget):
         ui.shutdown_all()
         if self._listener in events.listeners:
             events.listeners.remove(self._listener)
+        if self._gen_listener in local.listeners:
+            local.listeners.remove(self._gen_listener)
         for view in (self.dock_chat, self.pages["Chat"].view, self.pages["Home"].chat):
             view.stop_listening()
         if self.tray is not None:
