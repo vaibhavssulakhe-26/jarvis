@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFrame, QH
                              QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ..brain import registry
-from ..core import config, profile
+from ..core import config, lang, profile
 from ..memory import controls, manager
 from ..voice import voices
 from . import design
@@ -361,6 +361,18 @@ class CustomizePage(Section):
         self.root.addWidget(f)
 
         f, b = card()
+        b.addWidget(label("Reply language", dim=True, size=12))
+        self.reply = QComboBox()
+        self.reply.setAccessibleName("Reply language")
+        for name, key in (("Auto: English, or the language you write in", ""), ("English", "english"), ("Hindi", "hindi"), ("Kannada", "kannada")):
+            self.reply.addItem(name, key)
+        self.reply.currentIndexChanged.connect(self.on_reply)
+        self.reply_now = label("", dim=True, size=12)
+        b.addLayout(row(self.reply, self.reply_now, stretch=1))
+        b.addWidget(label("You can also say: reply in English, talk in Hindi.", dim=True, size=12))
+        self.root.addWidget(f)
+
+        f, b = card()
         b.addWidget(label("Assistant personality", dim=True, size=12))
         self.personality = QComboBox()
         self.personality.setAccessibleName("Personality")
@@ -401,6 +413,10 @@ class CustomizePage(Section):
         self.chat_size.setCurrentIndex(max(0, self.chat_size.findData(s["chat"]["size"])))
         self.chat_density.setCurrentIndex(max(0, self.chat_density.findData(s["chat"]["density"])))
         self.personality.setCurrentIndex(max(0, self.personality.findData(profile.load()["personality"])))
+        self.reply.blockSignals(True)
+        self.reply.setCurrentIndex(max(0, self.reply.findData({"en": "english", "hi": "hindi", "kn": "kannada"}.get(lang.reply_setting(), ""))))
+        self.reply.blockSignals(False)
+        self.reply_now.setText("Replies now: " + lang.label())
         self.voice.clear()
         for name in voices.installed():
             self.voice.addItem(voices.label(name), name)
@@ -425,6 +441,10 @@ class CustomizePage(Section):
         self.dash.set_hue(max(0, QColor(design.ACCENT).hueF()) * 360)
         self.show_accent()
 
+    def on_reply(self):
+        lang.set_reply(self.reply.currentData() or "auto")
+        self.reply_now.setText("Replies now: " + lang.label())
+
     def on_theme(self):
         key = self.theme.currentData()
         if key:
@@ -442,7 +462,7 @@ class CustomizePage(Section):
         threading.Thread(target=lambda: voice.say("This is how I sound now."), daemon=True).start()
 
     def refresh(self):
-        pass
+        self.reply_now.setText("Replies now: " + lang.label())
 
 
 # ---------------------------------------------------------------- models and providers

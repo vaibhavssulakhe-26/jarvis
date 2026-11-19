@@ -46,6 +46,7 @@ SETTINGS = (
     ("Globe look", "globe look dots size glow density sphere", _settings_page("customize")),
     ("Animation intensity", "animation intensity motion particles speed calm", _settings_page("customize")),
     ("Chat appearance", "chat appearance text size font spacing bubbles", _settings_page("customize")),
+    ("Reply language", "reply language english hindi kannada speak talk answer respond switch", _settings_page("customize")),
     ("Assistant personality", "personality tone style friendly formal playful concise coach", _settings_page("customize")),
     ("Voice settings", "voice settings speed speaking rate pitch speaker test", _settings_page("customize")),
     ("Models and providers", "models providers brains ollama groq openrouter fallback primary usage errors", _settings_page("models")),

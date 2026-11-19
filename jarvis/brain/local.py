@@ -292,7 +292,8 @@ def compact(messages):
     if not messages or not is_chat_system(messages[0]):
         return messages
     last = messages[-1]
-    history = [m for m in messages[1:-1] if m.get("role") in ("user", "assistant")][-HISTORY_MESSAGES:]
+    want = lang.reply_language(str(last.get("content", "")))
+    history = [m for m in messages[1:-1] if m.get("role") in ("user", "assistant") and lang.script(m.get("content", "")) == want][-HISTORY_MESSAGES:]
     trimmed = [{"role": m["role"], "content": str(m.get("content", ""))[:HISTORY_CHARS]} for m in history]
     question = dict(last)
     return [{"role": "system", "content": short_system(str(last.get("content", "")))}] + trimmed + [question]
@@ -377,6 +378,38 @@ class Generation:
         return state.get("ui_throttled_at", 0.0) >= self.t0
 
 
+TURN_KEEP = 10
+
+
+def _turns_path():
+    return config.DATA / "local-turns.json"
+
+
+def recent_turns():
+    """The last 10 local turns, oldest first: {first (seconds to the first word, or None when none came), total, prompt, throttled, at}. Counts only, no text."""
+    from ..core import jsonfile
+    rows = jsonfile.read(_turns_path(), [], list)
+    return [r for r in rows if isinstance(r, dict)][-TURN_KEEP:]
+
+
+def record_turn(first, total, prompt, throttled):
+    from ..core import jsonfile
+    rows = recent_turns()
+    rows.append({"first": None if first is None else round(float(first), 2), "total": round(float(total), 2), "prompt": int(prompt),
+                 "throttled": bool(throttled), "at": int(time.time())})
+    try:
+        jsonfile.write(_turns_path(), rows[-TURN_KEEP:])
+    except OSError:
+        pass
+
+
+def average_first_word():
+    """(average seconds to the first word over the last 10 local turns that produced one, how many of the last 10 turns that is). (None, 0) before any."""
+    rows = recent_turns()
+    firsts = [r["first"] for r in rows if r.get("first") is not None]
+    return (sum(firsts) / len(firsts) if firsts else None), len(firsts)
+
+
 def log_turn(prompt_tokens, gen, meta=None, err=None):
     """One Activity line per local turn: prompt tokens, time to the first word, total time and whether the UI was throttled. It uses no word the
     window treats as a fault, so a slow turn does not turn the globe red."""
@@ -393,5 +426,6 @@ def log_turn(prompt_tokens, gen, meta=None, err=None):
     line = f"local model turn: {prompt}, {first}, total {seconds:.1f} s, {ui}"
     print("  (" + line + ")")
     events.emit("sys", line)
+    record_turn((meta or {}).get("first_token") if meta else None, seconds, (meta or {}).get("prompt_eval_count") or prompt_tokens, gen.throttled())
     LAST["turn"] = {"prompt": prompt_tokens, "first": (meta or {}).get("first_token"), "total": round(seconds, 2), "throttled": gen.throttled()}
     return line

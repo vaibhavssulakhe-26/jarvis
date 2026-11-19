@@ -3,6 +3,7 @@ from PyQt6.QtCore import QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
+from ..core import lang
 from . import design, status
 from .globe import look_for
 
@@ -28,13 +29,14 @@ class BottomPanel(QWidget):
         self.mic = self._label("")
         self.connection = self._label("")
         self.brain = self._label("")
+        self.reply = self._label("")
         self.button = QPushButton("Search  Ctrl+K")
         self.button.setToolTip("Search features and settings (Ctrl+K)")
         self.button.setAccessibleName("Search")
         self.button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.button.setFixedHeight(32)
         self.button.clicked.connect(self.search)
-        for w in (self.state_label, self.activity, self.mic, self.connection, self.brain):
+        for w in (self.state_label, self.activity, self.mic, self.connection, self.brain, self.reply):
             row.addWidget(w)
         row.addStretch(1)
         row.addWidget(self.button)
@@ -52,6 +54,7 @@ class BottomPanel(QWidget):
         self.mic.setText("mic " + status.mic_label(snap))
         self.connection.setText(status.connection_label(snap))
         self.brain.setText("brain: " + status.brain_label(snap))
+        self.reply.setText("reply: " + lang.label())
         self.activity.setVisible(bool(snap.activity) and self.width() >= NARROW)
         self.update()
 

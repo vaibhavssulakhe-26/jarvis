@@ -216,8 +216,16 @@ SMALL_TALK = ("hey", "hi", "hello", "good morning", "good afternoon", "good even
               "i m bored", "i m tired", "i m stressed", "i m sad", "i m happy")
 
 
+COMPLAINT = re.compile(r"^(?:no+ |nope |hey |wait |but )*(?:i (?:did not|didnt|didn t|never|don t|dont|do not|wasn t|was not) (?:ask|say|want|mean|tell)|"
+                       r"(?:that|this|it) (?:is|s|was|wasn t|was not) (?:not|wrong|nonsense)|that s not|not what i|i (?:said|meant|asked for)|"
+                       r"why (?:did|are|would) you|you (?:didn t|did not|are|re|got it) (?:wrong|not|misheard|mistaken)|you misheard|stop (?:saying|doing))\b")
+
+
 def small_talk(text):
+    """Greetings and chit-chat, and also a complaint about the last answer ("i didnt ask time"), which is conversation and never a request for a tool."""
     t = " ".join(re.findall(r"[a-z0-9]+", str(text).lower()))
+    if len(t.split()) <= 14 and COMPLAINT.match(t):
+        return True
     return len(t.split()) <= 8 and any(t == p or t.startswith(p + " ") for p in SMALL_TALK)
 
 

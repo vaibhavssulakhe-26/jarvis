@@ -233,7 +233,14 @@ def _waiting():
     return reminders.active() is not None
 
 
+LANG_VERBS = ("speak", "talk", "reply", "respond", "answer", "write", "chat")
 DIRECT = [
+    (re.compile(r"^(?:please )?(?:(?:can you |could you |will you )?(?:speak|talk|reply|respond|answer|write|chat)(?: to me| back)? (?:in|using)|"
+                r"(?:switch|change) (?:the |your )?(?:reply |response |answer )?(?:language )?to|(?:use|speak|reply|answer) only)"
+                r" (hindi|kannada|english)(?: (?:from now on|please|only|now|again|always))*$", re.I),
+     "set_language", lambda m: {"mode": "reply", "language": m.group(1).lower()}),
+    (re.compile(r"^(?:please )?(hindi|kannada|english)(?: only| please)$|^(?:please )?(?:speak|talk)(?: to me)? (hindi|kannada|english)$", re.I),
+     "set_language", lambda m: {"mode": "reply", "language": (m.group(1) or m.group(2)).lower()}),
     (re.compile(r"^(?:please )?(?:open|start|launch|turn on) (?:the )?(?:holo|hologram|holo ?gram viewer|holo viewer)$", re.I), "open_holo", lambda m: {}),
     (re.compile(r"^(?:please )?(?:close|stop|turn off|shut down|exit) (?:the )?(?:holo|hologram|holo viewer)$", re.I), "close_holo", lambda m: {}),
     (re.compile(r"^(?:please )?reset (?:the )?(?:holo|hologram|holo view|hologram view)$", re.I), "reset_holo", lambda m: {}),
@@ -541,6 +548,8 @@ def fuzzy(text):
         action, args = "proactive_quiet", {"for": " ".join(words[3:])}
     elif len(words) == 3 and words[1] == "in" and close(words[0], ["listen"], 0.8) and close(words[2], LANGUAGES, 0.7):
         action, args = "set_language", {"mode": "listen", "language": close(words[2], LANGUAGES, 0.7)}
+    elif len(words) in (2, 3) and close(words[0], LANG_VERBS, 0.75) and (len(words) == 2 or words[1] == "in") and close(words[-1], LANGUAGES[:3], 0.72):
+        action, args = "set_language", {"mode": "reply", "language": close(words[-1], LANGUAGES[:3], 0.72)}
     elif len(words) >= 3 and words[0] in ("use", "switch", "try") and words[-2] not in ("a", "an", "the") \
             and close(words[-1], ["voice"], 0.8):
         action, args = "change_voice", {"which": words[-2]}

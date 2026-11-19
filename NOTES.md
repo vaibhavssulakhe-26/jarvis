@@ -358,3 +358,11 @@ See "How to test phases 22 to 28" in README.md.
 - Per turn, one Activity line: `local model turn: prompt N tokens, first word X s (warm|cold), total Y s, UI throttled yes|no`. Read these lines in real use to see whether the prompt, the cold start or the UI is the slow part.
 - Identical error replies in a chat collapse into one message with a count; the spoken reply is not collapsed.
 - Needs your real machine: whether 15 fps is enough of a drop on your CPU (it is the same as the low power mode; going lower is a one-line change in `design.budget(busy=True)`), and the real turn lines with the 1B model.
+
+## Reply language and local chat quality
+- Where the Hindi came from: nothing was saved on disk (no `language` key in settings.json, no `STT_LANGUAGE` in .env). The reply language lived only in memory (`lang._session`), so a Hindi test could leave it on until restart,
+  and the English hint was "Reply only in English, Hindi or Kannada.", which a 1B model reads as permission; old Hindi turns in the chat history pulled it further. Now English is the default, the hint is "Reply in English only, short.",
+  the choice is saved, and the local prompt leaves out history in another script.
+- Roman Hindi ("kaise ho") counts as English; only Devanagari and Kannada script switch the language by themselves. "Auto" and "never set" are the same thing.
+- "no i said english" and similar corrections are treated as conversation (not as a language command).
+- Needs your real model: whether the 1B model really obeys "Reply in English only, short." (the check uses a stand-in that does); look at the first replies after a restart.

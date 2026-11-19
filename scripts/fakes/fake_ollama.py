@@ -1,7 +1,7 @@
 """A fake Ollama on a real local port. `start(**cfg)` returns a server with .url, .posts (every JSON body received, with its path) and .stop().
 cfg: models (names for /api/tags), loaded (names for /api/ps), reply (list of chunks), first_delay (seconds before the first chunk, like a model that
 has to load), gap (seconds between later chunks), stall_after (stop sending after that many chunks, never finishing), chat_status and chat_body
-(answer /api/chat with that HTTP error), chat_error (a mid-stream {"error": ...} line)."""
+(answer /api/chat with that HTTP error), reply_fn (a function of the request body returning the chunks), chat_error (a mid-stream {"error": ...} line)."""
 import json
 import threading
 import time
@@ -51,7 +51,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         try:
-            chunks = cfg.get("reply", ["Yes, ", "I can ", "hear you."])
+            chunks = cfg["reply_fn"](body) if cfg.get("reply_fn") else cfg.get("reply", ["Yes, ", "I can ", "hear you."])
             for i, piece in enumerate(chunks):
                 if cfg.get("stall_after") is not None and i >= cfg["stall_after"]:
                     time.sleep(cfg.get("stall_seconds", 30))

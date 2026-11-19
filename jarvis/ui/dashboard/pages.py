@@ -853,6 +853,19 @@ class Web(Page):
         self.confirm.refresh()
 
 
+def local_summary():
+    """The Stats line for the local model: the average first-word time of the last 10 turns, from data/local-turns.json."""
+    from ...brain import local
+    rows = local.recent_turns()
+    avg, n = local.average_first_word()
+    if not rows:
+        return "No local turns yet."
+    if avg is None:
+        return f"No first word in the last {len(rows)} local turns."
+    slow = max((r["first"] for r in rows if r.get("first") is not None), default=0)
+    return f"Average first word {avg:.1f} s over {n} of the last {len(rows)} local turns (slowest {slow:.1f} s)"
+
+
 class Stats(Page):
     def __init__(self, ctx):
         super().__init__(ctx)
@@ -868,10 +881,13 @@ class Stats(Page):
         self.bench = value_label("")
         self.bench.setWordWrap(True)
         bench_panel.box.addWidget(self.bench)
+        local_panel = Panel(t, "Local model")
+        self.local = value_label("")
+        local_panel.box.addWidget(self.local)
         sysp = Panel(t, "This process")
         self.sys = value_label("")
         sysp.box.addWidget(self.sys)
-        for w in (self.eval, bench_panel, use, sysp):
+        for w in (self.eval, bench_panel, use, local_panel, sysp):
             self.root.addWidget(w)
         self.root.addStretch(1)
 
@@ -898,6 +914,7 @@ class Stats(Page):
         rows.append(f"{'Advanced':<12} today {sent:>7} tokens, {used:>3} of {cap} calls{setup}")
         rows.append(f"rate limits hit this session: {brain.LIMITED['count']}")
         self.use.setText("<pre>" + "\n".join(rows) + "</pre>")
+        self.local.setText(local_summary())
         rss = psutil.Process().memory_info().rss / 2 ** 20
         self.sys.setText(f"Jarvis memory {rss:.0f} MB   free system memory {psutil.virtual_memory().available / 2 ** 30:.1f} GB   "
                          f"animation {self.ctx.clock.interval} ms per frame" + ("   low power" if self.ctx.clock.low else ""))

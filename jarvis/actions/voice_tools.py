@@ -48,6 +48,4 @@ def set_language(args):
         lang.set_listening(code)
         return f"Okay, I will listen for {name}." if name else "Okay, I will work out the language myself."
     lang.set_reply(code)
-    if code == "kn" and voices.for_language("kn") is None:
-        return "Okay, I will answer in Kannada. I cannot speak it yet, so you will get the text on screen."
-    return f"Okay, I will answer in {name}." if name else "Okay, I will answer in whatever language you use."
+    return lang.confirmation(code)

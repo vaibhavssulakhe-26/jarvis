@@ -394,3 +394,12 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
   word (warm or cold), total time, "UI throttled yes/no"; a failed turn says "no answer after N s (kind)". The line avoids the words error, failed and stopped, so the globe does not turn red. `local.LAST["turn"]` keeps it for the doctor.
 - Repeated errors: `threads.add(..., error=True)` (set by `threads.is_error_reply`: the current trace is failed, or the words say so) does not append an error reply identical to the last assistant message; that message gets
   `count` and listeners hear an `update` (the chat shows "(x3)"). A good answer in between ends the run. `scripts/throttle_check.py`.
+
+- Reply language (replaces the older `reply_hint` rules): `lang.reply_setting()` is the saved choice ('en', 'hi', 'kn' or None for automatic) in `data/settings.json` under `"language"` (`set_reply` writes it, a restart reads it;
+  before this it lived only in `lang._session`, in memory). `lang.reply_language(text)` is the saved choice, else the script of the current message, so English is the default and Hindi or Kannada only when the message is in that
+  script. `lang.reply_hint(text)` is exactly "Reply in <Language> only, short." and is in every prompt (`chat_system`, `quality_system`, `cloud_system`, `local.short_system`). `local.compact` drops history in any other script so an old
+  Hindi conversation cannot pull the model back. `lang.label()` ("English (auto)", "English", "Hindi", "Kannada") shows in the classic pill (`REPLY ...`), the new bottom panel and Settings, Customization (Reply language).
+  Direct commands (`main.DIRECT` first entries, `main.fuzzy` for typos): "speak/talk/reply/respond/answer/write in english|hindi|kannada", "switch to ...", "english only", "speak english"; they run `set_language` (mode reply),
+  which saves and answers with `lang.confirmation` in that language. `tools.COMPLAINT` (in `small_talk`): "i didnt ask time", "that is not what i asked", "i said ..." are conversation, never tool requests.
+- Local turns: `local.record_turn` / `recent_turns` / `average_first_word` keep the last 10 turns (numbers only) in `data/local-turns.json`; the Stats page shows the average first word over those that produced one.
+  `scripts/reply_language_check.py`.

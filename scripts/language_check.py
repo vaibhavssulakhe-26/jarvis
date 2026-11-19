@@ -76,8 +76,8 @@ check("groq gets the hint when set", kn_sent.get("language") == "kn")
 lang.set_listening("auto")
 
 check("hindi reply hint", "Hindi" in lang.reply_hint("नमस्ते"))
-check("english replies are limited to en, hi, kn", "English, Hindi or Kannada" in lang.reply_hint("hello"))
-check("hint reaches a small chat request", "Answer in Kannada" in brain.chat_system("ನಮಸ್ಕಾರ"))
+check("english replies say English only, short", lang.reply_hint("hello") == "Reply in English only, short.")
+check("hint reaches a small chat request", "Reply in Kannada only, short." in brain.chat_system("ನಮಸ್ಕಾರ"))
 check("english chat prompt stays small", brain.estimate([{"content": brain.chat_system("hello")}]) < 300)
 
 # regression: short English heard as Turkish must be retried in English and never answered in Turkish
