@@ -109,12 +109,33 @@ def delete(tid):
     _notify("delete", id=tid)
 
 
+def _day(thread):
+    """The date of the last message, or of the thread's creation when it has none."""
+    stamp = thread["messages"][-1]["at"] if thread["messages"] else thread.get("created", "")
+    try:
+        return datetime.fromisoformat(stamp).date()
+    except ValueError:
+        return datetime.now().date()
+
+
+def rollover(now=None):
+    """Start a new chat when the current one has messages from an earlier day, so each day has its own thread. Returns True when it did."""
+    with _lock:
+        t = current()
+        today = (now or datetime.now()).date()
+        if t["messages"] and _day(t) < today:
+            new_chat()
+            return True
+    return False
+
+
 def add(role, text, via="spoken", tier=""):
     """Append one message (redacted) and return it. Empty text is ignored."""
     text = redact.mask(str(text)).strip()
     if not text:
         return None
     with _lock:
+        rollover()
         t = current()
         msg = {"role": role, "text": text, "at": _stamp(), "via": via}
         if tier:
@@ -150,9 +171,6 @@ def active():
     return on_event in events.listeners
 
 
-def detach():
-    if on_event in events.listeners:
-        events.listeners.remove(on_event)
 
 
 def summary(old):

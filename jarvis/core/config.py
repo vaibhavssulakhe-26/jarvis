@@ -65,8 +65,12 @@ def stt_cloud():
 
 
 def brain_mode():
-    """'hybrid' (cloud first, offline backup) or 'offline' (cloud providers are never called)."""
-    return "offline" if get("BRAIN", "hybrid").lower() in ("offline", "local") else "hybrid"
+    """'local_first' (the default: the local model answers, the cloud only when asked or for heavy work), 'hybrid' (cloud first, local backup)
+    or 'offline' (cloud providers are never called). BRAIN_MODE sets it; the older BRAIN=offline still works."""
+    mode = get("BRAIN_MODE").lower().replace("-", "_")
+    if mode in ("offline", "local_first", "hybrid"):
+        return mode
+    return "offline" if get("BRAIN").lower() in ("offline", "local") else "local_first"
 
 
 def offline():

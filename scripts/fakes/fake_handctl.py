@@ -72,7 +72,18 @@ else:
 '''
 
 
-def make(folder):
+VIEWERS = {
+    "crash": ('import sys\nprint("Traceback (most recent call last):", file=sys.stderr)\n'
+              'print("  File \\"hand_mouse.py\\", line 12, in <module>", file=sys.stderr)\n'
+              'print("    import evdev", file=sys.stderr)\n'
+              'print("ModuleNotFoundError: No module named \'evdev\'", file=sys.stderr)\nsys.exit(1)\n'),
+    "silent": "import sys\nsys.exit(3)\n",
+    "slow": 'import subprocess, sys, time\ntime.sleep(2.5)\nsubprocess.run([sys.executable, str(__import__("pathlib").Path(__file__).with_name("bridge.py")), "serve"])\n',
+}
+
+
+def make(folder, viewer=None):
+    """viewer: crash, silent or slow adds a hand_mouse.py that behaves that way, so the bridge-less start path (stderr captured by Jarvis) can be tested."""
     folder = Path(folder)
     (folder / "models").mkdir(parents=True, exist_ok=True)
     (folder / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
@@ -80,4 +91,6 @@ def make(folder):
     if not py.exists():
         py.symlink_to(sys.executable)
     (folder / "bridge.py").write_text(BRIDGE, encoding="utf-8")
+    if viewer:
+        (folder / "hand_mouse.py").write_text(VIEWERS[viewer], encoding="utf-8")
     return folder

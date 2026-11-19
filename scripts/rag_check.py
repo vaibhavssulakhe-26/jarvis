@@ -135,7 +135,7 @@ main.PENDING.clear()
 ran = []
 for phrase, name in (("search my notes for quicksort", "search_docs"), ("what did I write about arrays", "search_docs"),
                      ("reindex my notes", "reindex_notes"), ("summarise trees", "summarise_file")):
-    with mock.patch.object(main, "run_tool", lambda a, args, s: ran.append((a, args))), mock.patch.object(main.brain, "think", side_effect=AssertionError("brain")):
+    with mock.patch.object(main, "run_tool", lambda a, args, s: ran.append((a, args))), mock.patch.object(main.brain, "tool_turn", side_effect=AssertionError("brain")):
         main.direct(phrase)
     check(f"{phrase!r} routes to {name} without the brain", ran and ran[-1][0] == name, str(ran))
 check("the question words are kept out of the search", rag.terms("what did I write about arrays") == ["arrays"])

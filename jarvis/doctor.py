@@ -88,7 +88,8 @@ def check_ollama():
     url = config.get("OLLAMA_URL", "http://localhost:11434")
     try:
         r = requests.get(url + "/api/tags", timeout=3)
-        names = [m.get("name", "") for m in r.json().get("models", [])]
+        models = r.json().get("models", [])
+        names = [m.get("name", "") for m in models]
     except (requests.RequestException, ValueError):
         return item("ollama", WARN, "not running", "Start it with: ollama serve (Jarvis also starts it when needed)")
     from .brain import brain
@@ -98,8 +99,19 @@ def check_ollama():
         return item("ollama", WARN, "running, no chat model installed", f"ollama pull {wanted or brain.OLLAMA_DEFAULT}")
     if wanted and wanted not in chat and wanted + ":latest" not in chat:
         return item("ollama", WARN, f"running, OLLAMA_MODEL {wanted} is not installed", f"ollama pull {wanted}")
+    brain.note_models(models)
     chosen = brain.pick_ollama_model(names)
-    return item("ollama", PASS, f"running, using {chosen}")
+    size = next((int(m.get("size") or 0) for m in models if m.get("name") == chosen), 0) / 2**30
+    try:
+        held = next((int(m.get("size") or 0) for m in requests.get(url + "/api/ps", timeout=3).json().get("models", []) if m.get("name") == chosen), 0) / 2**30
+    except (requests.RequestException, ValueError):
+        held = 0.0
+    free = brain._free_gb()
+    detail = f"running, {chosen}" + (f", {free:.1f} GB free" if free is not None else "") + (f", needs about {size * 1.25:.1f} GB" if size else "")
+    fit = brain.fits(free, size, held)
+    if fit is False:
+        return item("ollama", WARN, detail + ", does not fit right now", "Close heavy apps, or set OLLAMA_MODEL to a smaller model")
+    return item("ollama", PASS, detail + (", fits" if fit else ""))
 
 
 def check_tool(name, fix):
@@ -180,6 +192,15 @@ def check_brain_mode():
     return item("brain mode", PASS, mode, "")
 
 
+def check_advanced():
+    from .brain import advanced
+    if config.offline():
+        return item("advanced (cloud)", PASS, "off in offline mode")
+    if not (config.get("GROQ_API_KEY") or config.get("OPENROUTER_API_KEY")):
+        return item("advanced (cloud)", WARN, "needs setup: no cloud key", "Add GROQ_API_KEY to .env; until then everything runs on the local model")
+    return item("advanced (cloud)", PASS, f"{advanced.used()} of {advanced.daily()} calls used today")
+
+
 def run(level=None, skip_mic=False):
     """The full list of results. `level` replaces the microphone level reader (used by the checks)."""
     results = []
@@ -191,6 +212,7 @@ def run(level=None, skip_mic=False):
         lambda: key_status("OpenRouter key", "OPENROUTER_API_KEY"),
         lambda: key_status("Gmail login", "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD"),
         check_brain_mode,
+        check_advanced,
         check_telegram,
         check_wiki,
         check_holo,

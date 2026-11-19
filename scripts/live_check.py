@@ -71,8 +71,11 @@ with mock.patch.object(live.brain, "ask", lambda *a, **k: (_ for _ in ()).throw(
         check("live answers refuse politely when offline", False)
     except Exception as e:
         check("live answers refuse politely when offline", "offline" in str(e).lower(), str(e))
-os.environ["BRAIN"] = "hybrid"
-check("hybrid is the default mode", config.brain_mode() == "hybrid")
+os.environ.pop("BRAIN", None)
+check("local first is the default mode", config.brain_mode() == "local_first")
+os.environ["BRAIN_MODE"] = "hybrid"
+check("BRAIN_MODE=hybrid keeps the cloud-first order", config.brain_mode() == "hybrid")
+os.environ.pop("BRAIN_MODE")
 
 # browser: sandbox stays on unless root, blank pages never stay
 src = Path(browser.__file__).read_text()

@@ -287,7 +287,7 @@ try:
         check("BROWSER_LITE blocks images", hits["pic"] == 0, str(hits))
         check("and still only one browser runs", len(procs_for_profile()) == 1)
     ran = []
-    with mock.patch.object(core, "run_tool", lambda a, args, s: ran.append((a, args))), mock.patch.object(core.brain, "think", side_effect=AssertionError("brain")):
+    with mock.patch.object(core, "run_tool", lambda a, args, s: ran.append((a, args))), mock.patch.object(core.brain, "tool_turn", side_effect=AssertionError("brain")):
         for phrase, want in (("click About us", ("browse_click", {"text": "About us"})), ("scroll down", ("browse_scroll", {"direction": "down"})),
                              ("read this page", ("browse_read", {})), ("go back", ("browse_back", {})), ("close tab", ("close_tab", {})),
                              ("open github.com", ("browse_open", {"target": "github.com"})), ("go to youtube", ("browse_open", {"target": "youtube"})),

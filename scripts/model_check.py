@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 import types
 from pathlib import Path
 from unittest import mock
@@ -303,6 +304,64 @@ with mock.patch.object(holo, "_run", side_effect=holo.subprocess.TimeoutExpired(
     out = say("open holo")
 check("a bridge that hangs is reported", "did not answer in time" in out, out)
 holo.stop()
+
+# overhangs: the build plate never counts, a 45 degree chamfer is printable, a steeper undercut is not
+def chamfered(inset, rise, at=0.0, bottom=True):
+    """A 20 mm box whose bottom edges are cut back by `inset` over `rise` height."""
+    c = [(x, y) for x in (-10, 10) for y in (-10, 10)]
+    low = [(x - inset * (1 if x > 0 else -1), y - inset * (1 if y > 0 else -1), at) for x, y in c]
+    mid = [(x, y, at + rise) for x, y in c]
+    top = [(x, y, at + 20) for x, y in c]
+    return trimesh.convex.convex_hull(np.array(low + mid + top, dtype=float))
+
+
+def share_of(mesh):
+    return modeler.overhang(mesh)[1]
+
+
+plain = box(20, 20, 20)
+check("a plain cube has no overhang", share_of(plain) == 0.0, share_of(plain))
+lifted = box(20, 20, 20)
+lifted.apply_translation([0, 0, -37.5])
+check("a cube not sitting at z = 0 has none either", share_of(lifted) == 0.0)
+flipped = box(20, 20, 20)
+flipped.invert()
+check("a cube with its faces wound the wrong way has none", share_of(flipped) == 0.0, share_of(flipped))
+check("a 45 degree chamfered box has none: the slope is printable", share_of(chamfered(4, 4)) == 0.0, share_of(chamfered(4, 4)))
+steep = chamfered(8, 2)
+check("a shallow undercut (about 14 degrees from flat) is reported", share_of(steep) > 0.05, share_of(steep))
+check("the mushroom still overhangs", share_of(SHAPES["mushroom"]()) > 0.05)
+big = box(40, 40, 40)
+check("a 40 mm cube is reported clean in the model checks", all(ok for ok, _ in (lambda f: (big.export(str(f)), modeler.inspect(f))[1][1])(tmp / "c40.stl")), "")
+for shape, mesh in (("cube", plain), ("chamfered", chamfered(4, 4))):
+    f = tmp / f"{shape}.stl"
+    mesh.export(str(f))
+    lines = modeler.inspect(f)[1]
+    check(f"the {shape} model report says no big overhangs", (True, "No big overhangs.") in lines, lines)
+
+# a viewer that crashes on start: its own first error line comes back, not a generic message
+crash = tmp / "handctl-crash"
+fake_handctl.make(crash, viewer="crash")
+os.environ["HANDCTL_DIR"] = str(crash)
+holo._s["started"] = False
+out = say("open holo")
+check("the viewer's stderr is read back: ModuleNotFoundError: No module named 'evdev'", "ModuleNotFoundError: No module named 'evdev'" in out, out)
+check("and it is not the generic camera message", "camera" not in out and "within" not in out, out)
+slow = tmp / "handctl-slow"
+fake_handctl.make(slow, viewer="slow")
+os.environ["HANDCTL_DIR"] = str(slow)
+holo.START_WAIT = 20
+t0 = time.time()
+holo.start()
+check("a viewer that takes a few seconds is waited for (up to 20 s)", holo.running() and holo.START_WAIT == 20 and time.time() - t0 >= 2.0, time.time() - t0)
+holo.stop()
+holo.call("close") if holo.running() else None
+silent = tmp / "handctl-silent"
+fake_handctl.make(silent, viewer="silent")
+os.environ["HANDCTL_DIR"] = str(silent)
+out = say("open holo")
+check("a viewer that exits without a word is reported with its exit code", "exit code 3" in out and "said nothing" in out, out)
+os.environ["HANDCTL_DIR"] = str(tmp / "handctl")
 
 # no code path to a printer anywhere in the program
 BANNED = re.compile(r"\b(?:serial|pyserial|octoprint|moonraker|klipper|gcode|g-code|printrun|pronterface|ttyUSB|ttyACM)\b", re.I)

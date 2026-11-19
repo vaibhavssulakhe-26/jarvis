@@ -5,9 +5,9 @@ requests
 dateparser
 piper-tts
 onnxruntime
-scipy
-scikit-learn
-tqdm
+scipy            # used by openwakeword
+scikit-learn    # used by openwakeword (installed with --no-deps)
+tqdm            # used by openwakeword
 PyQt6
 ddgs
 yt-dlp

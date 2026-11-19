@@ -14,11 +14,11 @@ import numpy as np
 import sounddevice as sd
 from scipy.signal import lfilter
 
-from .. import platform, redact
+from .. import platform, redact, traces
 from ..actions import events, mpvctl
 from ..core import config, state
 from ..scheduling import reminders
-from . import echo, listen, ptt, stt, vad, voice
+from . import echo, gate, listen, ptt, stt, vad, voice
 
 SR = stt.SR
 BLOCK = 1280  # 80 ms of audio per step
@@ -30,16 +30,9 @@ ANYWHERE_ALIASES = NAME_ALIASES - {"service"}
 ROLL_BLOCKS = 50  # 4 seconds of audio kept while idle, for "play something Jarvis"
 ROLL_TAIL = 14  # the last 1.1 seconds are the wake word itself
 ROLL_MIN_LOUD = 4
-NOISE = {"you", "thank you", "thanks", "thanks for watching", "bye", "okay", "ok",
-         "yeah", "hmm", "mm", "uh", "um", "oh", "the", "so", "and"}
 END = re.compile(r"^(?:ok(?:ay)? )?(?:thanks|thank you|that(?:s| is) (?:all|it)|that will be all|bye|goodbye|good bye|stop listening|"
                  r"never mind|nothing else)(?: jarvis| so much| a lot)?$")
 WAKE_WORDS = {n.split()[-1].lower() for n in config.wake_names()} or {"jarvis"}
-
-VERBS = {"open", "play", "pause", "stop", "resume", "send", "call", "remind", "mute", "unmute",
-         "lock", "search", "find", "write", "create", "close", "show", "take", "turn", "set",
-         "volume", "louder", "quieter", "softer", "what", "how", "when", "who", "where", "next", "skip", "save", "read",
-         "draft", "message", "text"}
 
 
 def block_rms(block):
@@ -97,11 +90,6 @@ def strip_wake(text):
     return " ".join(words[i:]).strip(" ,.")
 
 
-def is_noise(text):
-    t = re.sub(r"[^\w ]", "", text.lower()).strip()
-    return len(t) < 2 or t in NOISE
-
-
 def make_chime():
     path = config.runtime_file(f"chime_{os.getpid()}.wav")
     parts = []
@@ -131,11 +119,11 @@ def barge_threshold(wake):
 
 
 def followup_seconds():
-    """How long Jarvis keeps listening after a reply without the wake word (FOLLOWUP_SECONDS, default 10)."""
+    """How long the one-turn window stays open after Jarvis asks a question (FOLLOWUP_SECONDS, default 6)."""
     try:
-        return max(0.0, float(config.get("FOLLOWUP_SECONDS", "10")))
+        return max(0.0, float(config.get("FOLLOWUP_SECONDS", str(gate.FOLLOWUP_SECONDS))))
     except ValueError:
-        return 10.0
+        return gate.FOLLOWUP_SECONDS
 
 
 def media_playing():
@@ -153,6 +141,8 @@ class Ears:
     ep = None
     suppress = False
     floor = 0.0
+    source = "wake"  # what started the recording being made: wake, ptt or followup
+    output_seen = False  # music or Jarvis's own voice was playing during it
 
     def __init__(self, on_command):
         """on_command(text, via_wake) runs for each command; return True if you expect a reply."""
@@ -200,6 +190,7 @@ class Ears:
         self.roll = collections.deque(maxlen=ROLL_BLOCKS)
         self.gate = echo.EchoGate()
         self.barge_rec = False
+        self.source, self.output_seen = "wake", False
         self._media, self._media_at = False, 0.0
 
     def _load_wake(self):
@@ -254,9 +245,11 @@ class Ears:
         self.loud = 0
         self.quiet = 0
 
-    def _begin(self, now, phase, preroll=None):
+    def _begin(self, now, phase, preroll=None, source=None):
         state.update(touched_at=time.time())
         mpvctl.duck()
+        self.source = source or self.source
+        self.output_seen = voice.SPEAKING.is_set() or self._media
         self.phase = phase
         self.t0 = now
         self.buf = list(preroll or [])
@@ -271,7 +264,7 @@ class Ears:
         self.ep = vad.Endpointer()
 
     def _after(self, seconds):
-        """Open the window where the next command needs no wake word. Playback and crowd mode keep it shut."""
+        """Open the one-turn window where the next reply needs no wake word. Only called after Jarvis asked a question. Playback and crowd mode keep it shut."""
         time.sleep(0.3)
         self._drain()
         self._reset_wake()
@@ -323,6 +316,8 @@ class Ears:
             self._holding(block, now)
             return
         output = voice.SPEAKING.is_set() or (self.phase is None and self._media_now(now))
+        if self.phase in ("wait", "record") and (voice.SPEAKING.is_set() or self._media_now(now)):
+            self.output_seen = True
         if self.gate.feed(block_rms(block), output and self.phase is None, now) and self.phase is None:
             self._barge(block, now)
             return
@@ -336,7 +331,7 @@ class Ears:
         if st["talk_request"] > self.last_talk:
             self.last_talk = st["talk_request"]
             self.via_wake = True
-            self._begin(now, "wait")
+            self._begin(now, "wait", source="ptt")
             return
         if self.phase is None:
             self._idle(block, rms, now)
@@ -351,7 +346,7 @@ class Ears:
             voice.stop()
         self._drain()
         self.via_wake, self.barge_rec = True, False
-        self._begin(now, "ptt", list(self.roll)[-3:] + [block])
+        self._begin(now, "ptt", list(self.roll)[-3:] + [block], source="ptt")
 
     def _holding(self, block, now):
         self.buf.append(block)
@@ -374,7 +369,7 @@ class Ears:
         """The user is talking over Jarvis or the music. Record it, but only a stop word will be acted on (see _handle)."""
         print("  (voice over the output, listening for a stop word)")
         self.barge_rec = True
-        self._begin(now, "record", list(self.roll)[-4:] + [block])
+        self._begin(now, "record", list(self.roll)[-4:] + [block], source="barge")
 
     def _interrupt(self, block, now):
         """While Jarvis talks only the wake word, at a higher threshold, can cut in ("Hey Jarvis, stop")."""
@@ -387,7 +382,7 @@ class Ears:
             self._drain()
             self._reset_wake()
             self.via_wake = True
-            self._begin(now, "wait")
+            self._begin(now, "wait", source="wake")
 
     def _idle(self, block, rms, now):
         self.noise.append(rms)
@@ -422,9 +417,9 @@ class Ears:
             before = None if listen.crowd() else take_preroll(self.roll, self.thr)
             if before:
                 print("  (speech before the wake word is kept)")
-                self._begin(now, "record", before)
+                self._begin(now, "record", before, source="wake")
             else:
-                self._begin(now, "wait")
+                self._begin(now, "wait", source="wake")
         elif now < self.awake_until and not listen.crowd():
             if rms > self.thr:
                 self.loud += 1
@@ -434,7 +429,8 @@ class Ears:
                         self.awake_until = 0.0
                     else:
                         self.via_wake = False
-                        self._begin(now, "record", list(self.pre))
+                        self.awake_until = 0.0  # one turn: the window is used up by the first sound
+                        self._begin(now, "record", list(self.pre), source="followup")
             else:
                 self.loud = 0
 
@@ -468,19 +464,27 @@ class Ears:
     def _finish(self):
         """Process what was recorded and go back to idle. Nothing keeps recording after this."""
         audio = np.concatenate(self.buf).astype(np.float32) / 32768.0
-        via, barge = self.via_wake, self.barge_rec
+        via, barge, source, output = self.via_wake, self.barge_rec, self.source, self.output_seen
         self._reset()
         if len(audio) >= int(0.5 * SR):
             try:
-                self._handle(audio, via, barge)
+                self._handle(audio, via, barge, source, output)
             except Exception:
                 traceback.print_exc()
                 voice.say("Something broke on my side, but I am still here.")
         self._drain()
         self._reset_wake()
 
-    def _handle(self, audio, via_wake, barge=False):
+    def _hear(self, ok, why, text):
+        """One line for the Activity page and the console saying why an utterance was taken or dropped. Never a chat message."""
+        shown = redact.mask(" ".join(str(text).split()))[:80]
+        line = f"accepted ({why}): {shown}" if ok else f"dropped ({why}): {shown}"
+        print("  " + line)
+        events.emit("hear", line)
+
+    def _handle(self, audio, via_wake, barge=False, source=None, output=False):
         t0 = time.time()
+        source = source or ("wake" if via_wake else "followup")
         if self.suppress:
             audio = vad.denoise(audio)
         raw = stt.transcribe(audio)
@@ -493,28 +497,35 @@ class Ears:
                 events.emit("you", text)
                 self.on_command(text, True)
             else:
-                print(f"  (ignored while Jarvis was talking: {redact.mask(repr(text))})")
+                self._hear(False, "voice over the output, not a stop word", text)
             return
         named = named_anywhere(raw) or any(is_name(w) or is_wake_word(w, 0.7) for w in raw.split()[:3])
-        if listen.crowd() and not (via_wake or named):
-            print(f"  (crowd mode, no wake word: {redact.mask(repr(text))})")
-            return
+        explicit = named or source in ("wake", "ptt")
         if not bare:
-            if via_wake or named:
-                print("  (nothing after the wake word)")
-                voice.say(random.choice(["Yes?", "I am here.", "Go ahead."]))
+            if named and source != "ptt":
+                self._hear(True, "wake word", raw)
+                voice.say(random.choice(["Yes?", "Go ahead."]))
                 voice.wait()
-                self.expect = True
-                self._after(max(self.followup, 10))
+                self._begin(time.time(), "wait", source="wake")
+                self.via_wake = True
             else:
-                print(f"  (ignored: {repr(raw)})")
+                self._hear(False, "nothing intelligible", raw)
             return
+        if listen.crowd() and not explicit:
+            self._hear(False, "crowd mode, no wake word", text)
+            return
+        closing = bool(END.match(bare))
+        ok, why = gate.judge(text, source, named=named, output=output, closing=closing)
+        if not ok:
+            self._hear(False, why, text)
+            return
+        self._hear(True, why, text)
         if re.fullmatch(OPENER, bare):
             print("  (waiting for the rest of the sentence)")
-            self.expect = True
-            self._after(max(self.followup, 10))
+            self._begin(time.time(), "wait", source="wake")
+            self.via_wake = True
             return
-        if END.match(bare) and reminders.active() is None:
+        if closing and reminders.active() is None:
             print("  (conversation closed)")
             events.emit("you", text)
             voice.say(random.choice(["Anytime.", "Okay.", "Alright."]))
@@ -522,21 +533,16 @@ class Ears:
             self.expect = False
             self._after(0)
             return
-        if not self.expect:
-            if is_noise(text):
-                print(f"  (ignored: {repr(text)})")
-                return
-            if not via_wake and len(bare.split()) < 3 and bare.split()[0] not in VERBS:
-                print(f"  (ignored a short remark: {repr(text)})")
-                return
         print(f"heard: {redact.mask(repr(text))}")
         events.emit("you", text)
         t2 = time.time()
-        self.expect = bool(self.on_command(text, via_wake or named))
+        said = voice.SAID[0]
+        self.expect = bool(self.on_command(text, explicit))
         print(f"  [speech to text {t1 - t0:.1f}s, thinking and acting {time.time() - t2:.1f}s]")
         voice.wait()
-        asked = voice.LAST[0].strip().endswith("?")
-        self._after(max(self.followup, 20) if (self.expect or asked) else self.followup)
+        asked = voice.SAID[0] != said and voice.LAST[0].strip().endswith("?")
+        question = (self.expect or asked) and not traces.last_failed()
+        self._after(self.followup if question else 0)
 
 
 def _demo(text, via_wake):

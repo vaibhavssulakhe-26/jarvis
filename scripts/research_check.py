@@ -34,7 +34,7 @@ FINAL = "SAY: Graphs link nodes with edges. BFS uses a queue. DFS uses a stack.\
 calls = []
 
 
-def fake_ask(prompt, max_tokens=0, system=None, cache=False, local=False):
+def fake_ask(prompt, max_tokens=0, system=None, cache=False, local=False, **kw):
     calls.append(system or "")
     if system == topic.FINAL_SYSTEM:
         return FINAL

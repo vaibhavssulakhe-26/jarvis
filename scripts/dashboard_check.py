@@ -103,7 +103,7 @@ win.show_study()
 check("Study appears with STUDY=on", not win.nav["Study"].isHidden())
 os.environ.pop("STUDY")
 win.show_study()
-check("the status pill shows the brain mode", "HYBRID" in win.pill.text(), win.pill.text())
+check("the status pill shows the brain mode", "LOCAL FIRST" in win.pill.text(), win.pill.text())
 os.environ["BRAIN"] = "offline"
 win.refresh_page()
 check("the status pill follows BRAIN=offline", "OFFLINE" in win.pill.text())
@@ -197,7 +197,7 @@ win.poll.start(window.POLL_MS)
 ran = []
 for phrase, want in (("change theme to red", {"theme": "red"}), ("next theme", {"theme": "next"}), ("random theme", {"theme": "random"}),
                      ("set the colour to green", {"theme": "green"})):
-    with mock.patch.object(core, "run_tool", lambda a, args, s: ran.append((a, args))), mock.patch.object(core.brain, "think", side_effect=AssertionError("brain")):
+    with mock.patch.object(core, "run_tool", lambda a, args, s: ran.append((a, args))), mock.patch.object(core.brain, "tool_turn", side_effect=AssertionError("brain")):
         core.direct(phrase)
     check(f"{phrase!r} routes to change_theme", ran and ran[-1] == ("change_theme", want), str(ran[-1:]))
 out = tools.TOOLS["change_theme"]["fn"]({"theme": "red"})
@@ -457,6 +457,15 @@ check("agents start idle", home.agents.text().count("idle") == 5, home.agents.te
 window.events.agent_start("research")
 home.refresh()
 check("a running agent shows as running", home.agents.text().count("running") == 1 and "Research" in home.agents.text())
+check("every agent name has a gap before its state", len(re.findall(r"(?:Coder|Browser|Research|Notes|Study)(?:&nbsp;){2,}<span", home.agents.text())) == 5, home.agents.text())
+from jarvis.memory import threads as _threads  # noqa: E402
+_before = len(_threads.current()["messages"])
+window.events.emit("hear", "dropped (repeated syllables): da da da da")
+window.events.emit("hear", "accepted (wake word): open the browser")
+pump(0.2)
+check("heard lines reach the Activity log with the reason", any("dropped (repeated syllables)" in l for l in win.ctx.activity) and any("accepted (wake word)" in l for l in win.ctx.activity), win.ctx.activity[-3:])
+check("a dropped line is never a chat message or a routed command", len(_threads.current()["messages"]) == _before and not any("da da da" in f["heard"] for f in win.ctx.feed))
+check("no activity label touches its text", all(re.match(r"^\d\d:\d\d \S+ +\S", l) for l in win.ctx.activity), win.ctx.activity[:3])
 window.events.agent_end("research")
 check("the timeline and the feed have placeholders, not empty panels", "no reminders today" in act.today.text() and ("Nothing heard yet" in act.feed.text() or home.ctx.feed))
 for k in range(15):
@@ -553,11 +562,18 @@ check("the top bar shows date and time", re.search(r"\d{2}:\d{2}", win.clock_lab
 win.update_pill()
 check("one status pill has mode, state and warnings", win.pill.text().count("\u00b7") >= 1 and win.theme_btn.text() == "THEME")
 check("the pill detail is closed until clicked", win.pill_detail.isHidden())
+check("the System, Brains and Agents panels are folded into the pill by default", win.pages["Home"].status_block.isHidden())
 win.pill.click()
 pump(0.1)
 check("clicking the pill opens the details", not win.pill_detail.isHidden() and "Mode" in win.pill_text.text() and "Groq" in win.pill_text.text(), win.pill_text.text())
+check("the pill opens them with the details", not win.pages["Home"].status_block.isHidden())
+rows = [l for l in win.pill_text.text().splitlines() if l.strip()]
+check("every status label is followed by spaces before its value", all(re.match(r"^\S.*?\S {2,}\S", l) for l in rows), rows)
+check("the values line up in one column", len({len(l) - len(l.split("  ", 1)[1].lstrip()) for l in rows}) == 1, rows)
+check("Offline model and OpenRouter have a gap too", any(re.match(r"^OpenRouter {2,}\S", l) for l in rows) and any(re.match(r"^Offline model {2,}\S", l) for l in rows), rows)
+check("a provider is described by its last call, not as reachable", "reachable" not in win.pill_text.text() and "not called yet" in win.pill_text.text() or "last call" in win.pill_text.text(), win.pill_text.text())
 win.pill.click()
-check("and clicking again closes them", win.pill_detail.isHidden())
+check("and clicking again closes them", win.pill_detail.isHidden() and win.pages["Home"].status_block.isHidden())
 
 # orb states are clearly different
 frames = {}

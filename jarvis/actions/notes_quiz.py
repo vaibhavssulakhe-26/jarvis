@@ -13,7 +13,6 @@ import time
 from datetime import date, timedelta
 
 from ..brain import brain
-from ..core import config
 from ..memory import rag
 from . import study
 from .tools import ToolError, tool

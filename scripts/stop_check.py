@@ -15,6 +15,7 @@ os.environ["JARVIS_DATA"] = scratch
 os.environ["XDG_STATE_HOME"] = scratch
 os.environ["XDG_RUNTIME_DIR"] = scratch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+os.environ["BRAIN_MODE"] = "hybrid"
 
 from jarvis.actions import tools  # noqa: E402,F401
 from jarvis.core import main, state  # noqa: E402
@@ -98,7 +99,7 @@ stopped = []
 for phrase in ("stop", "stop talking", "quiet", "enough", "shut up", "ruko", "चुप", "Stop."):
     del stopped[:]
     with mock.patch.object(main.voice, "stop", lambda: stopped.append(1) or True), \
-            mock.patch.object(main.brain, "think", side_effect=AssertionError("brain")), \
+            mock.patch.object(main.brain, "tool_turn", side_effect=AssertionError("brain")), \
             mock.patch.object(main.brain, "chat", side_effect=AssertionError("brain")):
         main._handle(phrase)
     check(f"{phrase!r} stops speech without the brain", len(stopped) == 1)
@@ -152,54 +153,76 @@ with mock.patch.object(voice, "stop", lambda: cuts.append(1) or True):
     check("the wake word while speaking cuts the audio", len(cuts) == 1)
     check("and Jarvis starts listening for the command", e.phase == "wait" and e.via_wake)
 
-# follow-up window: no wake word needed for a while after a reply, closed by thanks / bye / silence, shut while media plays
+# follow-up window: one turn after Jarvis asks a question, closed by thanks / bye / silence, shut while media plays
 said_f, asked_f = [], []
 f = ears.Ears.__new__(ears.Ears)
 f._init_echo()
-f.followup, f.expect, f.awake_until, f.via_wake = 10.0, False, 0.0, False
+f.followup, f.expect, f.awake_until, f.via_wake = 6.0, False, 0.0, False
 f.q, f.oww = queue.Queue(), FakeOww()
 f.noise, f.pre = [], __import__("collections").deque(maxlen=3)
 f.buf, f.loud, f.quiet, f.n, f.thr, f.t0 = [], 0, 0, 0, 0.02, 0.0
 f.phase, f.cool_until, f.deaf_until, f.chimed, f.reported = None, 0.0, 0.0, False, True
 f.debug, f.debug_at, f.barge_thr, f.wake_thr = False, 0.0, 0.7, 0.4
-heard = {"text": "open youtube"}
+heard = {"text": "open youtube", "reply": "Done."}
 asked_f = []
 playing = {"on": False}
 real_after = ears.Ears._after
 f._reset_wake = lambda: None
 
 
-def run_hear(text, via=False):
-    heard["text"] = text
+def fake_say(t, *a, **k):
+    said_f.append(str(t))
+    ears.voice.LAST[0] = str(t)
+    ears.voice.SAID[0] += 1
+
+
+def run_hear(text, via=False, reply="Done.", source=None):
+    heard["text"], heard["reply"] = text, reply
     del said_f[:]
     del asked_f[:]
     f.awake_until = 0.0
     with mock.patch.object(ears.stt, "transcribe", lambda a: heard["text"]), mock.patch.object(ears.time, "sleep", lambda s: None), \
-            mock.patch.object(ears.voice, "say", lambda t: said_f.append(str(t))), mock.patch.object(ears.voice, "wait", lambda: None), \
+            mock.patch.object(ears.voice, "say", fake_say), mock.patch.object(ears.voice, "wait", lambda: None), \
             mock.patch.object(ears.voice, "LAST", ["Done."]), mock.patch.object(ears.mpvctl, "playing", lambda: playing["on"]), \
             mock.patch.object(ears, "media_playing", lambda: playing["on"] or playing.get("other", False)), mock.patch.object(ears.events, "emit"), \
             mock.patch.object(ears.reminders, "active", lambda: None):
-        f._handle(np.zeros(16000, dtype=np.float32), via)
+        f._handle(np.zeros(16000, dtype=np.float32), via, False, source)
 
 
-f.on_command = lambda text, via: asked_f.append(text) or False
+def on_cmd(text, via):
+    asked_f.append(text)
+    if heard["reply"]:
+        fake_say(heard["reply"])
+    return False
+
+
+f.on_command = on_cmd
 playing["on"] = False
 before = time.time()
-run_hear("open youtube", via=True)
-check("a reply opens a ten second follow-up window", 9 < f.awake_until - before < 11, str(f.awake_until - before))
+run_hear("open youtube", via=True, reply="Which one do you mean?")
+check("a question opens a six second follow-up window", 5 < f.awake_until - before < 7, str(f.awake_until - before))
+run_hear("open youtube", via=True, reply="Opening it.")
+check("a plain reply opens no window", f.awake_until == 0.0, str(f.awake_until))
+with mock.patch.object(ears.traces, "last_failed", lambda: True):
+    run_hear("open youtube", via=True, reply="Which one do you mean?")
+check("a failed request never re-arms the window", f.awake_until == 0.0)
 f.followup = 4.0
-run_hear("open youtube", via=True)
+run_hear("open youtube", via=True, reply="Which one?")
 check("the window length follows FOLLOWUP_SECONDS", 3 < f.awake_until - time.time() < 5)
-f.followup = 10.0
+f.followup = 6.0
 with mock.patch.dict(os.environ, {"FOLLOWUP_SECONDS": "7"}):
     check("FOLLOWUP_SECONDS is read from the environment", ears.followup_seconds() == 7.0)
 with mock.patch.dict(os.environ, {"FOLLOWUP_SECONDS": "x"}):
-    check("a bad FOLLOWUP_SECONDS falls back to ten", ears.followup_seconds() == 10.0)
+    check("a bad FOLLOWUP_SECONDS falls back to six", ears.followup_seconds() == 6.0)
 os.environ.pop("FOLLOWUP_SECONDS", None)
-check("the default is ten seconds", ears.followup_seconds() == 10.0)
-run_hear("what is the weather like today")
-check("a follow-up without the wake word is handled", asked_f == ["what is the weather like today"], str(asked_f))
-check("and it opens a fresh window", f.awake_until - time.time() > 9)
+check("the default is six seconds", ears.followup_seconds() == 6.0)
+run_hear("what is the weather like today", reply="Done.")
+check("a three word reply in the window is handled", asked_f == ["what is the weather like today"], str(asked_f))
+check("and a plain answer leaves the window shut", f.awake_until == 0.0)
+run_hear("yes", reply="Done.")
+check("a yes is an answer even though it is short", asked_f == ["yes"], str(asked_f))
+run_hear("Hmm")
+check("a filler in the window is dropped", not asked_f)
 for phrase in ("thanks", "That's all", "bye", "stop listening", "thank you jarvis", "okay thanks"):
     run_hear(phrase)
     check(f"{phrase!r} closes the window without a model call", f.awake_until == 0.0 and not asked_f and len(said_f) == 1, f"{f.awake_until} {asked_f} {said_f}")
@@ -222,18 +245,20 @@ duck_patches = [mock.patch.object(ears.mpvctl, "duck", fake_duck), mock.patch.ob
 for dp in duck_patches:
     dp.start()
 playing["on"] = True
-run_hear("play some lofi", via=True)
-check("the window stays open while mpv plays, with mpv turned down", f.awake_until - time.time() > 9 and duck_state["on"], str(f.awake_until))
+run_hear("play some lofi", via=True, reply="Which song?")
+check("the window stays open while mpv plays, with mpv turned down", f.awake_until - time.time() > 5 and duck_state["on"], str(f.awake_until))
 duck_state["on"] = False
 playing["on"], playing["other"] = False, True
-run_hear("play some lofi", via=True)
+run_hear("play some lofi", via=True, reply="Which song?")
 playing["other"] = False
 check("other players still close the window", f.awake_until == 0.0)
 playing["on"] = True
 duck_state["on"] = False
 for phrase in ("stop playing", "pause", "resume", "next", "louder", "quieter"):
+    run_hear(phrase, via=True)
+    check(f"{phrase!r} works during playback with the wake word", asked_f == [phrase], str(asked_f))
     run_hear(phrase)
-    check(f"{phrase!r} works inside the window without the wake word", asked_f == [phrase], str(asked_f))
+    check(f"{phrase!r} is dropped during playback without it", not asked_f, str(asked_f))
 duck_state["on"] = False
 playing["on"] = False
 g = ears.Ears.__new__(ears.Ears)
@@ -299,7 +324,7 @@ for phrase, want in (("stop", "quit"), ("Stop.", "quit"), ("stop music", "quit")
     del calls[:]
     with mock.patch.object(main.mpvctl, "running", lambda: fake_mpv["running"]), mock.patch.object(main.mpvctl, "playing", lambda: fake_mpv["playing"]), \
             mock.patch.object(main.mpvctl, "stop", lambda: calls.append("quit")), mock.patch.object(main.mpvctl, "pause", lambda on=True: calls.append("pause")), \
-            mock.patch.object(main.brain, "think", side_effect=AssertionError("brain")), mock.patch.object(main.brain, "chat", side_effect=AssertionError("brain")):
+            mock.patch.object(main.brain, "tool_turn", side_effect=AssertionError("brain")), mock.patch.object(main.brain, "chat", side_effect=AssertionError("brain")):
         main._handle(phrase)
     check(f"{phrase!r} {want}s mpv while it runs, no brain", calls == [want], str(calls))
 del calls[:]
@@ -381,6 +406,7 @@ _brain._offline_until[0] = 0.0
 msgs = [{"role": "user", "content": "hi"}]
 with mock.patch.object(_brain, "PROVIDERS", (("groq", limited("groq")), ("openrouter", limited("openrouter")), ("ollama", limited("ollama")))), \
         mock.patch.object(voice, "say", lambda t: said_b.append(str(t))), mock.patch.object(_brain, "_room", lambda n, t: True):
+    _brain.begin_turn()
     out = _brain.route(msgs)
     check("both clouds 429 -> the offline model answers", out[1] == "ollama", str(out))
     check("the rate limit is announced once", len(said_b) == 1 and "rate limited" in said_b[0], str(said_b))

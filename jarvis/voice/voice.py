@@ -18,6 +18,7 @@ from . import speech, voices
 
 SPEAKING = threading.Event()
 LAST = [""]
+SAID = [0]  # how many lines have been said, so a caller can tell whether a command said anything new
 _queue = queue.Queue()
 _voice = [None, None]
 _gen = [0]
@@ -218,6 +219,7 @@ def say(text, skip=0, limit=None):
         _cap.lines.append(text)
         return
     LAST[0] = text
+    SAID[0] += 1
     print(f"  {text}")
     events.emit("jarvis", text)
     if lang.script(text) == "kn" and voices.for_language("kn") is None:

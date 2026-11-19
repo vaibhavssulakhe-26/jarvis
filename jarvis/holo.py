@@ -1,5 +1,7 @@
-"""The holo viewer from handctl, driven through its own bridge.py (a Unix socket in $XDG_RUNTIME_DIR/handctl, local only). Jarvis never opens that socket
-itself: it runs `<HANDCTL_DIR>/.venv/bin/python bridge.py open|load NAME|reset|close`. The viewer only loads files from handctl's models folder by name, so a model
+"""The holo viewer from handctl, driven through its own bridge.py (a Unix socket in $XDG_RUNTIME_DIR/handctl, local only). Jarvis never talks on that socket
+itself: it runs `<HANDCTL_DIR>/.venv/bin/python bridge.py load NAME|reset|close`. To start the viewer it runs handctl's hand_mouse.py --holo itself (bridge.py open
+throws the viewer's error output away), keeps stderr in a private log and reports the first useful line of it if the viewer does not come up; without
+hand_mouse.py it falls back to `bridge.py open`. The viewer only loads files from handctl's models folder by name, so a model
 made by Jarvis is linked there as jarvis-<name>.stl (a symlink to models/<name>/model.stl, nothing is copied). The viewer reads that folder once at start, so a new
 name makes Jarvis restart it."""
 import atexit
@@ -13,7 +15,8 @@ from pathlib import Path
 from .core import config
 from .core.errors import ToolError
 
-START_WAIT = 12.0
+START_WAIT = 20.0
+VIEWER_SCRIPT = "hand_mouse.py"
 STOP_WAIT = 5.0
 CALL_SECONDS = 15
 PREFIX = "jarvis-"
@@ -98,12 +101,69 @@ def _wait(want, seconds):
     return _alive() == want
 
 
+def first_error(text):
+    """The first useful line of a viewer's stderr: the exception that ends a traceback ("ModuleNotFoundError: No module named 'evdev'"), else the
+    first line that mentions an error, else the last line. Empty when there is nothing."""
+    lines = [l.strip() for l in str(text).splitlines() if l.strip()]
+    for l in reversed(lines):
+        if re.match(r"^(?:[\w.]+\.)?\w*(?:Error|Exception|Exit)\b", l):
+            return l[:160]
+    for l in lines:
+        if re.search(r"error|cannot|can't|could not|failed|no module|not found", l, re.I):
+            return l[:160]
+    return lines[-1][:160] if lines else ""
+
+
+def _log_path():
+    return config.runtime_file("holo-viewer.log")
+
+
+def _spawn():
+    """Start the viewer directly, its error output going to a private log, so a failure can be read back. (bridge.py open discards it.)"""
+    with open(_log_path(), "w", encoding="utf-8") as log:
+        return subprocess.Popen([str(python()), str(home() / VIEWER_SCRIPT), "--holo"], cwd=home(), stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=log, start_new_session=True)
+
+
+def _log_text():
+    try:
+        return _log_path().read_text(encoding="utf-8", errors="replace")[-4000:]
+    except OSError:
+        return ""
+
+
+def _wait_up(proc, seconds):
+    """True when the viewer's socket answers. Gives up early when the child process has already ended."""
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if _alive():
+            return True
+        if proc is not None and proc.poll() is not None:
+            return _alive()
+        time.sleep(0.25)
+    return _alive()
+
+
 def start():
-    """Make sure a viewer is running. Returns True when this call started it."""
+    """Make sure a viewer is running. Returns True when this call started it. On failure the error says why, from the viewer's own stderr."""
     if _alive():
         return False
-    call("open")
-    if not _wait(True, START_WAIT):
+    proc = None
+    if (home() / VIEWER_SCRIPT).is_file():
+        try:
+            proc = _spawn()
+        except OSError as e:
+            raise ToolError(f"I could not start the hologram viewer: {e.strerror or e}.")
+    else:
+        call("open")
+    if not _wait_up(proc, START_WAIT):
+        line = first_error(_log_text()) if proc is not None else ""
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+        if line:
+            raise ToolError(f"The hologram viewer did not start: {line}.")
+        if proc is not None and proc.poll() is not None:
+            raise ToolError(f"The hologram viewer stopped right away (exit code {proc.returncode}) and said nothing.")
         raise ToolError(f"The hologram viewer did not start within {START_WAIT:.0f} seconds. Check that the camera is free and that handctl runs on its own.")
     _s["started"] = True
     return True
@@ -157,7 +217,8 @@ def resolve(name=""):
         if raw in GENERIC:
             raise
     stems = [p.stem for p in _folder().glob("*") if p.suffix.lower() in (".stl", ".obj") and not p.stem.startswith(PREFIX)] if _folder().is_dir() else []
-    hit = [s for s in stems if s.lower() == raw] or [s for s in stems if s.lower().startswith(raw)]
+    flat = modeler.squash(raw)
+    hit = [s for s in stems if s.lower() == raw] or [s for s in stems if s.lower().startswith(raw)] or [s for s in stems if flat and modeler.squash(s) == flat]
     if raw and len(hit) == 1:
         return hit[0], hit[0], None
     raise ToolError(f"I do not have a model called {raw[:30]}.")
@@ -195,6 +256,9 @@ def show(name=""):
         _s["started"] = False
     start()
     call("load", load)
+    if src:
+        from .core import refs
+        refs.remember("model", load[len(PREFIX):], src)
     return spoken
 
 

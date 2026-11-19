@@ -26,6 +26,7 @@ os.environ["GROQ_VISION_MODEL"] = "fake-vision"
 for k in ("BRAIN", "GMAIL_ADDRESS", "RAG_FOLDERS", "FILE_DENY"):
     os.environ.pop(k, None)
 sys.path.insert(0, str(ROOT))
+os.environ["BRAIN_MODE"] = "hybrid"
 
 for name in ("IMG_0001.jpg", "IMG_0002.jpg", "IMG_0003.jpg", "IMG_0004.jpg", "IMG_0005.jpg", "holiday.png"):
     (fake_home / "Pictures" / name).write_bytes(b"\x89fake")
@@ -53,7 +54,7 @@ MODEL_CALLS = []
 SEEN_SYSTEM = []
 
 
-def model(messages, specs, max_tokens=500):
+def model(messages, specs, max_tokens=500, **kw):
     """A scripted stand-in for the provider: picks a tool from what it was offered, and answers once results are in."""
     MODEL_CALLS.append(messages[-1]["role"])
     SEEN_SYSTEM.append(messages[0]["content"])
@@ -196,7 +197,7 @@ with mock.patch.object(brain, "tool_turn", model), mock.patch.object(brain, "cha
         first = said("tell me about the moon")
         second = said("tell me about the sun")
     ex("no brain: a cause the first time, not the same line again", first != second and "No brain answered" in first and "Still" in second, f"{first} | {second}")
-    with mock.patch.object(brain, "tool_turn", lambda messages, specs, max_tokens=1: {"text": "ok", "calls": [], "provider": "ollama"}):
+    with mock.patch.object(brain, "tool_turn", lambda messages, specs, max_tokens=1, **kw: {"text": "ok", "calls": [], "provider": "ollama"}):
         out = said("what is in the documents folder")
     ex("offline replies are prefixed", out.startswith("(offline)"), out)
     box = tmp / "outbox" / "phone.txt"
@@ -229,13 +230,17 @@ said_lines = []
 brain._busy.clear()
 brain._outage.update(said=False, no_brain=False)
 brain.FAILED.clear()
+brain.begin_turn()
 with mock.patch.dict(os.environ, {"GROQ_API_KEY": "gsk-x"}), mock.patch.object(brain._http, "post", lambda *a, **k: bad), \
         mock.patch.object(brain, "_ensure_ollama", lambda: False), mock.patch.object(voice, "say", lambda t, *a, **k: said_lines.append(str(t))):
     got, who = brain.route([{"role": "user", "content": "hi"}], 50, want_json=False)
+    routed_said = list(said_lines)
     first = brain.outage_line()
+    again = brain.outage_line()
+    brain.begin_turn()
     second = brain.outage_line()
-ex("every cloud tier failing is said once with the cause and the reset time", got is None and len(said_lines) == 1 and "rate limited" in said_lines[0] and "resets in about 4" in said_lines[0], str(said_lines))
-ex("the no-brain line names the cause the first time and is shorter after", "rate limited" in first and first != second and len(second) < len(first), f"{first} | {second}")
+ex("all cloud tiers failing says nothing inside route, the no-brain line says it once per turn", got is None and not routed_said and again == "", f"{routed_said} | {again}")
+ex("the no-brain line names the cause and the reset time the first time and is shorter after", "rate limited" in first and "resets in about 4" in first and first != second and len(second) < len(first), f"{first} | {second}")
 brain._busy.clear()
 
 for p in patches:

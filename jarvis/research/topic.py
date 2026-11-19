@@ -116,7 +116,7 @@ def run_research(topic, max_pages=RESULTS):
     time.sleep(GAP)
     body = "\n\n".join(f"[{i}] {site(u)}: {s}" for i, (u, s) in enumerate(summaries, 1))
     reply = brain.ask(f"Today is {datetime.now().strftime('%d %B %Y')}. Topic: {topic}\n\n{body}", 700,
-                      system=FINAL_SYSTEM, cache=True)
+                      system=FINAL_SYSTEM, cache=True, advanced=True)
     said, note = split_reply(reply)
     if not said or not note:
         raise ToolError("I read the sources but could not write the brief right now. Try again in a minute.")

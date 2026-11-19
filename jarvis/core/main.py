@@ -2,7 +2,6 @@
 import atexit
 import difflib
 import json
-import random
 import re
 import signal
 import sys
@@ -11,8 +10,9 @@ import time
 from datetime import datetime, timedelta
 
 from ..actions import apps, browser, events, web_agent, capabilities, clipwatch, coder, files, mail, modeler, mpvctl, play, procs, study, tools
-from ..brain import agent, brain, companion
-from . import config, state
+from ..brain import advanced, agent, brain, companion
+from . import config, refs, state
+from .errors import Ask
 from .. import holo, telegram, traces
 from ..research import live as research_live, topic as research_topic, wiki as research_wiki
 from ..jobs import interview
@@ -97,21 +97,6 @@ LAUNCH = {"open_app", "open_folder", "play_media", "open_url", "web_search"}
 _recent = {}
 
 
-def dedupe(plans):
-    """Drop repeated actions, and an open-YouTube action when a play action is also there."""
-    has_play = any(str(p.get("action")) == "play_media" for p in plans)
-    out, seen = [], set()
-    for p in plans:
-        act = str(p.get("action"))
-        args = p.get("args") if isinstance(p.get("args"), dict) else {}
-        if has_play and act == "open_app" and "youtube" in str(args.get("name", "")).lower():
-            continue
-        key = (act, json.dumps(args, sort_keys=True, default=str))
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(p)
-    return out
 
 
 AGENTS = {
@@ -236,6 +221,10 @@ def check_pending(text):
         browser.forget_downloads()
         voice.say("Okay, cancelled.")
         return True
+    if action == "advanced_confirm":
+        advanced.replay(args["text"])
+        _handle(args["text"], via_wake=False)
+        return True
     do_tool(action, args)
     return True
 
@@ -248,6 +237,9 @@ DIRECT = [
     (re.compile(r"^(?:please )?(?:open|start|launch|turn on) (?:the )?(?:holo|hologram|holo ?gram viewer|holo viewer)$", re.I), "open_holo", lambda m: {}),
     (re.compile(r"^(?:please )?(?:close|stop|turn off|shut down|exit) (?:the )?(?:holo|hologram|holo viewer)$", re.I), "close_holo", lambda m: {}),
     (re.compile(r"^(?:please )?reset (?:the )?(?:holo|hologram|holo view|hologram view)$", re.I), "reset_holo", lambda m: {}),
+    (re.compile(r"^(?:please )?(?:(?:open|show|view|display|load|put)(?: me)? (?:it|that|this)(?: up| again)?|(?:pull|bring) (?:it|that|this) up|"
+                r"(?:view|show|open) (?:the )?model)(?: (?:on|in|with) (?:the )?(?:holo|hologram|holo ?gram viewer))?$", re.I),
+     "open_last", lambda m: {"holo": bool(re.search(r"holo", m.group(0), re.I))}, lambda: refs.latest() is not None),
     (re.compile(r"^(?:please )?(?:show|display|put|open|load) (?:me )?(.+?)(?: (?:on|in) (?:the )?(?:holo|hologram|holo viewer))?$", re.I),
      "show_model", lambda m: {"name": m.group(1)} if holo.wants(m.group(1), "holo" in m.group(0).lower()) else None),
     (re.compile(r"^(.+)$"), "make_model", lambda m: modeler.take_answer(m.group(1)), modeler.asking),
@@ -323,7 +315,7 @@ DIRECT = [
      "practice_interview", lambda m: {"role": m.group(1) or m.group(2) or ""}),
     (re.compile(r"^what are my (?:weak|weakest) interview (?:areas|spots|topics)$", re.I), "interview_weak_areas", lambda m: {}),
     (capabilities.ASK, "capabilities", lambda m: {}),
-    (capabilities.CAN, "capabilities", lambda m: {"question": m.group(0)}),
+    (capabilities.CAN, "capabilities", lambda m: {"question": m.group(0)} if capabilities.is_generic_can(m.group(0)) else None),
     (re.compile(r"^(?:please )?(?:next(?: one| video| song| track)?|another(?: one)?|not this one|something else|play (?:the )?next(?: one| video| song)?)$", re.I),
      "play_next", lambda m: {}, play.active),
     (re.compile(r"^(?:please )?pause(?: it| the (?:video|music|song))?$", re.I), "player_control", lambda m: {"do": "pause"}, mpvctl.running),
@@ -674,6 +666,7 @@ def collapse_repeats(text):
 
 def handle(text, via_wake=True):
     with _handle_lock:
+        brain.begin_turn(text)
         traces.begin(text, answering=bool(PENDING) or files.waiting() or play.asking() or study.waiting() or coder.asking() or interview.waiting())
         try:
             return _handle(text, via_wake)
@@ -681,6 +674,7 @@ def handle(text, via_wake=True):
             traces.fail("crashed")
             raise
         finally:
+            brain.end_turn()
             traces.end()
 
 
@@ -760,24 +754,27 @@ def _handle(text, via_wake=True):
         names = agent.pick(text)
         remote = getattr(REMOTE, "gate", None)
         asked = False
-        if names:
-            line = agent.turn(text, names)
-        else:
-            events.emit("route", "brain chat")
-            streamer = None if remote else voice_stream.Streamer()
-            try:
-                plan = brain.chat(text, on_delta=streamer.feed if streamer else None)
-            finally:
-                if streamer:
-                    streamer.finish()
-            line = None if plan is None else str(plan.get("say") or "")
-            asked = bool(line) and line.rstrip().endswith("?")
-            if line is not None and streamer and streamer.spoken:
-                voice.say(line, skip=streamer.spoken, limit=brain.QUALITY_SENTENCES if brain.quality() else None)
-                line = ""
-            elif line is not None:
-                voice.say(line, limit=brain.QUALITY_SENTENCES if brain.quality() else None)
-                line = ""
+        try:
+            if names:
+                line = agent.turn(text, names)
+            else:
+                events.emit("route", "brain chat")
+                streamer = None if remote else voice_stream.Streamer()
+                try:
+                    plan = brain.chat(text, on_delta=streamer.feed if streamer else None)
+                finally:
+                    if streamer:
+                        streamer.finish()
+                line = None if plan is None else str(plan.get("say") or "")
+                asked = bool(line) and line.rstrip().endswith("?")
+                if line is not None and streamer and streamer.spoken:
+                    voice.say(line, skip=streamer.spoken, limit=brain.QUALITY_SENTENCES if brain.quality() else None)
+                    line = ""
+                elif line is not None:
+                    voice.say(line, limit=brain.QUALITY_SENTENCES if brain.quality() else None)
+                    line = ""
+        except Ask as e:
+            line = str(e)
         print(f"  [brain {time.time() - t0:.1f}s ~{brain.take_tokens()} tokens]")
         if line is None:
             traces.fail("no brain")
@@ -807,6 +804,7 @@ def start(watch_reminders=True):
     state.update(paused=False)
     threads.attach()
     threads.changed.append(facts.on_new_chat)
+    threads.rollover()
     facts.watch()
     atexit.register(brain.finish)
     atexit.register(mpvctl.stop)

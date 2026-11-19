@@ -11,8 +11,8 @@ for f in scripts/*_check.py; do
     mkdir -p -m 700 "$iso/run"
     extra=""
     [ "$name" = "core_check" ] && extra="--scratch"
-    if JARVIS_DATA="$iso/data" XDG_RUNTIME_DIR="$iso/run" XDG_STATE_HOME="$iso/state" CODE_WORKSPACE="$iso/work" HANDOFF_DIR="$iso/outbox" \
-       NOTES_DIR="$iso/notes" HANDCTL_DIR="$iso/no-handctl" JARVIS_PROFILE= \
+    if JARVIS_DATA="$iso/data" XDG_RUNTIME_DIR="$iso/run" XDG_STATE_HOME="$iso/state" CODE_WORKSPACE="$iso/work" \
+       HANDCTL_DIR="$iso/no-handctl" JARVIS_PROFILE= \
        timeout 180 python "$f" $extra >/tmp/jarvis-$name.log 2>&1; then
         echo "pass  $name"
     else

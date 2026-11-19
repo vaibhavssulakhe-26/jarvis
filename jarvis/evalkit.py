@@ -50,7 +50,7 @@ calls = []
 done = []
 
 
-def fake_route(messages, max_tokens=500, want_json=True, local=False):
+def fake_route(messages, max_tokens=500, want_json=True, local=False, **kw):
     calls.append({"messages": messages, "json": want_json})
     return ('{"action": "chat", "say": "ok"}' if want_json else "ok"), "mock"
 
@@ -58,13 +58,13 @@ def fake_route(messages, max_tokens=500, want_json=True, local=False):
 _real_route = brain.route
 
 
-def via_route(messages, max_tokens, hard=False, on_delta=None, want_json=False):
+def via_route(messages, max_tokens, hard=False, on_delta=None, want_json=False, **kw):
     """Stands in for brain.generate: the probe measures the request, so it goes through whichever route is patched in."""
     text, who = brain.route(messages, max_tokens, want_json)
     return text, ("offline" if who == "ollama" else "fast") if text else None
 
 
-def spy_route(messages, max_tokens=500, want_json=True, local=False):
+def spy_route(messages, max_tokens=500, want_json=True, local=False, **kw):
     entry = {"messages": messages, "json": want_json}
     calls.append(entry)
     text, who = _real_route(messages, max_tokens, want_json, local)

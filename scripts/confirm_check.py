@@ -34,7 +34,7 @@ def fresh():
 patches = [mock.patch.object(main.voice, "say", lambda t: said.append(str(t))), mock.patch.object(apps.windows, "close_active", lambda: closed.append(1)),
            mock.patch.object(apps.windows, "active_window", lambda max_age=2.0: ("org.kde.dolphin", "Downloads - Dolphin")),
            mock.patch.object(main.voice.SPEAKING, "is_set", lambda: False),
-           mock.patch.object(main.brain, "think", side_effect=AssertionError("brain")), mock.patch.object(main.brain, "chat", side_effect=AssertionError("brain"))]
+           mock.patch.object(main.brain, "tool_turn", side_effect=AssertionError("brain")), mock.patch.object(main.brain, "chat", side_effect=AssertionError("brain"))]
 for p in patches:
     p.start()
 

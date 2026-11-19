@@ -31,6 +31,8 @@ ASK = re.compile(r"^(?:hey |ok |okay |so )?(?:please )?(?:help|what can you do(?
 CAN = re.compile(r"^(?:hey |ok |okay |so )?(?:please )?(?:can|could|are) you (?:now |finally |also |even |really )*(?:able to )?"
                  r"(do (?:it|that|this)(?: now)?|build|code|program|write code|write programs|run code|run programs|create (?:an? )?(?:app|apps|program|website|project)|make (?:an? )?(?:app|apps|program|website)|"
                  r"browse|surf|search the web|use (?:a|the) browser|open websites|control (?:a|the) browser)\b.*$", re.I)
+GENERIC_REST = re.compile(r"^(?:(?:a|an|the|any|some|stuff|things|apps?|programs?|websites?|web|code|software|projects?|pages?|for me|for you|too|also|now|yet|really|"
+                          r"in python|with python|python|here|today|and|or|it|that|this)\b[\s,]*)*$")
 TOPICS = {
     "code": ("build_project run_project stop_project fix_last_error add_feature explain_file git_init_project find_bugs edit_file", "write, run and fix code"),
     "browse": ("browse_open browse_search browse_click browse_scroll browse_read browse_back new_tab close_tab", "browse the web"),
@@ -49,6 +51,17 @@ def groups():
     if rest:
         out.append(("Other", rest))
     return out
+
+
+def is_generic_can(question):
+    """True for "can you build apps?", false when the sentence names a concrete thing ("can you build a 40 centimeter cube?"): that one is a real question for the agent."""
+    m = CAN.match(" ".join(str(question).split()).rstrip("?.! "))
+    if not m:
+        return False
+    flat = " ".join(re.sub(r"[^\w\s]", " ", str(question).lower()).split())
+    verb = re.search(r"\b(?:build|code|program|write code|write programs|run code|run programs|create|make|browse|surf|search the web|use|open websites|control|do)\b", flat)
+    tail = flat[verb.end():] if verb else flat
+    return bool(GENERIC_REST.match(tail.strip()))
 
 
 def answer_can(question):
@@ -78,7 +91,7 @@ def full_list():
 @tool("capabilities", 'args {"question": "optional"} - say what Jarvis can do; for "what can you do", "what are your features", "help"')
 def capabilities(args):
     q = str(args.get("question") or "")
-    if CAN.match(q):
+    if CAN.match(q) and is_generic_can(q):
         return answer_can(q)
     text = "What I can do:\n" + full_list()
     print(text)

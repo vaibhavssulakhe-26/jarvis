@@ -111,7 +111,7 @@ def research(args):
             "Search results:\n" + "\n".join(lines))
     if pages:
         data += "\n\nPage text:\n" + "\n\n".join(pages)
-    out = brain.ask_json(SUMMARY_SYSTEM, data[:7000])
+    out = brain.ask_json(SUMMARY_SYSTEM, data[:7000], advanced=True)
     if not isinstance(out, dict):
         for line in lines[:6]:
             print("  ", line[:200])

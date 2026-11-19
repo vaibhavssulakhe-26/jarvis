@@ -145,7 +145,7 @@ cases = (("start focus 25", "start_focus", {"minutes": 25}), ("start focus", "st
          ("stop focus", "stop_focus", {}), ("good morning", "good_morning", {}), ("Good morning, Jarvis", "good_morning", {}),
          ("note: buy a cable", "quick_note", {"text": "buy a cable"}), ("Note, remember the form", "quick_note", {"text": "remember the form"}))
 for phrase, name, args in cases:
-    with mock.patch.object(main, "run_tool", lambda a, ar, s: ran.append((a, ar))), mock.patch.object(main.brain, "think", side_effect=AssertionError("brain")):
+    with mock.patch.object(main, "run_tool", lambda a, ar, s: ran.append((a, ar))), mock.patch.object(main.brain, "tool_turn", side_effect=AssertionError("brain")):
         main.direct(phrase)
     check(f"{phrase!r} -> {name}", ran and ran[-1] == (name, args), str(ran[-1:]))
 with mock.patch.object(main, "run_tool", lambda a, ar, s: ran.append((a, ar))):

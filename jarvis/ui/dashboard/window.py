@@ -185,7 +185,7 @@ class Dashboard(QWidget):
         self.pill.setObjectName("pill")
         self.pill.setCheckable(True)
         self.pill.setToolTip("Status. Click for details.")
-        self.pill.clicked.connect(lambda on: (self.pill_detail.setVisible(bool(on)), self.update_pill()))
+        self.pill.clicked.connect(self.toggle_status)
         self.theme_btn = QPushButton("THEME")
         self.theme_btn.clicked.connect(lambda: self.set_theme(themes.pick("next", self.theme.name if self.theme.name != "custom" else "")))
         row.addWidget(self.clock_label)
@@ -193,6 +193,12 @@ class Dashboard(QWidget):
         row.addWidget(self.pill)
         row.addWidget(self.theme_btn)
         return row
+
+    def toggle_status(self, on):
+        """The pill opens the status: the details under the bar and the System, Brains and Agents panels on Home. Both are closed by default."""
+        self.pill_detail.setVisible(bool(on))
+        self.pages["Home"].status_block.setVisible(bool(on))
+        self.update_pill()
 
     def _pill_detail(self):
         frame = QFrame()
@@ -334,12 +340,6 @@ class Dashboard(QWidget):
             traceback.print_exc()
         self.confirm.refresh() if page is not self.pages["Web"] else None
 
-    def global_search(self, q=""):
-        q = q.strip()
-        notes = self.pages["Notes"]
-        notes.search.setText(q)
-        self.go("Notes")
-        notes.do_search()
 
     def update_pill(self):
         """The one status pill: brain mode, what the ears are doing, and warnings. Its detail panel lists the rest."""
@@ -347,20 +347,21 @@ class Dashboard(QWidget):
         from ...brain import brain
         n = alerts.count()
         free = psutil.virtual_memory().available / 2 ** 30
-        parts = [config.brain_mode().upper(), "ERROR" if time.time() < self.error_until else self.ctx.mode.upper()]
+        parts = [config.brain_mode().replace("_", " ").upper(), "ERROR" if time.time() < self.error_until else self.ctx.mode.upper()]
         if free < CHIP_RAM_GB:
             parts.append("LOW RAM")
         if n:
             parts.append(f"{n} ALERT{'S' if n != 1 else ''}")
         self.pill.setText("  \u00b7  ".join(parts))
         if self.pill_detail.isVisible():
-            st = brain.provider_status()
             names = {"groq": "Groq", "openrouter": "OpenRouter", "ollama": "Offline model"}
-            lines = [f"Mode      {config.brain_mode()}", f"Ears      {'cloud' if config.stt_cloud() else 'this laptop'}, {self.ctx.mode}",
-                     f"Memory    {free:.1f} GB free" + ("  (low power)" if self.clock.low else "")]
-            lines += [f"{names[k]:<10}{v}" for k, v in st.items()]
+            rows = [("Mode", config.brain_mode()), ("Ears", f"{'cloud' if config.stt_cloud() else 'this laptop'}, {self.ctx.mode}"),
+                    ("Memory", f"{free:.1f} GB free" + ("  (low power)" if self.clock.low else ""))]
+            rows += [(names[k], v) for k, v in brain.provider_status().items()]
             if n:
-                lines.append(f"Alerts    {n}, say show alerts")
+                rows.append(("Alerts", f"{n}, say show alerts"))
+            width = max(len(k) for k, _ in rows) + 3
+            lines = [f"{k:<{width}}{v}" for k, v in rows]
             self.pill_text.setText(privacy.show("\n".join(lines)))
 
     def tick(self):
@@ -387,6 +388,8 @@ class Dashboard(QWidget):
                 self.apply_low_power()
         if self._ticks % 40 == 0:
             self.check_ollama()
+            from ...memory import threads
+            threads.rollover()
 
     def check_ollama(self):
         def go():
@@ -411,8 +414,8 @@ class Dashboard(QWidget):
             feed[-1]["provider"] = text
         elif kind == "tier" and feed:
             feed[-1]["tier"] = text
-        if kind in ("sys", "route", "tool", "alert", "provider"):
-            self.ctx.activity.append(f"{stamp} {kind.upper():<8}{text[:300]}")
+        if kind in ("sys", "route", "tool", "alert", "provider", "hear"):
+            self.ctx.activity.append(f"{stamp} {kind.upper():<9}{text[:300]}")
             del self.ctx.activity[:-300]
             if kind == "sys" and any(w in text.lower() for w in ("error", "stopped", "failed")):
                 self.error_until = time.time() + ERROR_SECONDS

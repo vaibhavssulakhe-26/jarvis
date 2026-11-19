@@ -14,6 +14,7 @@ os.environ["XDG_STATE_HOME"] = str(scratch)
 os.environ["XDG_RUNTIME_DIR"] = str(scratch)
 root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root))
+os.environ["BRAIN_MODE"] = "hybrid"
 
 from jarvis.actions import tools  # noqa: E402,F401
 from jarvis.actions import stats  # noqa: E402
@@ -71,8 +72,8 @@ check("eval writes to a scratch folder with --scratch, not data/", saved and str
 (scratch / "usage.json").write_text(json.dumps({today: {"groq": {"calls": 12, "tokens": 6000}, "ollama": {"calls": 1, "tokens": 300}}}))
 spoken, full = stats.build()
 check("stats speaks the pass rate and tokens", "29 of 30" in spoken and "97 percent" in spoken and "321 tokens" in spoken, spoken)
-check("stats speaks the provider counts", "Groq answered 12" in spoken and "OpenRouter answered 0" in spoken and "Ollama answered 1" in spoken, spoken)
-check("the screen text has a line per provider", all(name in full for name in ("Groq", "OpenRouter", "Ollama")), full)
+check("stats speaks the provider counts", "Groq answered 12" in spoken and "OpenRouter answered 0" in spoken and "Local model answered 1" in spoken, spoken)
+check("the screen text has a line per provider", all(name in full for name in ("Groq", "OpenRouter", "Local model")), full)
 ran = []
 with mock.patch.object(main, "run_tool", lambda a, args, s: ran.append(a)):
     for phrase in ("jarvis stats", "stats", "show me stats"):

@@ -7,6 +7,7 @@ from unittest import mock
 
 os.environ["JARVIS_DATA"] = tempfile.mkdtemp(prefix="jarvis-brain-")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+os.environ["BRAIN_MODE"] = "hybrid"
 
 from jarvis.brain import brain  # noqa: E402
 
@@ -65,7 +66,7 @@ check("429 moves to the next provider", name == "openrouter" and order == ["groq
 check("busy provider is skipped next time", "groq" in brain._busy)
 
 brain._busy.clear()
-with mock.patch.object(brain.config, "get", side_effect=lambda n, d="": {"CODE_MODEL": "x/y"}.get(n, d)), \
+with mock.patch.object(brain.config, "get", side_effect=lambda n, d="": {"CODE_MODEL": "x/y", "BRAIN_MODE": "hybrid"}.get(n, d)), \
         mock.patch.object(brain, "_try_openrouter", return_value=(None, 429)), \
         mock.patch.object(brain, "route", return_value=("fallback", "groq")):
     out = brain.code("write code")

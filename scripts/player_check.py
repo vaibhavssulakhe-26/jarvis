@@ -112,7 +112,7 @@ def say(text):
             mock.patch.object(mpvctl.shutil, "which", lambda n: "/usr/bin/" + n), mock.patch.object(mpvctl.time, "sleep", lambda s: None), \
             mock.patch.object(play, "_browser", lambda url: opened.append(url)), mock.patch.object(mpvctl, "raise_window", lambda *a: None), \
             mock.patch.object(main.voice, "say", lambda t: spoken.append(str(t))), \
-            mock.patch.object(main.brain, "think", lambda *a: searches.append("BRAIN")), \
+            mock.patch.object(main.brain, "tool_turn", lambda *a, **k: searches.append("BRAIN")), \
             mock.patch.object(main.brain, "chat", lambda *a: searches.append("BRAIN")):
         main._recent.clear()
         main._handle(text)

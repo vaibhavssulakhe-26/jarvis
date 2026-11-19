@@ -110,7 +110,7 @@ plan_calls = []
 step_calls = []
 
 
-def fake_generate(messages, max_tokens, hard=False, on_delta=None, want_json=False):
+def fake_generate(messages, max_tokens, hard=False, on_delta=None, want_json=False, **kw):
     if hard:
         plan_calls.append(messages)
         return json.dumps({"steps": ["open the shop", "find the cable", "report the price"], "start": BASE}), "strong"
@@ -247,7 +247,7 @@ try:
     slow = threading.Event()
     gate = threading.Event()
 
-    def slow_generate(messages, max_tokens, hard=False, on_delta=None, want_json=False):
+    def slow_generate(messages, max_tokens, hard=False, on_delta=None, want_json=False, **kw):
         if hard:
             return json.dumps({"steps": ["wait"], "start": BASE}), "strong"
         slow.set()

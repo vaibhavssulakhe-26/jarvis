@@ -132,8 +132,14 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
 - Player crash: on this laptop mpv's default Vulkan renderer crashes (SIGTRAP inside libvulkan_radeon) on real video frames, so `mpvctl`
   adds `MPV_ARGS` (default `--gpu-api=opengl --hwdec=no`; set it empty to pass nothing). mpv's stderr goes to `<runtime dir>/mpv.log`, and a failed
   start (up to three candidates) names that path in the one spoken line.
-- Follow-up window: after a reply `Ears._after` keeps listening for `FOLLOWUP_SECONDS` (default 10) with no wake word; thanks / that's all /
-  bye / stop listening close it. It stays shut while `mpvctl.playing()` or playerctl reports playback.
+- Listening gate: `voice/gate.py` (`judge`) decides for every transcript, before any brain call. An utterance is taken only when the wake word started it or is in
+  it, push-to-talk / the Talk button started it, or it is the one reply inside a follow-up window. The window (`FOLLOWUP_SECONDS`, default 6) opens only when Jarvis
+  just asked a question (a pending question, or a reply ending in "?") and the request did not fail (`traces.last_failed`); the first sound uses it up, so it is one turn,
+  and "Yes?" / errors / status lines never re-arm it. Dropped: under 3 words with no wake word (yes, no, numbers and ordinals still count as answers in the window),
+  known Whisper hallucinations (`stt.is_hallucination`), repeated syllables and filler ("da da da", "hmm", "I suppose"), anything captured while music or Jarvis's voice
+  played unless the wake word was said. Every verdict is logged as a `hear` event ("accepted (wake word): ...", "dropped (no wake word): ...") for the Activity page;
+  `hear` is never a chat message. `scripts/ambient_check.py` feeds 15 fragments and expects 0 brain calls and 0 chat messages.
+  The old rule "thanks / that's all / bye / stop listening close it" still applies (`END`). While media plays a command needs the wake word.
 - Speech recognition: `stt.transcribe` returns "" for clips under 0.4 s or too quiet and for known made-up transcripts (`is_hallucination`).
   `STT_HINTS` words go into the prompt.
 - Capabilities: `actions/capabilities.py` answers "what can you do" / "help" from `TOOLS`; spoken summary, full list on screen.
@@ -142,7 +148,13 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
   mpv and removes the socket; it runs from atexit, SIGTERM, the window's quit and the STOP key (`main.check_stop_key` polls `stop_at`). While media
   plays `Ears._idle` never records without the wake word.
 - Nickname: `USER_NICKNAME` (default `USER_NAME`) becomes `config.PET_NAME`, which every greeting already uses.
-- Rate limits: when Groq and OpenRouter both answer 429 in one `brain.route`, it says so once and skips the cloud for `OFFLINE_SECONDS` (60).
+- Provider truth: `brain.HEALTH[provider]` holds the result of the last real call (set by `_record` in every Groq, OpenRouter and Ollama call; `groq-strong` and
+  `groq-vision` are tracked apart so they never mark the fast model down). `provider_state` / `provider_status` (dashboard pill, Brains cards, self block) read only
+  that: "last call worked 2 minutes ago", "last call failed, it returned HTTP 500", or "not called yet this session". Never a ping. A provider that fails is skipped
+  for the rest of the turn (`route(skip=)`), the working one answers and Activity says who failed. One failure message per turn: `brain.begin_turn()` (from
+  `main.handle`), `say_failure`, and `outage_line()` returns "" when something was already said. Stats shows today's tokens per provider (`stats.usage` returns today's
+  row only for today).
+- Rate limits: when Groq and OpenRouter both answer 429 in one `brain.route`, it skips the cloud for `OFFLINE_SECONDS` (60) and the cause is said once (with the offline answer, or by `outage_line`).
   `brain.log_usage` counts answered requests per provider and day in `data/usage.json` (counts only).
 - Notes search: `memory/rag.py` indexes `.md`, `.txt` and `.pdf` from `NOTES_DIR` (default `data/notes`) plus `RAG_FOLDERS` into `data/rag.db`
   (FTS5, BM25). `actions/rag_tools.py`: `search_docs` sends the top 3 chunks (700 characters each) and appends the file names itself;
@@ -303,3 +315,29 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
   closes a viewer Jarvis started) and `actions/holo_tools.py` (`open_holo`, `show_model`, `reset_holo`, `close_holo`). The `show ...` DIRECT entry sits first so "show the bracket" is not a video search.
   Checks must use `scripts/fakes/fake_handctl.py` and set `HANDCTL_DIR`, or a build would start the real viewer.
 
+
+- References: `core/refs.py` remembers the last model, file and project (`remember`, `latest`, one hour). "open that", "show it", "view it in hologram", "open it" go to
+  `ref_tools.open_last` (guarded by `refs.latest()`; the hologram words mean the newest model). Model names match loosely (`modeler.match`: spaces, dashes and underscores
+  ignored, then a close-spelling fallback), also in `holo.resolve`. `capabilities.is_generic_can` keeps "can you build apps?" local; a question about a concrete thing
+  ("can you build a 40 centimeter cube?") goes to the agent, which has the self block and is told to answer, not run the tool. `scripts/context_check.py`.
+- Overhangs: `modeler.overhang` ignores faces on the plate (all corners at the lowest z), counts only faces steeper than 45 degrees above it, and turns inside-out meshes
+  the right way first. A cube and a 45 degree chamfered box report none (`model_check`).
+- Holo start: `holo.start` runs handctl's `hand_mouse.py --holo` itself with stderr in `<runtime dir>/holo-viewer.log` and waits up to 20 s; a failure says the first useful
+  line ("ModuleNotFoundError: No module named 'evdev'"). `scripts/fakes/fake_handctl.py make(folder, viewer=crash|silent|slow)` fakes those cases.
+- WhatsApp: `messaging._prepare_message` refuses text with no letters or digits (empty, "?"); the confirmation quotes the exact text; text with non-ASCII characters is put
+  on the clipboard and pasted (`platform.clipboard_write`, `send_paste`), never typed key by key, and refused when there is no clipboard tool. The spoken results say what was
+  pressed and that delivery cannot be verified. `scripts/messaging_check.py` uses Hindi and Kannada.
+- Dashboard (daily chat, status): `threads.rollover()` starts a new chat when the current one has messages from an earlier day (called on the first message, at start and from
+  the window's slow tick). The System, Brains and Agents panels on Home are folded into the top pill (`Home.status_block`, hidden until the pill is clicked); status rows
+  pad labels so a value never touches its label (`pages.pad` in rich text).
+
+- Local-first brain (`BRAIN_MODE=local_first`, the default; `hybrid` keeps the old cloud-first order, `offline` or the older `BRAIN=offline` never calls the cloud): chat, simple questions and tool plans
+  go to Ollama. The cloud, called "advanced", runs only when the sentence says "use advanced", "think hard" or "go deep" (`advanced.USER_WORDS`) or the work is heavy: `brain.code`
+  (code and OpenSCAD), `ask(..., advanced=True)` (long document summaries, the research brief), the web agent plan, chat with debug or code-writing words, tool plans with several steps and
+  screen vision. `brain/advanced.py` holds the rules: `budget()` (daily cap `ADVANCED_DAILY`, 40; under 10 left it raises `Ask` and parks the request as the `advanced_confirm` pending
+  question, a yes replays it through `main.check_pending`; background threads and phone commands are never asked), `ambient` (noise, failure lines and Whisper phantoms never go out) and
+  `cloud_view` (the system text, two earlier turns without failure lines, 400 characters each). Chat sends the cloud `brain.cloud_system` (no memory, facts or self block). The turn state is
+  per thread and ends with `brain.end_turn()`. Calls are counted as `advanced` in `data/usage.json` (not added into the provider totals); replies carry the tier `advanced` (ADVANCED badge),
+  `local model` or `offline`. A cloud failure or a used-up day gives one spoken sentence and the local answer. Local model: `pick_ollama_model` takes 1B under 2.5 GB free and up to 3B above
+  (sizes come from `note_models`, which reads Ollama's own parameter counts), `num_ctx` 2048 (4096 for a 3B model with room), `keep_alive` 5m, one request at a time (`_ollama_lock`), other
+  loaded models are unloaded first. `brain.local_status()` and doctor show model, free memory and whether it fits. `scripts/local_first_check.py` covers every path with fake providers.

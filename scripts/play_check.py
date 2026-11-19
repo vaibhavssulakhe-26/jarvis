@@ -60,7 +60,7 @@ def say_phrase(text):
             mock.patch.object(play.mpvctl, "available", lambda: False), \
             mock.patch.object(play, "_browser", lambda url: opened.append(url)), \
             mock.patch.object(main.voice, "say", lambda t: spoken.append(t)), \
-            mock.patch.object(main.brain, "think", lambda *a: asked.append(1)), \
+            mock.patch.object(main.brain, "tool_turn", lambda *a, **k: asked.append(1)), \
             mock.patch.object(main.brain, "chat", lambda *a: asked.append(1)):
         main._handle(text)
     return spoken[-1] if spoken else ""

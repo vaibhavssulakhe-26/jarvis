@@ -49,3 +49,8 @@ webproject_check
 model_check
 core_check
 encoding_check linux
+ambient_check
+provider_check
+context_check
+messaging_check
+local_first_check

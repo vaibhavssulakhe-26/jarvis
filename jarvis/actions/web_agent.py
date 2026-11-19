@@ -134,7 +134,7 @@ def make_plan(goal, why=""):
     """One call on the strongest tier. Returns {"steps": [...], "start": "..."}; empty when no model answered."""
     note = f"\nThe last attempts failed: {why}" if why else ""
     messages = [{"role": "system", "content": PLAN_SYSTEM}, {"role": "user", "content": "Goal: " + goal + note}]
-    text, tier = brain.generate(messages, PLAN_TOKENS, hard=True, want_json=True)
+    text, tier = brain.generate(messages, PLAN_TOKENS, hard=True, want_json=True, advanced=True)
     data = brain._extract_json(text) or {}
     steps = [str(s)[:120] for s in data.get("steps", []) if isinstance(s, str)][:6] if isinstance(data.get("steps"), list) else []
     return {"steps": steps, "start": str(data.get("start") or "")[:200], "tier": tier}

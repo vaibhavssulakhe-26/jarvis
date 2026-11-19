@@ -1,6 +1,7 @@
 """Design a 3D model with OpenSCAD: the brain writes the .scad, the openscad CLI builds the .stl, trimesh checks it against the printer bed.
 Everything lands in models/<name>/ (latest copy at the top, every version in v1, v2 ...). Jarvis designs and opens the slicer for you;
 it never talks to a printer."""
+import difflib
 import re
 import resource
 import shlex
@@ -12,7 +13,8 @@ from pathlib import Path
 import numpy as np
 
 from ..brain import brain
-from ..core import config
+from ..core import config, refs
+from ..core.text import fence
 from ..core.errors import Ask
 from . import events, procs
 from .tools import ToolError, tool
@@ -27,6 +29,8 @@ SCAD_TOKENS = 1200
 MAX_SCAD = 20000
 SETTLE = 1.0
 THIN_WALL = 1.2
+PLATE_TOLERANCE = 0.05
+OVERHANG_NORMAL_Z = -0.7071 - 0.01  # steeper than 45 degrees; a face at exactly 45 degrees is fine
 TINY_PART = 2.0
 last = {"slug": "", "at": 0.0}
 _ask = {"request": "", "until": 0.0}
@@ -66,13 +70,35 @@ def models():
     return sorted(found, key=lambda d: (d / "model.scad").stat().st_mtime, reverse=True)
 
 
+def squash(text):
+    return re.sub(r"[^a-z0-9]+", "", str(text).lower())
+
+
+def match(name):
+    """The model folder a spoken or typed name means. Spaces, dashes and underscores do not matter ("40mm_cube" finds "40 mm cube"); a near miss
+    such as a misheard letter still finds it. None when nothing is close."""
+    found = models()
+    want = _slug(name)
+    for d in found:
+        if want in d.name or d.name in want:
+            return d
+    flat = squash(name)
+    if not flat:
+        return None
+    for d in found:
+        if flat in squash(d.name) or squash(d.name) in flat:
+            return d
+    close = difflib.get_close_matches(flat, [squash(d.name) for d in found], n=1, cutoff=0.75)
+    return next((d for d in found if squash(d.name) == close[0]), None) if close else None
+
+
 def current(name=""):
     """The model folder the user means: a spoken name, the one just made, or the newest."""
     want = _slug(name) if name else ""
     if want:
-        for d in models():
-            if want in d.name or d.name in want:
-                return d
+        d = match(name)
+        if d:
+            return d
         raise ToolError(f"I do not have a model called {str(name)[:30]}.")
     if last["slug"] and (MODELS / last["slug"] / "model.scad").is_file():
         return MODELS / last["slug"]
@@ -82,8 +108,6 @@ def current(name=""):
     return found[0]
 
 
-def have_model():
-    return bool(models())
 
 
 def recent():
@@ -111,11 +135,6 @@ def unsafe(code):
     if not re.search(r"\b(cube|sphere|cylinder|polyhedron|linear_extrude|rotate_extrude|polygon|circle|square)\s*\(", body):
         return "it does not draw anything"
     return ""
-
-
-def _fence(text):
-    m = re.search(r"```[\w+-]*\n(.*?)```", text, re.S)
-    return (m.group(1) if m else text).strip("\n") + "\n"
 
 
 # ---------- building ----------
@@ -156,7 +175,7 @@ def write_code(prompt):
     text = brain.code(prompt, SCAD_TOKENS, system=SYSTEM)
     if not text:
         raise ToolError("I could not write that right now. Try again in a minute.")
-    code = _fence(text)
+    code = fence(text)
     why = unsafe(code)
     if why:
         raise ToolError(f"The code the brain wrote was refused: {why}. Nothing was built.")
@@ -220,6 +239,22 @@ def wall_estimate(mesh, samples=60):
     return float(np.percentile(found, 10)) if found else None
 
 
+def overhang(mesh):
+    """(area in mm2, share of the surface) of faces that face down more than 45 degrees and are not on the build plate. A face is on the plate when
+    all of its corners are at the lowest z, so the underside of any flat-bottomed part, whatever its height or position, is never counted. A 45 degree
+    slope is printable and is not counted either. Faces wound the wrong way (a negative volume) are turned the right way first."""
+    if mesh.is_watertight and mesh.volume < 0:
+        mesh = mesh.copy()
+        mesh.invert()
+    zmin = float(mesh.bounds[0][2])
+    on_plate = mesh.triangles[:, :, 2].max(axis=1) <= zmin + PLATE_TOLERANCE
+    steep = mesh.face_normals[:, 2] < OVERHANG_NORMAL_Z
+    area = mesh.area_faces
+    total = float(area.sum())
+    over = float(area[steep & ~on_plate].sum())
+    return over, (over / total if total else 0.0)
+
+
 def inspect(stl):
     """(size in mm, [(ok, line)]) for a built model: size, bed, watertight, wall, loose parts, overhangs."""
     import trimesh
@@ -246,10 +281,7 @@ def inspect(stl):
         lines.append((False, f"{len(parts)} separate pieces" + (f", {tiny} tiny (under {TINY_PART:.0f} mm)." if tiny else ".")))
     else:
         lines.append((True, "One solid piece."))
-    area = mesh.area_faces
-    low = mesh.triangles_center[:, 2] > mesh.bounds[0][2] + 0.1
-    over = float(area[(mesh.face_normals[:, 2] < -0.7071) & low].sum())
-    share = over / float(area.sum()) if area.sum() else 0.0
+    over, share = overhang(mesh)
     if share > 0.05 and over > 100:
         lines.append((False, f"About {share * 100:.0f} percent of the surface overhangs more than 45 degrees, so it needs supports."))
     else:
@@ -269,6 +301,7 @@ def _publish(slug, ver, number, request):
     for f in ("model.scad", "model.stl", "description.md"):
         shutil.copyfile(ver / f, MODELS / slug / f)
     last.update(slug=slug, at=time.time())
+    refs.remember("model", slug, MODELS / slug / "model.stl")
     report = "\n".join(("" if ok else "! ") + line for ok, line in lines)
     print(f"  [model {slug} v{number}]\n" + report)
     events.emit("sys", f"{slug} v{number}\n{report}")

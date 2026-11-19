@@ -13,6 +13,7 @@ os.environ["XDG_RUNTIME_DIR"] = tmp
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["GROQ_API_KEY"] = "test-key-not-real"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+os.environ["BRAIN_MODE"] = "hybrid"
 
 from jarvis.actions import attach, events  # noqa: E402
 from jarvis.brain import brain  # noqa: E402
@@ -59,6 +60,29 @@ check("both chats are listed, newest first", [r["id"] for r in threads.listing()
 threads.switch(first)
 check("switching loads the old chat", threads.current()["id"] == first and threads.current()["messages"])
 threads.delete(fresh["id"])
+
+# a new chat each day: an older thread is left as it is and the first message of the day goes to a new one
+from datetime import datetime, timedelta  # noqa: E402
+old = threads.current()
+yesterday = (datetime.now() - timedelta(days=1)).isoformat(timespec="seconds")
+for m in old["messages"]:
+    m["at"] = yesterday
+threads.save(old)
+count = len(old["messages"])
+check("a thread from earlier today is kept", not threads.rollover(now=datetime.now() - timedelta(days=1)))
+threads.add("user", "good morning")
+today_thread = threads.current()
+check("the first message of a new day starts a new chat", today_thread["id"] != old["id"] and [m["text"] for m in today_thread["messages"]] == ["good morning"])
+check("yesterday's chat is untouched", len(threads.load(old["id"])["messages"]) == count)
+threads.add("user", "and another")
+check("the rest of the day stays in that chat", threads.current()["id"] == today_thread["id"] and len(threads.current()["messages"]) == 2)
+check("rolling over twice in a day does nothing", not threads.rollover())
+threads.switch(old["id"])
+threads.delete(today_thread["id"])
+restored = threads.load(old["id"])
+for m in restored["messages"]:
+    m["at"] = datetime.now().isoformat(timespec="seconds")
+threads.save(restored)
 check("delete removes the file", threads.load(fresh["id"]) is None)
 check("data/chats is git-ignored", "data/" in (Path(__file__).resolve().parent.parent / ".gitignore").read_text())
 
@@ -77,7 +101,7 @@ check("a plain question does not", brain.clarify_hint("what is the boiling point
 seen = []
 
 
-def fake_generate(messages, max_tokens, hard=False, on_delta=None, want_json=False):
+def fake_generate(messages, max_tokens, hard=False, on_delta=None, want_json=False, **kw):
     seen.append({"messages": messages, "max": max_tokens, "hard": hard})
     if on_delta:
         on_delta("It works. ")

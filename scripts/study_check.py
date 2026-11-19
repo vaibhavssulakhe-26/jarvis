@@ -182,14 +182,14 @@ cases = (("quiz me on trees", "quiz_me", {"topic": "trees"}), ("quiz me", "quiz_
          ("what's next on my roadmap", "roadmap_next", {}), ("mark arrays done", "roadmap_done", {"item": "arrays"}), ("log today", "log_today", {"text": ""}),
          ("how was my week", "week_summary", {}), ("what are my weak topics", "study_progress", {}))
 for phrase, name, args in cases:
-    with mock.patch.object(main, "run_tool", lambda a, ar, s: ran.append((a, ar))), mock.patch.object(main.brain, "think", side_effect=AssertionError("brain")):
+    with mock.patch.object(main, "run_tool", lambda a, ar, s: ran.append((a, ar))), mock.patch.object(main.brain, "tool_turn", side_effect=AssertionError("brain")):
         main.direct(phrase)
     check(f"{phrase!r} -> {name}", ran and ran[-1] == (name, args), str(ran[-1:]))
 
 # end to end through the real handler: the next sentence is the answer
 del said[:]
 model["reply"] = lambda prompt: "Q: What is a stack?\nA: Last in, first out." if prompt.startswith("Write") else "GRADE: CORRECT - Yes."
-with mock.patch.object(main.brain, "think", side_effect=AssertionError("brain")), mock.patch.object(main.brain, "chat", side_effect=AssertionError("brain")):
+with mock.patch.object(main.brain, "tool_turn", side_effect=AssertionError("brain")), mock.patch.object(main.brain, "chat", side_effect=AssertionError("brain")):
     keep = main._handle("quiz me on arrays")
     check("handle keeps listening for the answer", keep is True and any("stack" in s for s in said), str(said))
     keep = main._handle("last in first out")

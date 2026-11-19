@@ -13,7 +13,8 @@ from pathlib import Path
 
 from .. import platform
 from ..brain import brain
-from ..core import config
+from ..core import config, refs
+from ..core.text import fence
 from . import events, procs
 from .tools import ToolError, _launch, tool
 
@@ -56,11 +57,6 @@ FEATURE_PLAN = ("You plan a change to a small project. Reply with one line per f
                 "at most 3 files, no folders deeper than one level, and no other text.")
 last = {"dir": None, "main": None, "error": ""}
 edit = {}
-
-
-def _fence(text):
-    m = re.search(r"```[\w+-]*\n(.*?)```", text, re.S)
-    return (m.group(1) if m else text).strip("\n") + "\n"
 
 
 def _slug(text):
@@ -242,7 +238,7 @@ def fix_once(folder, meta, output, request, hint=None, backup=False):
                           FILE_TOKENS, system=EDIT_SYSTEM + " " + KIND_NOTES.get(meta.get("kind"), ""))
     if not text:
         return None
-    body = _fence(text)
+    body = fence(text)
     if body.strip() == old.strip() or UNSAFE.search(body):
         return None
     write_project_file(folder, rel, body, backup)
@@ -455,7 +451,7 @@ def build_project(args):
             if not written:
                 raise ToolError("I could not write that right now. Try again in a minute.")
             break
-        body = _fence(text)
+        body = fence(text)
         if UNSAFE.search(body):
             raise ToolError(f"The code for {rel} had something I will not write, like sudo or rm -rf, so I stopped.")
         write_project_file(folder, rel, body)
@@ -464,6 +460,7 @@ def build_project(args):
     meta = {"kind": kind, "entry": entry, "request": request[:300], "count": len(written)}
     save_meta(folder, meta)
     last.update(dir=folder, main=folder / entry, error="")
+    refs.remember("project", folder.name, folder)
     return complete(folder, meta, request, len(written))
 
 
@@ -572,7 +569,7 @@ def edit_file(args):
     text = brain.code(f"File {path.name}:\n{old}\n\nChange to make: {change}", FILE_TOKENS, system=EDIT_SYSTEM)
     if not text:
         raise ToolError("I could not work on that right now. Try again in a minute.")
-    return stage(path, _fence(text), "Here is the change.")
+    return stage(path, fence(text), "Here is the change.")
 
 
 def check(path):
@@ -626,7 +623,7 @@ def find_bugs(args):
         cause = cause.replace("CAUSE:", "").strip()
         if not cause or not fixed.strip():
             raise ToolError("I found an error but could not work out the fix right now.")
-        new_lines = lines[:a] + _fence(fixed).splitlines() + lines[b:]
+        new_lines = lines[:a] + fence(fixed).splitlines() + lines[b:]
         new = "\n".join(new_lines) + "\n"
         probe = path.with_name("probe_" + path.name)
         probe.write_text(new, encoding="utf-8")
@@ -750,6 +747,8 @@ def run_background(folder, meta):
       risk="confirm", describe=_describe_run)
 def run_project(args):
     folder = project_of(args)
+    if folder:
+        refs.remember("project", Path(folder).name, folder)
     if folder and load_meta(folder)["kind"] != "script":
         return run_background(folder, load_meta(folder))
     path = run_target(args)
@@ -826,7 +825,7 @@ def add_feature(args):
         text = brain.code(prompt, FILE_TOKENS, system=EDIT_SYSTEM + " " + KIND_NOTES.get(meta.get("kind"), ""))
         if not text:
             continue
-        body = _fence(text)
+        body = fence(text)
         if UNSAFE.search(body):
             raise ToolError(f"The change to {rel} had something I will not write, like sudo or rm -rf, so I stopped.")
         if body.strip() != old.strip():

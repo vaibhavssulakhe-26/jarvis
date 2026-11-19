@@ -1,6 +1,5 @@
 """Voice tools for the timetable, deadlines, quick tasks and alerts. All of it is local files under data/; nothing here uses a model."""
-import re
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 from .. import alerts, tasks, timetable
 from ..routines import ical

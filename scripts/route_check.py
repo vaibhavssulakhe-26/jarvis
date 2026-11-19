@@ -14,6 +14,7 @@ os.environ["JARVIS_DATA"] = scratch
 os.environ["XDG_STATE_HOME"] = scratch
 os.environ["XDG_RUNTIME_DIR"] = scratch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+os.environ["BRAIN_MODE"] = "hybrid"
 
 from jarvis.actions import tools  # noqa: E402
 from jarvis.brain import brain  # noqa: E402
@@ -123,7 +124,7 @@ def fake_route(messages, max_tokens=500, want_json=True, local=False):
 done = []
 
 
-def via_route(messages, max_tokens, hard=False, on_delta=None, want_json=False):
+def via_route(messages, max_tokens, hard=False, on_delta=None, want_json=False, **kw):
     text, who = brain.route(messages, max_tokens, want_json)
     return text, "fast"
 
@@ -249,7 +250,7 @@ LOG = {
 }
 for text, (action, want_args) in LOG.items():
     del captured[:]
-    with mock.patch.object(main, "run_tool", lambda a, args, sp: captured.append((a, args))), mock.patch.object(main.brain, "think", side_effect=AssertionError("brain")), \
+    with mock.patch.object(main, "run_tool", lambda a, args, sp: captured.append((a, args))), mock.patch.object(main.brain, "tool_turn", side_effect=AssertionError("brain")), \
             mock.patch.object(main.brain, "chat", side_effect=AssertionError("brain")), mock.patch.object(main.browser, "ready", lambda: True):
         main._handle(text)
     got = captured[0] if captured else (None, {})

@@ -72,7 +72,7 @@ Nothing was skipped. Parts that could not be fully exercised here:
 - Measured offscreen: about 123 MB for the whole process with the window open, an orb frame paints in about 4 ms, and the animation uses about
   26% of one core at 30 fps (11% in low power). On a real display only the dirty region is repainted, so expect less. Not measured on your screen.
 - The speaking ripples follow the real loudness of each spoken line (read from the audio file), not a fake wave.
-- The old window (`python -m jarvis.ui.ui`) is still there and unchanged apart from sharing `shutdown_all`.
+- The old holographic window was removed in v4 prep; `jarvis/ui/ui.py` now only holds `start_core` and `shutdown_all` for the dashboard.
 - Needs your eyes: how the orb and panels look at your resolution, the tray icon on Plasma, smoothness of the colour fade, and that closing
   to the tray and then "Quit" from the tray leaves no mpv, Chrome or project processes running.
 

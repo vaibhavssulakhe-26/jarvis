@@ -14,6 +14,7 @@ os.environ["XDG_RUNTIME_DIR"] = str(tmp)
 os.environ["XDG_STATE_HOME"] = str(tmp)
 root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root))
+os.environ["BRAIN_MODE"] = "hybrid"
 
 from jarvis import bench, traces  # noqa: E402
 from jarvis.actions import diag_tools, events  # noqa: E402

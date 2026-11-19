@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .. import platform
 from ..brain import brain
-from ..core import access, config
+from ..core import access, config, refs
 from . import events, files, screen
 from .tools import ToolError, tool
 
@@ -116,6 +116,7 @@ def open_file(args):
     if path.is_dir():
         raise ToolError("That is a folder. Use the folder tools for it.")
     platform.open_target(str(path))
+    refs.remember("file", path.name, path)
     return f"Opening {path.name}."
 
 
@@ -123,6 +124,7 @@ def open_file(args):
       risk="confirm", describe=_ask("Read"), skip=_by_position)
 def read_text_file(args):
     path, _ = resolve(args)
+    refs.remember("file", path.name, path)
     if path.suffix.lower() in (".pdf", ".docx", ".odt", ".rtf"):
         from .documents import extract
         return extract(path)[:READ_CHARS]
@@ -135,6 +137,7 @@ def read_text_file(args):
       risk="confirm", describe=_ask("Look at"), skip=_by_position)
 def describe_image(args):
     path, _ = resolve(args)
+    refs.remember("file", path.name, path)
     if path.suffix.lower() not in PICTURES:
         raise ToolError("That is not a picture file.")
     if config.get("GROQ_VISION_MODEL") and not config.offline():

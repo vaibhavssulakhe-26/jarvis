@@ -42,9 +42,9 @@ def _prepare_message(args, check=True):
         known = ", ".join(_contacts()) or "nobody yet"
         raise ToolError(f"I do not have a number saved for {args.get('contact') or 'that contact'}. "
                         f"Saved contacts: {known}.")
-    text = str(args.get("text", "")).strip()[:500]
-    if not text:
-        raise ToolError("What should the message say?")
+    text = str(args.get("text") or "").strip()[:500]
+    if not re.search(r"\w", text):
+        raise ToolError("What should the message say? I will not send an empty message or just punctuation.")
     if check and not heard_recently(text):
         raise ToolError(f"I did not hear what the message to {name} should say. What should I write?")
     return name, entry["phone"], text
@@ -53,7 +53,7 @@ def _prepare_message(args, check=True):
 def _describe_message(args):
     name, phone, text = _prepare_message(args)
     args["_checked"] = True
-    return f"I will send {name} this on WhatsApp: {text}."
+    return f'I will send {name} this exact message on WhatsApp: "{text}".'
 
 
 def _trusted(args):
@@ -66,32 +66,44 @@ def _trusted(args):
         return False
 
 
-def _press_enter():
-    platform.send_enter()
+PASTE_SETTLE = 0.8
 
 
-def _send_later(delay, name):
-    def go():
-        time.sleep(delay)
-        try:
-            _press_enter()
-            voice.say(f"I pressed send for {name}. Take a quick look to make sure it went through.")
-        except Exception as e:
-            voice.say(f"I could not press send, {type(e).__name__}. You can press Enter yourself.")
-    threading.Thread(target=go, daemon=True).start()
+def _deliver(delay, name, text, paste):
+    """Press the keys that send the message and return what to say. Text with letters outside ASCII is pasted from the clipboard, never typed key by key.
+    Nothing here can see the chat, so the line never claims the message arrived."""
+    time.sleep(delay)
+    try:
+        if paste:
+            if not platform.clipboard_write(text):
+                return f"I could not put the message on the clipboard, so I did not send anything to {name}."
+            platform.send_paste()
+            time.sleep(PASTE_SETTLE)
+        platform.send_enter()
+    except Exception as e:
+        return f"I could not finish pressing the keys, {type(e).__name__}. I cannot tell whether anything reached {name}, so please check WhatsApp."
+    return f"I pressed send for {name}, but I cannot verify that it went through. Please look at the chat."
+
+
+def _send_later(delay, name, text, paste):
+    threading.Thread(target=lambda: voice.say(_deliver(delay, name, text, paste)), daemon=True).start()
 
 
 @tool("message_contact", 'args {"contact": "<name as said, for example mom>", "text": "<the message>"} - send a WhatsApp message to a saved contact; the program types it and presses send after the user confirms',
       risk="confirm", describe=_describe_message, skip=_trusted)
 def message_contact(args):
     name, phone, text = _prepare_message(args, check=not args.get("_checked"))
+    paste = not text.isascii()
+    if paste and not platform.clipboard_write(text):
+        raise ToolError("I need a clipboard tool to send a message in Hindi or Kannada, so I did not send it.")
     try:
         delay = max(5.0, min(40.0, float(config.get("JARVIS_SEND_DELAY", "13"))))
     except ValueError:
         delay = 13.0
-    _browser(f"https://web.whatsapp.com/send?phone={phone}&text={quote(text)}")
-    _send_later(delay, name)
-    return f"Sending to {name}: {text}. Please keep your hands off the keyboard for a few seconds."
+    _browser(f"https://web.whatsapp.com/send?phone={phone}" + ("" if paste else f"&text={quote(text)}"))
+    _send_later(delay, name, text, paste)
+    return (f"Opening WhatsApp for {name}. I will {'paste' if paste else 'fill in'} this message and press send: {text}. "
+            "I cannot check that it arrives, so I will tell you only what I pressed. Please keep your hands off the keyboard for a few seconds.")
 
 
 def _copy_image(path):

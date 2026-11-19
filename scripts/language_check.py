@@ -155,7 +155,7 @@ said_cap = []
 with mock.patch.object(main.voice, "say", lambda t: said_cap.append(str(t))), mock.patch.object(capabilities.events, "emit") as shown:
     for phrase in ("what can you do", "what are your features", "help", "Help."):
         del said_cap[:]
-        with mock.patch.object(main.brain, "think", side_effect=AssertionError("model used")), \
+        with mock.patch.object(main.brain, "tool_turn", side_effect=AssertionError("model used")), \
                 mock.patch.object(main.brain, "chat", side_effect=AssertionError("model used")):
             main._handle(phrase)
         check(f"{phrase!r} is answered locally", len(said_cap) == 1 and "full list" in said_cap[0], str(said_cap))

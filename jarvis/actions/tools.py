@@ -598,5 +598,5 @@ def restart(args):
 
 # these modules register their tools on import, so they must load after the registry above
 from . import (apps, briefing, browser, capabilities, clipwatch, coder, debug, diag_tools, documents, file_tools, focus_tools, guard_tools, handoff, holo_tools, job_tools, listen_tools, mail, media, messaging,  # noqa: E402,F401
-               modeler, notes, notes_quiz, palette_tools, play, planner_tools, proactive_tools, rag_tools, recall, reminder_tools, routine_tools, screen, stats, study, theme_tools, translate, voice_tools, watches, web_agent, webproject)
+               modeler, notes, notes_quiz, palette_tools, play, planner_tools, proactive_tools, rag_tools, recall, ref_tools, reminder_tools, routine_tools, screen, stats, study, theme_tools, translate, voice_tools, watches, web_agent, webproject)
 from ..research import live, research, topic, wiki  # noqa: E402,F401

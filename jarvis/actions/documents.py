@@ -137,7 +137,7 @@ def summarise_text(text):
         if not notes:
             return []
         reply = brain.ask("These are summaries of parts of one document. Combine them into exactly 5 short "
-                          "bullet points:\n" + "\n".join(notes), 300)
+                          "bullet points:\n" + "\n".join(notes), 300, advanced=True)
     return _bullets(reply)
 
 

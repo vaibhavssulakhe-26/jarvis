@@ -88,10 +88,15 @@ def end():
         return None
     line = {k: v for k, v in _current.items() if k != "t0"}
     line["latency_ms"] = round((time.time() - _current["t0"]) * 1000)
-    _last.update(heard=line["heard"], at=time.time(), id=line["id"])
+    _last.update(heard=line["heard"], at=time.time(), id=line["id"], ok=line.get("ok", True))
     _current.clear()
     append(line)
     return line
+
+
+def last_failed():
+    """True when the request that just finished failed, so no follow-up window should open for it."""
+    return not _last.get("ok", True)
 
 
 def append(line):

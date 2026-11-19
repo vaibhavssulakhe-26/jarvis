@@ -91,18 +91,22 @@ class Page(QWidget):
         pass
 
 
+def pad(label, width):
+    """A label for rich text, followed by non-breaking spaces so the value never touches it (plain spaces collapse in a QLabel)."""
+    return escape(str(label)) + "&nbsp;" * max(2, width - len(str(label)))
+
+
 def provider_states():
-    """[(name, label, level, seconds or None)] where level is ok, warn or bad."""
-    now = time.time()
+    """[(name, label, level, seconds or None)] where level is ok, warn or bad. Each comes from the last real call to that provider, never a ping."""
     out = []
-    for key, env, name in (("groq", "GROQ_API_KEY", "Groq"), ("openrouter", "OPENROUTER_API_KEY", "OpenRouter")):
-        lat = brain.LATENCY.get(key)
-        if not config.get(env):
-            out.append((name, "no key", "bad", None))
-        elif brain._busy.get(key, 0) > now or brain._offline_until[0] > now:
-            out.append((name, "rate-limited", "warn", lat))
+    for key, name in (("groq", "Groq"), ("openrouter", "OpenRouter"), ("ollama", "Ollama")):
+        level, _ = brain.provider_state(key)
+        if level == "ok":
+            out.append((name, "last call worked", "ok", brain.LATENCY.get(key)))
+        elif level == "idle":
+            out.append((name, "not used yet", "warn", brain.LATENCY.get(key)))
         else:
-            out.append((name, "connected", "ok", lat))
+            out.append((name, brain.why_down(key) or "last call failed", "bad", brain.LATENCY.get(key)))
     return out
 
 
@@ -206,10 +210,15 @@ class Home(Page):
         self.agents = value_label("")
         self.agents.setTextFormat(Qt.TextFormat.RichText)
         agents.box.addWidget(self.agents)
-        left.addWidget(gauges)
-        left.addWidget(prov)
+        self.status_block = QWidget()
+        status = QVBoxLayout(self.status_block)
+        status.setContentsMargins(0, 0, 0, 0)
+        status.setSpacing(10)
+        for w in (gauges, prov, agents):
+            status.addWidget(w)
+        self.status_block.setVisible(False)
         left.addWidget(brief, 1)
-        left.addWidget(agents)
+        left.addWidget(self.status_block)
         holder = QWidget()
         holder.setLayout(left)
         holder.setFixedWidth(300)
@@ -242,7 +251,8 @@ class Home(Page):
         self.disk.set_value(psutil.disk_usage("/").percent)
         self.up.setText(f"free memory {psutil.virtual_memory().available / 2 ** 30:.1f} GB")
         states = provider_states()
-        states.append(("Ollama", "connected" if self.ctx.ollama else "offline", "ok" if self.ctx.ollama else "bad", brain.LATENCY.get("ollama")))
+        if states[2][2] == "warn" and self.ctx.ollama:
+            states[2] = ("Ollama", "running, not used yet", "ok", None)
         for card, (name, label, level, lat) in zip(self.cards, states):
             card.set(name, label, level, lat)
         self.brief.setText(privacy.show(self.brief_html(dim, acc)))
@@ -250,7 +260,7 @@ class Home(Page):
         for name, key in AGENTS:
             on = agent_running(key)
             colour = t.ok.name() if on else dim
-            lines.append(f'<span style="color:{colour}">&#9679;</span> {name:<9}<span style="color:{colour}">{"running" if on else "idle"}</span>')
+            lines.append(f'<span style="color:{colour}">&#9679;</span> {pad(name, 10)}<span style="color:{colour}">{"running" if on else "idle"}</span>')
         self.agents.setText("<br>".join(lines))
 
     def brief_html(self, dim, acc):
@@ -339,7 +349,7 @@ class Activity(Page):
         info = (("BRAIN", brain_name), ("EARS", "Groq Whisper" if config.stt_cloud() else "this laptop"),
                 ("WAKE", config.wake_label().title()), ("VOICE", voices.current_name()),
                 ("OFFLINE", brain._ollama_name["name"] or "not checked yet"), ("FALLBACK", "Ollama only" if config.offline() else "OpenRouter, then Ollama"))
-        self.core.setText("<br>".join(f'<span style="color:{dim}">{k:<9}</span>{v}' for k, v in info))
+        self.core.setText("<br>".join(f'<span style="color:{dim}">{pad(k, 10)}</span>{escape(str(v))}' for k, v in info))
         rows = []
         for r in self.ctx.feed[-self.FEED_ROWS:][::-1]:
             rows.append(f'<span style="color:{dim}">{r["time"]}</span> {escape(privacy.show(r["heard"][:40]))}<br>'
@@ -704,7 +714,7 @@ class Study(Page):
         for topic, r in sorted(data["topics"].items()):
             acc = study.accuracy(r)
             colour = (t.bad if acc < study.WEAK_BELOW else t.ok).name()
-            rows.append(f'{topic:<14}<span style="color:{colour}">{acc * 100:.0f}%</span> of {r["asked"]}')
+            rows.append(f'{pad(topic, 16)}<span style="color:{colour}">{acc * 100:.0f}%</span> of {r["asked"]}')
         weak = study.weak_topics(data)
         from ...actions import notes_quiz
         cards = data.get("cards", [])
@@ -881,7 +891,11 @@ class Stats(Page):
         rows = []
         for key, label in stats.PROVIDERS:
             r = week.get(key, {"calls": 0, "tokens": 0})
-            rows.append(f"{label:<12} {r['calls']:>4} requests  {r['tokens']:>7} tokens  today {today.get(key, {}).get('calls', 0)}")
+            t = today.get(key, {})
+            rows.append(f"{label:<12} today {t.get('tokens', 0):>7} tokens, {t.get('calls', 0):>3} requests   week {r['tokens']:>7} tokens, {r['calls']:>4} requests")
+        used, cap, sent = stats.advanced_today()
+        setup = "" if (config.get("GROQ_API_KEY") or config.get("OPENROUTER_API_KEY")) else "   needs setup: no cloud key"
+        rows.append(f"{'Advanced':<12} today {sent:>7} tokens, {used:>3} of {cap} calls{setup}")
         rows.append(f"rate limits hit this session: {brain.LIMITED['count']}")
         self.use.setText("<pre>" + "\n".join(rows) + "</pre>")
         rss = psutil.Process().memory_info().rss / 2 ** 20
@@ -969,7 +983,7 @@ class Settings(Page):
         rows = []
         for r in self._doctor["results"]:
             fix = f' <span style="color:{t.dim.name()}">{escape(r["fix"])}</span>' if r["fix"] and r["status"] != "pass" else ""
-            rows.append(f'<span style="color:{colours[r["status"]]}">{r["status"].upper():<5}</span> {escape(r["name"])}: {escape(r["detail"])}{fix}')
+            rows.append(f'<span style="color:{colours[r["status"]]}">{pad(r["status"].upper(), 7)}</span>{escape(r["name"])}: {escape(r["detail"])}{fix}')
         return "<br>".join(rows)
 
     def pick(self):

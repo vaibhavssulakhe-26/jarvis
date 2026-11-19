@@ -116,7 +116,7 @@ for c in ctx:
 ran = []
 for phrase, name in (("read my screen", "read_screen"), ("what's on my screen", "read_screen"), ("what is on screen", "read_screen"),
                      ("describe my screen", "describe_screen"), ("look at my screen", "describe_screen")):
-    with mock.patch.object(main, "do_tool", lambda a, args, s="": ran.append(a)), mock.patch.object(main.brain, "think", side_effect=AssertionError("brain")):
+    with mock.patch.object(main, "do_tool", lambda a, args, s="": ran.append(a)), mock.patch.object(main.brain, "tool_turn", side_effect=AssertionError("brain")):
         main.fast_path(phrase)
     check(f"{phrase!r} -> {name}", ran and ran[-1] == name, str(ran[-1:]))
 

@@ -95,9 +95,11 @@ check("'run diagnostics' returns a summary", "checks passed" in said, said)
 
 # offline model by free memory
 installed = ["llama3.2:1b", "llama3.2:3b", "qwen2.5:7b", "nomic-embed-text:latest"]
-check("under 2 GB free: the 1B model", brain.pick_ollama_model(installed, 1.2) == "llama3.2:1b")
-check("2 to 4 GB free: a 3B model", brain.pick_ollama_model(installed, 3.0) == "llama3.2:3b")
-check("above 4 GB free: a larger one", brain.pick_ollama_model(installed, 6.0) == "qwen2.5:7b")
+check("under 2.5 GB free: the 1B model", brain.pick_ollama_model(installed, 2.4) == "llama3.2:1b")
+check("above 2.5 GB free: the 3B model", brain.pick_ollama_model(installed, 2.6) == "llama3.2:3b")
+check("plenty of memory never goes above 3B", brain.pick_ollama_model(installed, 6.0) == "llama3.2:3b")
+check("coder models are not chosen for chat", brain.pick_ollama_model(["qwen2.5-coder:1.5b", "llama3.2:1b"], 2.0) == "llama3.2:1b")
+check("fit: free plus loaded against size with headroom", brain.fits(1.0, 1.2) is False and brain.fits(1.0, 1.2, 0.5) is True and brain.fits(None, 1.2) is None)
 check("2 to 4 GB with no 3B installed falls back to the 1B", brain.pick_ollama_model(["llama3.2:1b", "qwen2.5:7b"], 3.0) == "llama3.2:1b")
 check("embedding models are never chosen", brain.pick_ollama_model(["nomic-embed-text", "llama3.2:1b"], 8.0) == "llama3.2:1b")
 check("only an embedding model installed falls back to the default", brain.pick_ollama_model(["nomic-embed-text:latest"], 8.0) == brain.OLLAMA_DEFAULT)

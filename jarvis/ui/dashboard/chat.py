@@ -62,7 +62,7 @@ class Bubble(QFrame):
         if via == "typed" and role == "user":
             bits.append("typed")
         if tier:
-            bits.append(tier + " tier")
+            bits.append("ADVANCED" if tier == "advanced" else tier + " tier")
         self.meta.setText("  ".join(bits).upper())
 
     def set_text(self, text):

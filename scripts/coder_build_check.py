@@ -298,7 +298,7 @@ ran = []
 cases = (("fix the last error", "fix_last_error"), ("explain this file", "explain_file"), ("explain main.py", "explain_file"),
          ("git init this project", "git_init_project"), ("run it", "run_project"), ("add dark mode to site", "add_feature"))
 for phrase, name in cases:
-    with mock.patch.object(core, "run_tool", lambda a, args, s: ran.append(a)), mock.patch.object(core.brain, "think", side_effect=AssertionError("brain")):
+    with mock.patch.object(core, "run_tool", lambda a, args, s: ran.append(a)), mock.patch.object(core.brain, "tool_turn", side_effect=AssertionError("brain")):
         core.direct(phrase)
     check(f"{phrase!r} -> {name}", ran and ran[-1] == name, str(ran[-1:]))
 del ran[:]

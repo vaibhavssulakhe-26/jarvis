@@ -1,10 +1,13 @@
 """'Jarvis stats': the latest eval result and which brain answered how often."""
 
+from datetime import datetime
+
 from ..core import config, jsonfile
 from . import events
 from .tools import tool
 
-PROVIDERS = (("groq", "Groq"), ("openrouter", "OpenRouter"), ("ollama", "Ollama"))
+PROVIDERS = (("groq", "Groq"), ("groq-strong", "Groq large"), ("openrouter", "OpenRouter"), ("ollama", "Local model"))
+COUNTERS = ("advanced",)
 
 
 def latest_eval():
@@ -21,7 +24,7 @@ def core_rate():
 
 
 def usage(days=7):
-    """{provider: {'calls', 'tokens'}} summed over the last days, plus today's row."""
+    """({provider: {'calls', 'tokens'}} summed over the last days, today's {provider: row}). Today's row is empty when nothing was asked today."""
     data = jsonfile.read(config.DATA / "usage.json", None, dict)
     if data is None:
         return {}, {}
@@ -29,10 +32,19 @@ def usage(days=7):
     total = {}
     for k in keys:
         for name, row in data[k].items():
+            if name in COUNTERS:
+                continue
             t = total.setdefault(name, {"calls": 0, "tokens": 0})
             t["calls"] += row.get("calls", 0)
             t["tokens"] += row.get("tokens", 0)
-    return total, (data[keys[-1]] if keys else {})
+    return total, {n: r for n, r in data.get(datetime.now().strftime("%Y-%m-%d"), {}).items() if n not in COUNTERS}
+
+
+def advanced_today():
+    """(calls used today, daily cap, tokens sent today) for the cloud tier."""
+    from ..brain import advanced
+    row = advanced.today("advanced")
+    return row["calls"], advanced.daily(), row["tokens"]
 
 
 def build():
@@ -58,11 +70,13 @@ def build():
         lines.append(f"Brain use, last 7 days: {calls} requests, about {tokens // max(1, calls)} tokens each.")
         for key, label in PROVIDERS:
             row = week.get(key, {"calls": 0, "tokens": 0})
-            t = today.get(key, {"calls": 0})
-            lines.append(f"  {label}: {row['calls']} requests this week, {t['calls']} today, {row['tokens']} tokens")
+            t = today.get(key, {"calls": 0, "tokens": 0})
+            lines.append(f"  {label}: {row['calls']} requests this week, {row['tokens']} tokens; today {t['calls']} requests, {t.get('tokens', 0)} tokens")
         spoken.append("This week " + ", ".join(f"{label} answered {week.get(key, {}).get('calls', 0)}" for key, label in PROVIDERS) + ".")
     else:
         lines.append("No brain requests recorded yet.")
+    calls, cap, tokens = advanced_today()
+    lines.append(f"Advanced (cloud) today: {calls} of {cap} calls, about {tokens} tokens.")
     return " ".join(spoken), "\n".join(lines)
 
 
