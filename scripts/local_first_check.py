@@ -19,7 +19,7 @@ os.environ["ADVANCED_DAILY"] = "40"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from jarvis.actions import events, stats  # noqa: E402
-from jarvis.brain import advanced, agent, brain  # noqa: E402
+from jarvis.brain import advanced, agent, brain, local  # noqa: E402
 from jarvis.core import config, main  # noqa: E402
 from jarvis.core.errors import Ask  # noqa: E402
 from jarvis import doctor  # noqa: E402
@@ -267,29 +267,24 @@ try:
 
     # one model, five minutes, small context, no parallel requests
     reset()
-    posts = []
-
-    class Resp:
-        status_code = 200
-
-        def json(self):
-            return {"message": {"content": "hi"}, "models": []}
-
-    def fake_post(url, json=None, timeout=0):
-        posts.append((url, json))
-        return Resp()
-
-    with mock.patch.object(brain._http, "post", fake_post), mock.patch.object(brain, "_free_gb", lambda: 3.0), \
-            mock.patch.object(brain, "_ollama_model", lambda: "llama3.2:1b"), mock.patch.object(brain, "_loaded", lambda: {"phi4-mini:latest": 1}):
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "fakes"))
+    import fake_ollama
+    srv = fake_ollama.start(models=["llama3.2:1b"], loaded=["phi4-mini:latest"])
+    local._use["url"] = srv.url
+    with mock.patch.object(brain, "_free_gb", lambda: 3.0), mock.patch.object(brain, "_ollama_model", lambda: "llama3.2:1b"):
         text, code = brain._try_ollama([{"role": "user", "content": "hi"}], 50, False)
-    chat_body = next(j for u, j in posts if u.endswith("/api/chat"))
+    posts = srv.posts
+    chat_body = next(j for u, j in posts if u == "/api/chat")
     check("the local model is kept for five minutes", chat_body["keep_alive"] == "5m")
     check("a 1B model gets a 2048 context", chat_body["options"]["num_ctx"] == 2048 and brain._num_ctx("llama3.2:3b", 6.0) == 4096 and brain._num_ctx("llama3.2:3b", 2.0) == 2048)
-    check("another loaded model is told to leave", any(u.endswith("/api/generate") and j["model"] == "phi4-mini:latest" and j["keep_alive"] == 0 for u, j in posts))
+    check("another loaded model is told to leave", any(u == "/api/generate" and j["model"] == "phi4-mini:latest" and j["keep_alive"] == 0 for u, j in posts))
     check("requests to Ollama take a lock, so none run in parallel", hasattr(brain._ollama_lock, "acquire"))
-    with mock.patch.object(brain, "_free_gb", lambda: 0.9), mock.patch.object(brain, "_loaded", lambda: {}):
+    srv.cfg["loaded"] = []
+    with mock.patch.object(brain, "_free_gb", lambda: 0.9):
         text, code = brain._try_ollama([{"role": "user", "content": "hi"}], 50, False)
-    check("too little memory skips the local model with a stated cause", text is None and "too little free memory" in brain.why_down("ollama"), brain.why_down("ollama"))
+    check("too little memory skips the local model with a stated cause", text is None and "0.9 GB" in brain.why_down("ollama") and "needs 1.5" in brain.why_down("ollama"), brain.why_down("ollama"))
+    srv.stop()
+    local._use["url"] = None
 
     # no brain at all
     reset()

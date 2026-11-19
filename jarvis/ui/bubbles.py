@@ -31,8 +31,11 @@ class Body:
 
 
 class World:
-    """Bubbles tied to drifting anchors by springs. After every step a projection pass separates any pair closer than their collision radii and
-    keeps each inside the area, so the no-overlap guarantee does not depend on how stiff the springs are."""
+    """Bubbles tied by springs to anchors that travel slowly round the centre on two loose ellipses, so they use the whole screen. After every step a
+    projection pass separates any pair closer than their collision radii and keeps each inside the area, so the no-overlap guarantee does not depend
+    on how stiff the springs are."""
+    ORBIT_SPEED = 0.02
+    INNER = 0.74
 
     def __init__(self, keys=NAMES, seed=3):
         self.rng = random.Random(seed)
@@ -41,42 +44,66 @@ class World:
         self.r = MIN_R
         self.rc = MIN_R
         self.t = 0.0
+        self.turn = -math.pi / 2
+        self.rate = 1.0
         self.placed = False
+        self.rx = self.ry = 0.0
+
+    def _fit(self, r):
+        """(rc, rx, ry) for a bubble radius: the orbit is as wide as the area allows once the bubbles are inside it."""
+        rc = r * (1 + GROW) + GAP
+        usable_h = max(1.0, self.h - BOTTOM_RESERVE)
+        edge = rc + DRIFT + 6
+        return rc, max(0.0, self.w / 2 - edge), max(0.0, usable_h / 2 - edge)
+
+    def _spacing(self, rx, ry):
+        """The smallest distance between two anchors one step apart round the ring, the inner and outer ellipse taking turns."""
+        n = len(self.bodies)
+        pts = [((rx * f * math.cos(math.tau * i / n), ry * f * math.sin(math.tau * i / n))) for i, f in ((i, 1.0 if i % 2 == 0 else self.INNER) for i in range(n))]
+        return min(math.dist(pts[i], pts[(i + 1) % n]) for i in range(n))
 
     def layout(self, w, h):
-        """Size the bubbles for the area and put the anchors on a grid of rows, the last row centred."""
+        """Size the bubbles for the area: the largest radius at which neighbours on the ring still clear each other with room to drift."""
         self.w, self.h = w, h
-        n = len(self.bodies)
-        cols = 4 if w >= 860 and h >= 440 else 3
-        rows = math.ceil(n / cols)
-        usable_h = max(1.0, h - BOTTOM_RESERVE)
-        cell_w, cell_h = w / cols, usable_h / rows
-        self.r = max(MIN_R, min(MAX_R, ((min(cell_w, cell_h) / 2) - DRIFT - GAP) / (1 + GROW)))
-        self.rc = self.r * (1 + GROW) + GAP
-        i = 0
-        for row in range(rows):
-            count = min(cols, n - i)
-            for c in range(count):
-                b = self.bodies[i]
-                b.ax = w / 2 + (c - (count - 1) / 2) * cell_w
-                b.ay = usable_h * (row + 0.5) / rows
-                i += 1
+        r = MAX_R
+        while r > MIN_R:
+            rc, rx, ry = self._fit(r)
+            if self._spacing(rx, ry) >= 2 * rc + 2 * DRIFT + 4:
+                break
+            r -= 2
+        self.r = max(MIN_R, r)
+        self.rc, self.rx, self.ry = self._fit(self.r)
+        self._anchor()
         if not self.placed:
             for b in self.bodies:
                 b.x, b.y = b.ax, b.ay
             self.placed = True
         self.settle()
 
+    def _anchor(self):
+        n = len(self.bodies)
+        cx, cy = self.w / 2, max(1.0, self.h - BOTTOM_RESERVE) / 2
+        for i, b in enumerate(self.bodies):
+            f = 1.0 if i % 2 == 0 else self.INNER
+            a = self.turn + math.tau * i / n
+            b.ax = cx + self.rx * f * math.cos(a)
+            b.ay = cy + self.ry * f * math.sin(a)
+
     @property
     def collision(self):
         """The smallest distance two centres may have: both bubbles fully grown plus the gap."""
         return 2 * self.rc
 
-    def step(self, dt, drift=True):
+    def step(self, dt, drift=True, hold=False):
+        """`hold` pauses the orbit (a bubble is under the pointer or has the focus) so it can be clicked; it eases, so it never jerks."""
         dt = min(dt, 1 / 20)
         if not self.w:
             return
         self.t += dt
+        self.rate += ((0.0 if hold else 1.0) - self.rate) * min(1.0, dt * 5)
+        if drift:
+            self.turn = (self.turn + self.ORBIT_SPEED * self.rate * dt) % math.tau
+            self._anchor()
         amp = DRIFT if drift else 0.0
         for b in self.bodies:
             tx = b.ax + amp * math.sin(self.t * b.fx * math.tau + b.px)
@@ -123,7 +150,7 @@ _glass = {}
 
 
 def _bubble_pixmap(diameter, hot):
-    key = (diameter, hot)
+    key = (diameter, hot, design.version[0])
     if key not in _glass:
         if len(_glass) > 40:
             _glass.clear()
@@ -213,7 +240,12 @@ class Bubble(QAbstractButton):
         w = max(fm.horizontalAdvance(t) for t in lines)
         h = fm.height() * len(lines)
         cx, cy = self.width() / 2, self.height() / 2
-        return QRectF(cx - w / 2, cy + self.r * 0.22, w, h)
+        top = cy - h / 2 if self.compact() else cy + self.r * 0.22
+        return QRectF(cx - w / 2, top, w, h)
+
+    def compact(self):
+        """Small bubbles (a small window) drop the icon and centre the name, so it still fits inside the circle."""
+        return self.r < 50
 
     def paintEvent(self, ev):
         p = QPainter(self)
@@ -231,16 +263,17 @@ class Bubble(QAbstractButton):
             p.setOpacity(1.0)
         p.resetTransform()
         colour = QColor(design.ACCENT if self.lit() else design.TEXT)
-        isz = int(self.r * 0.5)
-        key = (isz, colour.name())
-        if key not in self._icon:
-            self._icon = {key: icons.make(ICONS.get(self.name, self.name), colour).pixmap(isz, isz)}
-        p.drawPixmap(int(c.x() - isz / 2), int(c.y() - self.r * 0.55), self._icon[key])
+        if not self.compact():
+            isz = int(self.r * 0.5)
+            key = (isz, colour.name())
+            if key not in self._icon:
+                self._icon = {key: icons.make(ICONS.get(self.name, self.name), colour).pixmap(isz, isz)}
+            p.drawPixmap(int(c.x() - isz / 2), int(c.y() - self.r * 0.55), self._icon[key])
         p.setFont(self._font())
-        p.setPen(QColor(design.TEXT))
+        p.setPen(QColor(design.ACCENT if self.lit() else design.TEXT))
         fm = QFontMetrics(self._font())
         lines = self.label_lines()
-        y = c.y() + self.r * 0.22
+        y = self.label_rect().top()
         for line in lines:
             p.drawText(QRectF(0, y, self.width(), fm.height()), Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, line)
             y += fm.height()

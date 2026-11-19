@@ -15,7 +15,7 @@ os.environ["MEMORY_FILE"] = str(tmp / "old-memory.json")
 
 from jarvis.brain import brain  # noqa: E402
 from jarvis.core import config  # noqa: E402
-from jarvis.memory import memory, store  # noqa: E402
+from jarvis.memory import controls, memory, store  # noqa: E402
 
 results = []
 
@@ -43,6 +43,9 @@ check("migration drops a stored user name", not any("name" in f.lower() for f in
 check("migration imports notes", count("notes") == 1)
 check("old files stay untouched", (tmp / "notes" / "dsa.txt").exists() and (tmp / "old-memory.json").exists())
 
+kind, why = memory.remember("my dad's name is Ramesh")
+check("people are not remembered until the switch is turned on", kind == "reject" and "Settings" in why and count("people") == 0, why)
+controls.set_category("people", True)
 kind, _ = memory.remember("my dad's name is Ramesh")
 check("father's name goes to people", kind == "person" and count("people") == 1)
 with store.db() as con:
@@ -108,6 +111,7 @@ check("a project fact is stored with a date", row and row["date"] and fx.path().
 line = json.loads(fx.path().read_text().splitlines()[0])
 check("one fact per line, as JSON", set(line) >= {"id", "date", "kind", "text"})
 check("a repeat is not stored twice", fx.add("working on a voice assistant called jarvis for fedora") is None and len(fx.load()) == 1)
+controls.set_category("people", False)
 refused = ["My password is hunter2 for the laptop", "my card number is 4111 1111 1111 1111", "I was diagnosed with asthma last year",
            "My brother is struggling with his exams", "She told me her salary is high", "my api key is abc", "call me on 9876543210 tonight please"]
 check("secrets, health and other people are refused", all(fx.add(r) is None for r in refused), str([r for r in refused if fx.add(r)]))

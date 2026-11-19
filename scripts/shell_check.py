@@ -412,6 +412,228 @@ stage.scroll_to("globe", instant=True)
 sh.resize(1280, 800)
 pump(0.2)
 
+# ---- depth of the dots ----
+styles = [globe.Globe.dot_style(i / 5) for i in range(6)]
+check("far dots are smaller and dimmer than near ones, step by step", all(a[0] < b[0] and a[1] < b[1] for a, b in zip(styles, styles[1:])))
+check("the far side is well below the front", styles[0][0] < 0.35 * styles[-1][0] and styles[0][1] < 0.2 * styles[-1][1], str(styles))
+check("the front is fully bright", styles[-1][1] > 0.95)
+
+# ---- bubbles use the whole screen ----
+for size in ((1920, 1080), (1280, 800), (900, 600)):
+    w = World()
+    w.layout(*size)
+    xs = [b.ax for b in w.bodies]
+    ys = [b.ay for b in w.bodies]
+    usable = size[1] - 96
+    check(f"at {size[0]}x{size[1]} the bubbles span the width and most of the height", (max(xs) - min(xs)) > 0.62 * size[0] and (max(ys) - min(ys)) > 0.5 * usable,
+          f"{max(xs) - min(xs):.0f} {max(ys) - min(ys):.0f}")
+    cx, cy = sum(xs) / 7, sum(ys) / 7
+    check(f"at {size[0]}x{size[1]} they orbit the centre, not the top and bottom", abs(cx - size[0] / 2) < 0.12 * size[0] and abs(cy - usable / 2) < 0.12 * usable)
+    left = sum(1 for x in xs if x < size[0] / 3)
+    right = sum(1 for x in xs if x > 2 * size[0] / 3)
+    check(f"at {size[0]}x{size[1]} both sides have bubbles", left >= 1 and right >= 1)
+w = World()
+w.layout(1280, 800)
+t0 = w.turn
+for _ in range(300):
+    w.step(1 / 30)
+moved_free = abs(((w.turn - t0) + 3.1416) % 6.2832 - 3.1416)
+w2 = World()
+w2.layout(1280, 800)
+w2.rate = 0.0
+t0 = w2.turn
+for _ in range(300):
+    w2.step(1 / 30, hold=True)
+check("the bubbles orbit slowly round the centre", 0.02 < moved_free < 1.0, f"{moved_free:.2f}")
+held = abs(((w2.turn - t0) + 3.1416) % 6.2832 - 3.1416)
+check("the orbit stops while a bubble is under the pointer", held < 0.2 * moved_free, f"{held:.3f} {moved_free:.3f}")
+worst = 1e9
+w = World()
+w.layout(1280, 800)
+for _ in range(1000):
+    w.step(1 / 30)
+    worst = min(worst, min_gap(w))
+check("the orbit never makes two bubbles overlap", worst >= 0, f"{worst:.2f}")
+
+# ---- cursor effects, with synthetic positions ----
+from PyQt6.QtCore import QEvent  # noqa: E402
+from PyQt6.QtGui import QCursor, QImage, QMouseEvent  # noqa: E402
+
+stage.scroll_to("globe", instant=True)
+sh.resize(1280, 800)
+pump(0.2)
+stage.cursor_override = None
+check("mouse tracking is on for the window and every child", sh.hasMouseTracking() and stage.hasMouseTracking() and all(b.hasMouseTracking() for b in stage.bubbles.values())
+      and sh.bottom.hasMouseTracking() and all(c.hasMouseTracking() for c in sh.findChildren(shell.QWidget)))
+# polled, no events
+from PyQt6.QtCore import QPoint  # noqa: E402
+stage.budget = design.budget()
+stage.engaged = 0.0
+with mock.patch.object(QCursor, "pos", staticmethod(lambda: stage.mapToGlobal(QPoint(900, 300)))):
+    for _ in range(20):
+        stage.tick(1 / 30)
+check("the cursor is polled in the tick, with no mouse events at all", stage.cursor_px is not None and abs(stage.cursor_px[0] - 900) < 2 and abs(stage.cursor_px[1] - 300) < 2 and stage.engaged > 0.5,
+      f"{stage.cursor_px} {stage.engaged}")
+
+
+def settle(pos, frames=40):
+    stage.cursor_override = pos
+    for _ in range(frames):
+        stage.tick(1 / 30)
+
+
+settle((1100, 150))
+check("the globe tilts toward the cursor", stage.globe.tilt[0] > 0.1 and stage.globe.tilt[1] < -0.05, str(stage.globe.tilt))
+settle((150, 700))
+check("and the other way for the opposite corner", stage.globe.tilt[0] < -0.1 and stage.globe.tilt[1] > 0.05, str(stage.globe.tilt))
+check("star layers shift with the cursor (parallax)", stage.cursor_unit[0] < -0.5 and stage.cursor_unit[1] > 0.3, str(stage.cursor_unit))
+
+# the light spot
+centre = stage.globe_rect.center()
+for side, pos in (("left", (centre.x() - 160, centre.y())), ("right", (centre.x() + 160, centre.y()))):
+    settle(pos, 60)
+    stage.trail.clear()
+    img = QImage(stage.size(), QImage.Format.Format_RGB32)
+    stage.render(img)
+    bright = {}
+    for part, x0 in (("l", centre.x() - 170), ("r", centre.x() + 10)):
+        total = n = 0
+        for yy in range(int(centre.y() - 120), int(centre.y() + 120), 3):
+            for xx in range(int(x0), int(x0 + 160), 3):
+                c = img.pixelColor(xx, yy)
+                total += c.red() + c.green() + c.blue()
+                n += 1
+        bright[part] = total / n
+    cases_spot = globals().setdefault("spot_results", {})
+    cases_spot[side] = bright
+check("a light spot follows the cursor across the globe", spot_results["left"]["l"] > spot_results["left"]["r"] * 1.03 and spot_results["right"]["r"] > spot_results["right"]["l"] * 1.03, str(spot_results))
+check("the globe is told where the light is", stage.globe.spot is not None and abs(stage.globe.spot[0] - (centre.x() + 160)) < 2 and stage.globe.spot_level > 0.5)
+
+# particles flee the cursor
+stage.stars.set_count(300)
+import numpy as np  # noqa: E402
+cur = (600.0, 400.0)
+ang = np.linspace(0, 6.28, 300)
+stage.stars.pos = np.stack([cur[0] + 70 * np.cos(ang), cur[1] + 70 * np.sin(ang)], axis=1)
+stage.stars.vel[:] = 0
+before = np.hypot(*(stage.stars.pos - np.array(cur)).T).mean()
+settle(cur, 20)
+after = np.hypot(*(stage.stars.pos - np.array(cur)).T).mean()
+check("particles move away from the cursor", after > before + 15, f"{before:.0f} -> {after:.0f}")
+far = np.array([[100.0, 100.0]] * 300)
+stage.stars.pos = far.copy()
+settle(cur, 20)
+check("particles far from the cursor are left alone", np.hypot(*(stage.stars.pos - far).T).mean() < 25)
+
+# the trail
+stage.trail.clear()
+for i in range(12):
+    settle((300 + i * 40, 500 - i * 10), 1)
+check("a faint glow trails the cursor", len(stage.trail) >= 6, str(len(stage.trail)))
+time.sleep(0.75)
+settle((300 + 11 * 40, 500 - 11 * 10), 1)
+check("the trail fades away", len(stage.trail) <= 2, str(len(stage.trail)))
+
+# ripples
+stage.ripples.clear()
+stage.stars.pos = np.stack([np.full(300, 100.0) + np.random.default_rng(1).random(300) * 40, np.full(300, 100.0) + np.random.default_rng(2).random(300) * 40], axis=1)
+stage.stars.vel[:] = 0
+QTest.mouseClick(stage, Qt.MouseButton.LeftButton, pos=QPoint(110, 110))
+check("a click makes a ripple", len(stage.ripples) == 1 and stage.section == "globe")
+check("the ripple pushes the particles", np.abs(stage.stars.vel).sum() > 0)
+img = QImage(stage.size(), QImage.Format.Format_RGB32)
+stage.render(img)
+check("the ripple is drawn", True)
+stage.ripples = [(stage.ripples[0][0], time.monotonic() - 5)]
+stage.tick(1 / 30)
+check("and it is gone after a second", not stage.ripples)
+stage.scroll_to("bubbles", instant=True)
+stage.ripples.clear()
+stage.bubbles["Notes"].setVisible(True)
+QTest.mousePress(stage.bubbles["Notes"], Qt.MouseButton.LeftButton, pos=stage.bubbles["Notes"].rect().center())
+check("a click on a bubble ripples too", len(stage.ripples) == 1)
+QTest.mouseRelease(stage.bubbles["Notes"], Qt.MouseButton.LeftButton, pos=stage.bubbles["Notes"].rect().center())
+pump(0.4)
+sh.go_globe()
+pump(0.3)
+stage.scroll_to("globe", instant=True)
+if sh.stack.currentWidget() is not stage:
+    sh.go_globe()
+    pump(0.4)
+
+# drag and inertia
+def send(kind, pos, buttons):
+    btn = Qt.MouseButton.LeftButton if kind != QEvent.Type.MouseMove or buttons else Qt.MouseButton.NoButton
+    ev = QMouseEvent(kind, QPointF(*pos), QPointF(stage.mapToGlobal(QPoint(int(pos[0]), int(pos[1])))), btn, buttons, Qt.KeyboardModifier.NoModifier)
+    QApplication.sendEvent(stage, ev)
+
+
+stage.cursor_override = None
+stage.globe.extra = 0.0
+stage.globe.angle = 0.0
+centre = stage.globe_rect.center()
+start = (centre.x(), centre.y())
+send(QEvent.Type.MouseButtonPress, start, Qt.MouseButton.LeftButton)
+angle0 = stage.globe.angle
+for i in range(1, 9):
+    send(QEvent.Type.MouseMove, (start[0] + i * 20, start[1]), Qt.MouseButton.LeftButton)
+    time.sleep(0.012)
+    stage.tick(0.012)
+check("dragging turns the globe", stage.dragged and abs(stage.globe.angle - angle0) > 0.3 and stage.globe.dragging, f"{stage.globe.angle - angle0:.2f}")
+send(QEvent.Type.MouseButtonRelease, (start[0] + 160, start[1]), Qt.MouseButton.NoButton)
+check("a drag is not a click: the globe stays", stage.section == "globe" and not stage.dragged)
+check("it coasts after the release", abs(stage.globe.extra) > 0.5, f"{stage.globe.extra:.2f}")
+a1 = stage.globe.angle
+for _ in range(10):
+    stage.tick(1 / 30)
+coast = abs(stage.globe.angle - a1)
+for _ in range(240):
+    stage.tick(1 / 30)
+check("the coast carries the globe on, then dies away", coast > 0.1 and abs(stage.globe.extra) < 0.05, f"{coast:.2f} {stage.globe.extra:.3f}")
+check("with nothing touching it the globe returns to its slow rotation", abs(stage.globe.spin - globe.look_for("idle").spin) < 0.3)
+send(QEvent.Type.MouseButtonPress, start, Qt.MouseButton.LeftButton)
+send(QEvent.Type.MouseButtonRelease, start, Qt.MouseButton.NoButton)
+check("a plain click on the globe still opens the bubbles", until(lambda: stage.section == "bubbles"))
+stage.scroll_to("globe", instant=True)
+
+# idle fades back
+settle((900, 200), 30)
+check("engaged while the pointer moves", stage.engaged > 0.9)
+stage.last_move = time.monotonic() - 10
+stage.cursor_override = (900, 200)
+for _ in range(120):
+    stage.tick(1 / 30)
+check("when the pointer rests the effects fade out", stage.engaged < 0.05 and abs(stage.globe.tilt[0]) < 0.03 and max(abs(stage.cursor_unit[0]), abs(stage.cursor_unit[1])) < 0.05, f"{stage.engaged} {stage.globe.tilt}")
+check("and the light fades", stage.globe.spot_level < 0.05)
+a = stage.globe.angle
+for _ in range(30):
+    stage.tick(1 / 30)
+check("the globe is turning slowly on its own again", abs(stage.globe.angle - a) > 0.05)
+
+# reduced motion and low power
+sh.dash.set_reduced_motion(True)
+stage.trail.clear()
+stage.ripples.clear()
+settle((1000, 120), 30)
+check("reduced motion: no tilt, parallax, trail or particles", abs(stage.globe.tilt[0]) < 0.001 and stage.cursor_unit == (0.0, 0.0) and not stage.trail and stage.stars.count == 0)
+QTest.mouseClick(stage, Qt.MouseButton.LeftButton, pos=QPoint(100, 100))
+check("reduced motion: a click makes no ripple", not stage.ripples)
+check("reduced motion: the light still follows the hand", stage.globe.spot is not None and stage.globe.spot_level > 0.5)
+stage.globe.extra = 0
+send(QEvent.Type.MouseButtonPress, start, Qt.MouseButton.LeftButton)
+for i in range(1, 6):
+    send(QEvent.Type.MouseMove, (start[0] + i * 20, start[1]), Qt.MouseButton.LeftButton)
+    time.sleep(0.01)
+send(QEvent.Type.MouseButtonRelease, (start[0] + 100, start[1]), Qt.MouseButton.NoButton)
+check("reduced motion: dragging works but there is no coasting", stage.globe.extra == 0.0)
+sh.dash.set_reduced_motion(False)
+sh.dash.set_low_power(True)
+check("low power: a short trail and fewer particles", stage.budget.trail == 6 and stage.stars.count == 80 and stage.budget.tilt)
+settle((700, 300), 12)
+check("low power: the trail never exceeds its cap", len(stage.trail) <= 6)
+sh.dash.set_low_power(False)
+stage.cursor_override = (300, 300)
+
 # frame time and memory
 stage.cursor_override = (300, 200)
 for _ in range(30):

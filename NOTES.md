@@ -309,3 +309,46 @@ See "How to test phases 22 to 28" in README.md.
 - The globe actually following your voice: listening pulse with the real mic level, speaking rhythm from Piper, thinking while a real request runs, error and offline after a real failure.
 - The bottom panel texts with a live Groq or Ollama, and the brain label switching to advanced on an advanced answer.
 - Tab order and visible focus with a keyboard, Ctrl+K against the KDE shortcut set, and the UI process memory in a long session (the 250 MB check is a short offscreen run).
+
+## Phase 2b: local model, cursor effects, depth, orbiting bubbles
+
+### Cause of "the local model could not be reached"
+- Reproduced with the real Ollama: `llama3.2:1b` cold with a ~1,370-token chat prompt took 31 s to the first word; the old non-streaming call gave up at 25 s (`ReadTimeout`), and the one generic
+  "could not be reached" text covered that and a refused connection alike. Warm, the same call takes under a second. Proxies, OLLAMA_HOST, localhost vs 127.0.0.1 and the model name were all fine on this machine
+  (`python -m jarvis.doctor --ollama` prints them).
+- Fix: streaming with a first-word and a between-chunks timeout, the short local prompt (610 to about 94 tokens for "can you hear me?"; cold first word 6.5 s instead of 31 s), a preload at start, exact failure causes.
+- This laptop reports about 1 to 2.5 GB free; under 1.5 GB with the model not loaded the RAM gate skips the local model, and now says so with the numbers.
+
+### Decisions and limits
+- `local.compact` only rewrites prompts whose system text starts with the persona; summaries and tool plans are untouched. Plain chat from the local model no longer sees memory facts or the self block.
+- `OLLAMA_URL` still wins over `OLLAMA_HOST`. Ollama calls ignore proxy variables entirely (it is always a local server).
+- A failed local call emits a `sys` line containing "failed", so the globe shows the error state for five seconds.
+- Streaming is used inside the client only; the reply is still handed over whole (the chat bubble streaming for local replies is not wired).
+- Bubbles dropped the grid for two orbiting ellipses; at very small windows (under about 800 px wide) names are centred without icons.
+
+### Needs your real mouse and screen
+- Cursor polling on KDE Wayland with xcb (the check patches `QCursor.pos`), the light spot, particles fleeing, parallax, trail, ripple and drag with inertia at 30 fps on your GPU and scale factor.
+- Whether click versus drag on the globe feels right (6 px, 0.9 s), and whether the idle fade (3 s) is too quick or too slow.
+- A cold first question after the preload on your real RAM, and the "warming up" text in the pill.
+
+## Phase 3: settings, profile, memory, customization, models
+
+### Built
+- `core/profile.py`, `memory/controls.py`, `memory/manager.py`, `brain/registry.py`, `ui/settings_hub.py`; live look settings in `ui/design.py`; `scripts/settings_check.py` (about 160 checks, in `ci_checks.txt`).
+- Settings has five sections; the older page is General. All of Profile, Memory, Customization and Models are in the command palette (Accent colour moved from unavailable to available; About JARVIS is still not built).
+- Changed behaviour: other people and health are now off by default in both memory stores (they were refused or always on before); `memory_check` was updated to turn the switch on where it tests people.
+
+### Decisions and limits
+- Profile names live in `settings.json`, not `.env`; `.env` remains the fallback. `memory.py`'s rule that conversation never changes the user's name is untouched: only this page and `profile.save` can.
+- Passwords, keys, card and id numbers, phone numbers and addresses are never stored and cannot be switched on. "Sensitive" means people and health only.
+- Clear all removes long-term facts, `memory.db` facts, people and conversation summaries, not the chat threads or archived turns.
+- The accent you type is kept as typed; the colour in use is the lightened one (shown on the page). Classic dashboard pages follow the accent through its hue only.
+- Reachable on the Models page is a manual check (one GET) and says "not checked" until pressed; every other state is the last real call. Extra providers need an OpenAI-compatible `/chat/completions` and `/models`.
+- Chat appearance is applied through the stylesheet of the page that holds the chat; the compact dock in the classic window is not affected.
+- Voice choice only lists installed Piper voices; with none installed the list is empty.
+
+### Needs your real screen, mic and keys
+- The look of every Settings section at your resolution and with your Qt style; the colour picker is a hex box and presets (no system colour dialog).
+- A real Groq and OpenRouter key: Check now, the usage numbers after real use, the OpenRouter picker against the live list, and an extra provider of your own.
+- Test voice and the speed slider with real Piper audio; a restart to confirm the profile, look and memory switches persist.
+- Whether the sensitive memory defaults (people and health off) match what you want for the "remember that my sister ..." flow.

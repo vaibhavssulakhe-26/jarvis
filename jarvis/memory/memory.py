@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 from .. import redact
 from ..core import config
-from . import store
+from . import controls, store
 
 MAX_TURNS = 2000
 SUMMARY_EVERY = 12
@@ -145,7 +145,11 @@ def remember(fact, key="", category="", source="chat"):
     if not fact:
         return "reject", "I did not catch what to remember."
     kind, info = judge(fact, key)
+    if controls.paused():
+        return "reject", controls.refusal()
     if kind == "person":
+        if not controls.allows("people"):
+            return "reject", controls.refusal("people")
         name, relation = info
         add_person(name, relation)
         return "person", f"Okay, I noted that your {relation} is {name}. That does not change what I call you."
@@ -154,13 +158,16 @@ def remember(fact, key="", category="", source="chat"):
         return "reject", f"I keep your name as it is, so I will go on calling you {who}."
     key = str(key or "").strip() or _key(fact)
     now = _now()
+    category = category or _category(fact)
+    if not controls.allows("fact" if category == "general" else category):
+        return "reject", controls.refusal("fact" if category == "general" else category)
     with store.db() as con:
         row = con.execute("SELECT id FROM facts WHERE key=? OR lower(value)=?", (key, fact.lower())).fetchone()
         if row:
             con.execute("UPDATE facts SET value=?, updated=? WHERE id=?", (fact, now, row["id"]))
         else:
             con.execute("INSERT INTO facts(key, value, category, source, created, updated) VALUES(?,?,?,?,?,?)",
-                        (key, fact, category or _category(fact), source, now, now))
+                        (key, fact, category, source, now, now))
     return "fact", "Got it, I will remember that."
 
 

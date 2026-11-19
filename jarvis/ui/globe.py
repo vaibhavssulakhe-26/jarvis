@@ -11,9 +11,9 @@ from PyQt6.QtGui import QColor, QPainter, QPen, QPixmap, QPolygonF, QRadialGradi
 from . import design
 
 LAYERS = ((1500, 0.6, 0.18), (1100, 0.8, 0.30), (700, 1.1, 0.45))
-PARALLAX = (4.0, 9.0, 16.0)
+PARALLAX = (6.0, 14.0, 26.0)
 MARGIN = 24
-REPEL_RADIUS = 130.0
+REPEL_RADIUS = 160.0
 GLOBE_FRACTION = 0.34
 TILT = 0.38
 EASE = 0.12
@@ -40,8 +40,22 @@ LOOKS = {
 }
 
 
+def _accent_tint(name):
+    """The state colours follow the accent: idle is the accent, listening and speaking lighter, thinking turned toward violet. Error and offline stay fixed."""
+    a = QColor(design.ACCENT)
+    if name == "idle":
+        return a
+    if name in ("listening", "speaking"):
+        return _mix(a, QColor("#ffffff"), 0.3 if name == "listening" else 0.42)
+    h, s, v, _ = a.getHsvF()
+    return QColor.fromHsvF((max(h, 0) + 0.07) % 1.0, min(1.0, s * 0.8), min(1.0, v + 0.05))
+
+
 def look_for(name):
-    return LOOKS.get(name, LOOKS["idle"])
+    look = LOOKS.get(name, LOOKS["idle"])
+    if name in ("idle", "listening", "thinking", "speaking"):
+        return Look(look.spin, look.bright, _accent_tint(name).name(), look.pulse, look.rings, look.atmosphere)
+    return look
 
 
 def fibonacci(n):
@@ -112,7 +126,7 @@ class StarField:
             d = self.pos - np.array(cursor)
             dist = np.sqrt((d ** 2).sum(axis=1)) + 1e-3
             near = dist < REPEL_RADIUS
-            push = np.where(near, (1 - dist / REPEL_RADIUS) ** 2 * 260, 0.0)
+            push = np.where(near, (1 - dist / REPEL_RADIUS) ** 2 * 900, 0.0)
             self.vel += d / dist[:, None] * push[:, None] * dt
         self.vel *= max(0.0, 1 - 1.6 * dt)
         speed = np.sqrt((self.vel ** 2).sum(axis=1))
@@ -121,6 +135,15 @@ class StarField:
         self.pos += self.vel * dt * self.depth[:, None]
         self.pos[:, 0] %= max(1, w)
         self.pos[:, 1] %= max(1, h)
+
+    def shock(self, pos, strength=240.0, radius=220.0):
+        """A click: every particle near the point is knocked away from it."""
+        if not self.count:
+            return
+        d = self.pos - np.array(pos, dtype=float)
+        dist = np.sqrt((d ** 2).sum(axis=1)) + 1e-3
+        push = np.where(dist < radius, (1 - dist / radius) * strength, 0.0)
+        self.vel += d / dist[:, None] * push[:, None]
 
     def paint(self, p, cursor_unit, parallax=True, offset_y=0.0):
         """cursor_unit is the cursor as -1..1 on both axes. offset_y shifts the layers a little while the screen scrolls."""
@@ -143,7 +166,9 @@ class StarField:
 
 
 class Globe:
-    """The one dominant globe. It eases between looks, tilts toward the cursor and takes its pulse from the mic or the voice."""
+    """The one dominant globe. It eases between looks, tilts toward the cursor, lights the side the cursor is on, spins when dragged (and coasts on) and
+    takes its pulse from the mic or the voice. Far dots are small and dim, near dots large and bright."""
+    BUCKETS = 6
 
     def __init__(self, points=1100):
         self.set_points(points)
@@ -157,6 +182,12 @@ class Globe:
         self.pulse = 0.0
         self.ring_phase = 0.0
         self.peak = 0.05
+        self.extra = 0.0
+        self.pitch = 0.0
+        self.dragging = False
+        self._moved = False
+        self.spot = None
+        self.spot_level = 0.0
         self._atmo_cache = {}
 
     def set_points(self, n):
@@ -176,6 +207,26 @@ class Globe:
             return min(1.0, float(voice))
         return 0.0
 
+    def drag(self, dx, dy, radius, dt):
+        """Turn the globe with the hand: dx pixels of travel across the front turn it by that arc, and the speed is kept for the coast afterwards."""
+        self.dragging = True
+        self._moved = True
+        turn = dx / max(1.0, radius)
+        self.angle = (self.angle + turn) % math.tau
+        self.pitch = max(-0.7, min(0.7, self.pitch + dy / max(1.0, radius) * 0.5))
+        self.extra = 0.5 * self.extra + 0.5 * (turn / max(dt, 1 / 120))
+
+    def release(self, inertia=True):
+        self.dragging = False
+        if not inertia:
+            self.extra = 0.0
+        self.extra = max(-6.0, min(6.0, self.extra))
+
+    def aim(self, spot, level):
+        """Where the light is (screen pixels, or None) and how strongly. Called every frame; it eases, so the light fades instead of switching."""
+        self.spot = spot if spot is not None else self.spot
+        self.spot_level = level
+
     def step(self, dt, cursor_unit, mic=0.0, voice=0.0, speed=1.0):
         look = look_for(self.name)
         k = 1 - (1 - EASE) ** (dt * 30)
@@ -183,20 +234,35 @@ class Globe:
         self.bright += (look.bright - self.bright) * k
         self.atmos += (look.atmosphere - self.atmos) * k
         self.tint = _mix(self.tint, QColor(look.tint), k)
-        self.angle = (self.angle + self.spin * speed * dt * math.tau / 60.0) % math.tau
+        if self.dragging:
+            if not self._moved:
+                self.extra *= math.exp(-dt * 10)
+            self._moved = False
+        else:
+            self.angle = (self.angle + self.spin * speed * dt * math.tau / 60.0 + self.extra * dt) % math.tau
+            self.extra *= math.exp(-dt * 1.5)
+            self.pitch *= math.exp(-dt * 1.2)
+            if abs(self.extra) < 0.002:
+                self.extra = 0.0
         self.tilt[0] += (cursor_unit[0] * TILT - self.tilt[0]) * k
         self.tilt[1] += (cursor_unit[1] * TILT - self.tilt[1]) * k
         self.pulse += (self.level(mic, voice) - self.pulse) * min(1.0, k * 2.2)
         self.ring_phase = (self.ring_phase + dt * 0.55) % 1.0
 
+    @staticmethod
+    def dot_style(near, bright=1.0):
+        """(pen width, opacity) of a dot at depth `near` (0 on the far side, 1 at the front): small and dim behind, large and bright in front."""
+        return 0.9 + 3.3 * near ** 1.4, min(1.0, (0.07 + 0.93 * near ** 1.6) * bright)
+
     def project(self, centre, radius):
-        """(screen x, screen y, depth) arrays for every point, after the spin and the cursor tilt."""
+        """(screen x, screen y, depth) arrays for every point, after the spin, the drag pitch and the cursor tilt."""
         pts = self.cloud
         c, s = math.cos(self.angle), math.sin(self.angle)
         x = pts[:, 0] * c + pts[:, 2] * s
         z = -pts[:, 0] * s + pts[:, 2] * c
         y = pts[:, 1]
-        cx, sx = math.cos(self.tilt[1] * 0.8 + 0.25), math.sin(self.tilt[1] * 0.8 + 0.25)
+        pitch = self.tilt[1] * 0.8 + 0.25 + self.pitch
+        cx, sx = math.cos(pitch), math.sin(pitch)
         y, z = y * cx - z * sx, y * sx + z * cx
         cy, sy = math.cos(self.tilt[0]), math.sin(self.tilt[0])
         x, z = x * cy + z * sy, -x * sy + z * cy
@@ -225,13 +291,26 @@ class Globe:
             self._atmo_cache[key] = pm
         return self._atmo_cache[key]
 
+    def spot_point(self, centre, radius):
+        """The light on the globe: the cursor's place, held inside the disc, with a strength that falls off as the cursor leaves it."""
+        if self.spot is None or self.spot_level <= 0.01:
+            return None, 0.0
+        dx, dy = self.spot[0] - centre.x(), self.spot[1] - centre.y()
+        dist = math.hypot(dx, dy)
+        reach = radius * 0.86
+        if dist > reach:
+            dx, dy = dx / dist * reach, dy / dist * reach
+        fall = 1.0 - max(0.0, min(1.0, (dist - radius) / (radius * 1.3)))
+        return (centre.x() + dx, centre.y() + dy), self.spot_level * (0.35 + 0.65 * fall)
+
     def paint(self, p, rect):
         centre = rect.center()
-        radius = min(rect.width(), rect.height()) * GLOBE_FRACTION
+        fraction, glow = design.globe_look()
+        radius = min(rect.width(), rect.height()) * fraction
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         r_pulse = radius * (1 + 0.05 * self.pulse)
         pm = self.atmosphere(r_pulse)
-        p.setOpacity(max(0.0, min(1.0, self.atmos + 0.25 * self.pulse)))
+        p.setOpacity(max(0.0, min(1.0, (self.atmos + 0.25 * self.pulse) * glow)))
         p.drawPixmap(int(centre.x() - pm.width() / 2), int(centre.y() - pm.height() / 2), pm)
         p.setOpacity(1.0)
         look = look_for(self.name)
@@ -254,17 +333,39 @@ class Globe:
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(shade)
         p.drawEllipse(centre, r_pulse * 0.985, r_pulse * 0.985)
-        # four depth buckets, far to near; each is one drawPoints call
-        edges = (-1.01, -0.1, 0.25, 0.6, 1.01)
-        for i in range(4):
-            mask = (z >= edges[i]) & (z < edges[i + 1])
+        spot, strength = self.spot_point(centre, r_pulse)
+        zn = (z + 1.0) / 2.0
+        idx = np.minimum((zn * self.BUCKETS).astype(int), self.BUCKETS - 1)
+        for i in range(self.BUCKETS):
+            mask = idx == i
             if not mask.any():
                 continue
-            near = (i + 1) / 4
-            c = QColor("#ffffff")
-            c = _mix(self.tint, c, 0.5 * near)
-            c.setAlphaF(min(1.0, (0.16 + 0.84 * near ** 1.2) * self.bright))
-            p.setPen(QPen(c, 1.6 + 2.6 * near, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            near = (i + 0.5) / self.BUCKETS
+            c = _mix(self.tint, QColor("#ffffff"), 0.5 * near ** 1.5)
+            width, opacity = self.dot_style(near, self.bright)
+            c.setAlphaF(opacity)
+            p.setPen(QPen(c, width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
             p.drawPoints(QPolygonF([QPointF(a, b) for a, b in zip(x[mask], y[mask])]))
+        if spot is not None and strength > 0.02:
+            front = zn > 0.5
+            d2 = ((x - spot[0]) ** 2 + (y - spot[1]) ** 2) / (0.42 * r_pulse) ** 2
+            glow = np.exp(-d2) * front
+            for lo, hi, a, w in ((0.18, 0.55, 0.55, 4.2), (0.55, 2.0, 0.95, 5.2)):
+                mask = (glow >= lo) & (glow < hi)
+                if mask.any():
+                    c = QColor("#ffffff")
+                    c.setAlphaF(min(1.0, a * strength))
+                    p.setPen(QPen(c, w, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+                    p.drawPoints(QPolygonF([QPointF(a_, b_) for a_, b_ in zip(x[mask], y[mask])]))
+            halo = QRadialGradient(QPointF(*spot), r_pulse * 0.75)
+            c0 = QColor("#ffffff")
+            c0.setAlphaF(0.20 * strength)
+            c1 = QColor("#ffffff")
+            c1.setAlphaF(0.0)
+            halo.setColorAt(0, c0)
+            halo.setColorAt(1, c1)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(halo)
+            p.drawEllipse(centre, r_pulse * 0.985, r_pulse * 0.985)
         p.setBrush(Qt.BrushStyle.NoBrush)
         return QRectF(centre.x() - r_pulse, centre.y() - r_pulse, 2 * r_pulse, 2 * r_pulse)

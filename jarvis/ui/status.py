@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass
 
 from ..actions import events
+from ..brain import local
 from ..core import config, state
 
 STATES = ("idle", "listening", "thinking", "speaking", "error", "offline")
@@ -27,6 +28,7 @@ class Snapshot:
     activity: str = ""
     level: float = 0.0
     out_level: float = 0.0
+    warming: bool = False
 
 
 def resolve_state(s):
@@ -88,7 +90,7 @@ def snapshot(tracker, levels=None):
         online=not offline and any(v == "ok" for v in cloud),
         tier=tracker.tier if now - tracker.tier_at < TIER_SECONDS else "",
         activity=tracker.activity if now - tracker.activity_at < 30 else "",
-        level=events.level, out_level=events.out_level)
+        level=events.level, out_level=events.out_level, warming=local.warming())
 
 
 def mic_label(s):
@@ -101,6 +103,8 @@ def mic_label(s):
 
 def brain_label(s):
     """Local or advanced: the tier of the last answer for a short while, else what the brain mode makes the usual choice."""
+    if s.warming:
+        return "local, warming up"
     if s.offline:
         return "local" if config.offline() else "offline"
     if s.tier in ADVANCED_TIERS:
@@ -121,3 +125,12 @@ def connection_label(s):
 def state_label(name):
     return {"idle": "Ready", "listening": "Listening", "thinking": "Thinking", "speaking": "Speaking", "error": "Something went wrong",
             "offline": "Offline"}[name]
+
+
+def greeting(now=None):
+    """'Good evening, Vibe': the time of day and the name from the saved profile (a nickname first), or just the greeting when there is no name."""
+    from datetime import datetime
+    hour = (now or datetime.now()).hour
+    word = "Good morning" if 5 <= hour < 12 else "Good afternoon" if 12 <= hour < 18 else "Good evening"
+    name = config.PET_NAME or config.SHORT_NAME
+    return f"{word}, {name}" if name else word

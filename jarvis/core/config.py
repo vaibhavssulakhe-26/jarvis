@@ -88,6 +88,39 @@ PET_NAME = get("USER_NICKNAME") or get("USER_PET_NAME") or get("USER_NAME")
 SHORT_NAME = get("USER_SHORT_NAME") or get("USER_NAME")
 FULL_NAME = get("USER_FULL_NAME") or SHORT_NAME
 GOD_NAME = get("USER_GOD_NAME")
+_env_names = (FULL_NAME, SHORT_NAME, NICKNAME, PET_NAME)
+
+
+def _settings():
+    """data/settings.json as a dict (read with the standard library, because this module cannot import the helpers that import it)."""
+    import json
+    try:
+        data = json.loads((DATA / "settings.json").read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def set_names(full="", preferred="", nickname=""):
+    """Apply the saved profile. A name left empty goes back to its .env value, so an empty profile changes nothing."""
+    global FULL_NAME, SHORT_NAME, NICKNAME, PET_NAME
+    env_full, env_short, env_nick, env_pet = _env_names
+    SHORT_NAME = preferred or env_short
+    FULL_NAME = full or (preferred if preferred else env_full)
+    NICKNAME = nickname or preferred or env_nick
+    PET_NAME = nickname or preferred or env_pet
+
+
+def chosen(provider):
+    """The model picked for a provider on the Models page (settings.json "models"), or '' to use the .env default."""
+    models = _settings().get("models")
+    return str(models.get(provider, "")).strip() if isinstance(models, dict) else ""
+
+
+_saved_profile = _settings().get("profile")
+if isinstance(_saved_profile, dict):
+    set_names(str(_saved_profile.get("full_name") or "").strip(), str(_saved_profile.get("preferred_name") or "").strip(),
+              str(_saved_profile.get("nickname") or "").strip())
 RUNTIME = platform.runtime_dir() / PROFILE if PROFILE else platform.runtime_dir()
 _old_projects = Path.home() / "ana-projects"
 PROJECTS = Path.home() / ("ana-projects" if _old_projects.is_dir() and not (Path.home() / "jarvis-projects").is_dir()

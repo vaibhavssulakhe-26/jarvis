@@ -10,12 +10,13 @@ from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QScrollAre
 
 from .. import features
 from ..actions import events
-from ..core import state
+from ..core import profile, state
 from . import design, status
 from .bottom import HEIGHT as BOTTOM_HEIGHT, BottomPanel
 from .bubbles import NAMES
 from .cmdk import CommandPalette
 from .dashboard import window as classic
+from .settings_hub import SettingsHub
 from .stage import Stage
 
 BUBBLE_PAGE = {"Web Search": "Web"}
@@ -85,7 +86,7 @@ class Destination(QWidget):
         accent = self.dash.theme.accent.name()
         focus = (f"QPushButton:focus, QToolButton:focus, QLineEdit:focus, QTextEdit:focus, QComboBox:focus, QCheckBox:focus, QSlider:focus, "
                  f"QListWidget:focus, QTableWidget:focus {{ border: 2px solid {design.ACCENT}; }}")
-        self.setStyleSheet(self.dash.theme.qss() + focus + f"QLabel#dest_title {{ color: {design.TEXT}; }}")
+        self.setStyleSheet(self.dash.theme.qss() + focus + design.pages_qss() + design.chat_qss() + f"QLabel#dest_title {{ color: {design.TEXT}; }}")
         self.title.setObjectName("dest_title")
 
     def show_page(self, name):
@@ -106,6 +107,8 @@ class Shell(QWidget):
         self.dash = dash or classic.Dashboard()
         self.dash.bring_up = self.bring_up
         self.dash.on_power = self.apply_power
+        self.hub = SettingsHub(self.dash.ctx, self.dash, self.dash.pages["Settings"])
+        self.dash.pages["Settings"] = self.hub
         self.tracker = status.Tracker()
         self.snap = status.Snapshot()
         self.state = "idle"
@@ -141,6 +144,8 @@ class Shell(QWidget):
         self.palette.closed.connect(self._restore_focus)
         self.dash.clock.tick.connect(self._frame)
         events.listeners.append(self.tracker.on_event)
+        design.listeners.append(self.on_look)
+        profile.listeners.append(self.on_profile)
 
         for keys, fn in (("Ctrl+K", self.open_palette), ("Ctrl+.", self.dash.stop_all), ("Ctrl+Q", self.quit_all), ("F11", self.toggle_full),
                          ("Esc", self.escape), ("Alt+Left", self.back), ("Alt+Home", self.go_globe)):
@@ -155,9 +160,17 @@ class Shell(QWidget):
         self.page_timer = QTimer(self)
         self.page_timer.timeout.connect(self.refresh_page)
         self.page_timer.start(PAGE_MS)
+        self.track(self)
         self.apply_power()
         self.poll()
         self._place_overlays()
+
+    @staticmethod
+    def track(widget):
+        """Mouse tracking on the window and every child, so move events arrive without a button held. The stage also polls the cursor itself."""
+        widget.setMouseTracking(True)
+        for child in widget.findChildren(QWidget):
+            child.setMouseTracking(True)
 
     # ---------- showing ----------
     def present(self):
@@ -202,6 +215,19 @@ class Shell(QWidget):
         self.veil.setGeometry(0, 0, w, h)
         if self.palette.isVisible():
             self.palette.place()
+
+    # ---------- look and profile ----------
+    def on_look(self):
+        """The saved look changed: restyle the chrome and the pages, rebuild the motion budget, repaint."""
+        self.setStyleSheet(design.qss())
+        self.destination.restyle()
+        self.apply_power()
+        self.stage.update()
+        self.bottom.update()
+        self.palette.update()
+
+    def on_profile(self, _profile=None):
+        self.stage.update()
 
     # ---------- power and motion ----------
     def apply_power(self):
@@ -341,6 +367,8 @@ class Shell(QWidget):
             self.go_globe()
         elif kind == "page":
             self.open_page(f.action[1])
+            if len(f.action) > 2 and f.action[1] == "Settings":
+                self.hub.show_section(f.action[2])
         elif kind == "toggle":
             if f.action[1] == "low_power":
                 self.dash.set_low_power(not self.dash.low_manual)
@@ -372,6 +400,9 @@ class Shell(QWidget):
         self.quitting = True
         if self.tracker.on_event in events.listeners:
             events.listeners.remove(self.tracker.on_event)
+        for hooks, fn in ((design.listeners, self.on_look), (profile.listeners, self.on_profile)):
+            if fn in hooks:
+                hooks.remove(fn)
         state.update(activity="idle")
         self.dash.quit_all(exit_process=exit_process)
         if not exit_process:

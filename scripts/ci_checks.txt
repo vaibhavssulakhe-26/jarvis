@@ -55,3 +55,5 @@ provider_check
 context_check
 messaging_check
 local_first_check
+ollama_check
+settings_check linux

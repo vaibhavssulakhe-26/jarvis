@@ -12,12 +12,12 @@ from datetime import datetime
 
 import requests
 
-from ..core import config, jsonfile, lang
+from ..core import config, jsonfile, lang, profile
 from ..memory import facts, memory, threads
 from . import advanced as advanced_mod
+from . import local
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-OLLAMA_URL = config.get("OLLAMA_URL", "http://localhost:11434")
 MODEL = config.get("GROQ_MODEL", "openai/gpt-oss-20b")
 VISION_MODEL = config.get("GROQ_VISION_MODEL", "qwen/qwen3.8-27b")
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -46,7 +46,6 @@ TURNS = 4
 SENT_TURNS = 2
 HISTORY_CHARS = 200
 DRAFT_TOKENS = 900
-OLLAMA_TIMEOUT = 25
 STRONG_MODEL = config.get("GROQ_STRONG_MODEL", "openai/gpt-oss-120b")
 STRONG_DAILY = 40
 QUALITY_TURNS = 12
@@ -197,13 +196,13 @@ def chat_system(text):
     known = memory.context(text)[:MEMORY_CHARS]
     pet = " The user's pet name is " + config.PET_NAME + "." if config.PET_NAME else ""
     return (PERSONA.replace("{NAME}", config.ASSISTANT) + pet + " " + MODE_LINE[config.brain_mode()][0] + " Answer in plain text." +
-            (" " + lang.reply_hint(text)).rstrip() + ("\n\n" + known if known else ""))
+            (" " + lang.reply_hint(text)).rstrip() + (" " + profile.prompt_lines()).rstrip() + ("\n\n" + known if known else ""))
 
 
 def cloud_system(text):
     """The system text the cloud gets for chat: persona, the time and the reply language, with no memory, notes or self block."""
     return (PERSONA_SHORT.replace("{NAME}", config.ASSISTANT) + " Current local time: "
-            + datetime.now().astimezone().strftime("%A %Y-%m-%d %H:%M") + ". " + lang.reply_hint(text)).strip()
+            + datetime.now().astimezone().strftime("%A %Y-%m-%d %H:%M") + ". " + lang.reply_hint(text) + " " + profile.prompt_lines()).strip()
 
 
 def _extract_json(text):
@@ -224,12 +223,24 @@ def _extract_json(text):
 
 
 def _health_name(model):
-    return {STRONG_MODEL: "groq-strong", VISION_MODEL: "groq-vision"}.get(model, "groq") if model != MODEL else "groq"
+    return {STRONG_MODEL: "groq-strong", VISION_MODEL: "groq-vision"}.get(model, "groq") if model != groq_model() else "groq"
 
 
-def _record(name, ok, code=200):
-    """Remember how the last real call to a provider went. The status panel and the self block read this, so they can only say what happened."""
-    HEALTH[name] = {"ok": ok, "code": code, "at": time.time()}
+def groq_model():
+    """The Groq model in use: the one picked on the Models page, else GROQ_MODEL."""
+    return config.chosen("groq") or MODEL
+
+
+def openrouter_models():
+    """OpenRouter models to try, in order: the one picked on the Models page first, then the .env list."""
+    pick = config.chosen("openrouter")
+    return ([pick] + [m for m in OPENROUTER_MODELS if m != pick]) if pick else list(OPENROUTER_MODELS)
+
+
+def _record(name, ok, code=200, why=""):
+    """Remember how the last real call to a provider went. The status panel and the self block read this, so they can only say what happened.
+    `why` is the exact cause in words when the provider can give one (the local model does)."""
+    HEALTH[name] = {"ok": ok, "code": code, "at": time.time(), "why": why}
     if ok:
         FAILED.pop(name, None)
     else:
@@ -258,7 +269,7 @@ def say_failure(text):
 
 def _groq(messages, use_json=True, model=None, max_tokens=ASK_TOKENS, effort="low"):
     """One Groq call. Returns (reply text or None, HTTP status; 0 means no key, -1 means no network)."""
-    model = model or MODEL
+    model = model or groq_model()
     key = config.get("GROQ_API_KEY")
     if not key or config.offline():
         return None, 0
@@ -331,7 +342,7 @@ def _try_openrouter(messages, max_tokens, want_json, models=None):
 def _openrouter_models(messages, max_tokens, want_json, models, deadline):
     code = 0
     key = config.get("OPENROUTER_API_KEY")
-    for model in models or OPENROUTER_MODELS:
+    for model in models or openrouter_models():
         left = deadline - time.time()
         if left < 3:
             break
@@ -383,7 +394,7 @@ def pick_ollama_model(names, free=None):
     """The local model for this machine. OLLAMA_MODEL in .env wins when it is installed. Otherwise the largest installed chat model
     that fits the free memory: a 1B model under 2.5 GB free, up to 3B above that. If none fits, the smallest one."""
     chat = [n for n in names if n and not any(x in n.lower() for x in EMBED_WORDS)]
-    wanted = config.get("OLLAMA_MODEL")
+    wanted = config.chosen("ollama") or config.get("OLLAMA_MODEL")
     if not chat:
         return wanted or OLLAMA_DEFAULT
     if wanted and (wanted in chat or wanted + ":latest" in chat):
@@ -398,10 +409,10 @@ def pick_ollama_model(names, free=None):
 def _ollama_model():
     if time.time() - _ollama_name["t"] < 300:
         return _ollama_name["name"]
-    wanted = config.get("OLLAMA_MODEL")
+    wanted = config.chosen("ollama") or config.get("OLLAMA_MODEL")
     name = wanted or OLLAMA_DEFAULT
     try:
-        r = _http.get(OLLAMA_URL + "/api/tags", timeout=3)
+        r = local.request("get", "/api/tags", timeout=3)
         models = r.json().get("models", [])
         installed = [m.get("name", "") for m in models]
         note_models(models)
@@ -424,7 +435,7 @@ def ollama_model_in_use():
 
 def _ollama_up():
     try:
-        return _http.get(OLLAMA_URL + "/api/tags", timeout=3).status_code == 200
+        return local.request("get", "/api/tags", timeout=3).status_code == 200
     except requests.RequestException:
         return False
 
@@ -455,18 +466,18 @@ def _free_gb():
 def _loaded():
     """{model name: bytes in memory} for the models Ollama holds right now, or {} when it cannot be asked."""
     try:
-        r = _http.get(OLLAMA_URL + "/api/ps", timeout=3)
+        r = local.request("get", "/api/ps", timeout=3)
         return {m.get("name", ""): int(m.get("size") or 0) for m in r.json().get("models", [])}
     except (requests.RequestException, ValueError):
         return {}
 
 
-def _unload_others(model):
+def _unload_others(model, loaded=None):
     """One model in memory at a time: anything else Ollama holds is told to leave."""
-    for name in _loaded():
+    for name in (_loaded() if loaded is None else loaded):
         if name != model:
             try:
-                _http.post(OLLAMA_URL + "/api/generate", json={"model": name, "keep_alive": 0}, timeout=5)
+                local.request("post", "/api/generate", json={"model": name, "keep_alive": 0}, timeout=5)
             except requests.RequestException:
                 pass
 
@@ -482,42 +493,86 @@ def fits(free, size, held=0.0):
 
 
 
+def _fail_local(err):
+    """Log a local failure with every detail, remember its exact cause for the status panel and the self block, and return the code."""
+    local.report(err)
+    _record("ollama", False, err.code, err.cause())
+    return err.code
+
+
 def _try_ollama(messages, max_tokens, want_json):
     free = _free_gb()
-    if free is not None and free < MIN_FREE_GB and not _loaded():
-        print(f"  (local model skipped: {free:.1f} GB free, it needs {MIN_FREE_GB} GB)")
-        _record("ollama", False, -4)
-        return None, 0
+    loaded = _loaded()
+    if free is not None and free < MIN_FREE_GB and not loaded:
+        return None, _fail_local(local.skipped(free))
     if not _ensure_ollama():
-        print("  (local model is not running)")
-        return None, 0
+        why = "ollama is not installed (there is no ollama command)" if shutil.which("ollama") is None else f"ollama serve did not start within {OLLAMA_START_WAIT} s"
+        return None, _fail_local(local.LocalError("refused", f"refused the connection at {local.url()}: {why}", url=local.url() + "/api/chat"))
     model = _ollama_model()
     if not model:
         return None, 0
+    if not want_json:
+        messages = local.compact(messages)
     print(f"  (using the local model {model})")
     _sent("ollama", messages, max_tokens)
-    body = {"model": model, "messages": messages, "stream": False, "keep_alive": OLLAMA_KEEP,
-            "options": {"temperature": 0.2, "num_ctx": _num_ctx(model, free), "num_predict": max_tokens}}
+    warm = model in loaded
+    body = {"model": model, "messages": messages, "stream": True, "keep_alive": OLLAMA_KEEP,
+            "options": {"temperature": 0.2, "num_ctx": _num_ctx(model, free), "num_predict": local.predict_cap(max_tokens, want_json)}}
     if want_json:
         body["format"] = "json"
     with _ollama_lock:
-        _unload_others(model)
+        _unload_others(model, loaded)
+        if not warm:
+            local.state.update(warming=True, since=time.time(), model=model)
         try:
-            r = _http.post(OLLAMA_URL + "/api/chat", json=body, timeout=OLLAMA_TIMEOUT)
+            text, meta = local.stream_chat(body, model, warm)
+        except local.LocalError as e:
+            return None, _fail_local(e)
+        finally:
+            local.state["warming"] = False
+    local.ok(meta)
+    _record("ollama", bool(text.strip()), 200 if text.strip() else -2)
+    return text, (200 if text.strip() else -2)
+
+
+def _extra_call(pid):
+    """A provider added in .env (EXTRA_PROVIDERS): any OpenAI-compatible chat endpoint, with NAME_URL, NAME_API_KEY and NAME_MODEL."""
+    def call(messages, max_tokens, want_json):
+        key, url = config.get(pid.upper() + "_API_KEY"), config.get(pid.upper() + "_URL")
+        model = config.chosen(pid) or config.get(pid.upper() + "_MODEL")
+        if not (key and url and model) or config.offline():
+            return None, 0
+        body = {"model": model, "messages": messages, "temperature": 0.2, "max_tokens": max_tokens}
+        _sent(pid, messages, max_tokens)
+        try:
+            r = _http.post(url.rstrip("/") + "/chat/completions", headers={"Authorization": "Bearer " + key}, json=body, timeout=25)
             if r.status_code >= 400:
-                print(f"  (local model failed: HTTP {r.status_code})")
-                _record("ollama", False, r.status_code)
+                print(f"  ({pid} unavailable: HTTP {r.status_code})")
+                _record(pid, False, r.status_code)
                 return None, r.status_code
-            reply = str(r.json().get("message", {}).get("content", ""))
-            _record("ollama", bool(reply.strip()), 200 if reply.strip() else -2)
-            return reply, 200
-        except (requests.RequestException, ValueError) as e:
-            print(f"  (local model failed: {type(e).__name__})")
-            _record("ollama", False, -1)
+            text = str(r.json()["choices"][0]["message"]["content"] or "")
+        except (requests.RequestException, ValueError, KeyError, IndexError, TypeError) as e:
+            print(f"  ({pid} unavailable: {type(e).__name__})")
+            _record(pid, False, -1)
             return None, -1
+        _record(pid, bool(text.strip()), 200 if text.strip() else -2)
+        return text, 200 if text.strip() else -2
+    return call
 
 
 PROVIDERS = (("groq", _try_groq), ("openrouter", _try_openrouter), ("ollama", _try_ollama))
+
+
+def _chain():
+    """PROVIDERS with the extra providers from .env in front of the local model."""
+    from . import registry
+    extras = [(n, _extra_call(n)) for n in registry.extra_names() if registry.configured(n)]
+    if not extras:
+        return PROVIDERS
+    for n, _ in extras:
+        LABELS.setdefault(n, n.capitalize())
+    at = next((i for i, (n, _) in enumerate(PROVIDERS) if n == "ollama"), len(PROVIDERS))
+    return tuple(PROVIDERS[:at]) + tuple(extras) + tuple(PROVIDERS[at:])
 
 
 def log_usage(name, messages, reply):
@@ -538,7 +593,8 @@ def log_usage(name, messages, reply):
 LABELS = {"groq": "Groq", "openrouter": "OpenRouter", "ollama": "The local model"}
 
 
-CAUSES = {-4: "has too little free memory to load",-1: "could not be reached", -2: "sent a reply I could not read", 401: "refused the key", 403: "refused the key", 400: "rejected the request (HTTP 400)"}
+CAUSES = {-4: "has too little free memory to load", -5: "timed out waiting for the first word", -6: "stopped answering mid-reply", -7: "does not have that model installed",
+          -8: "ran out of memory loading the model", -9: "dropped the connection", -10: "returned an error", -1: "could not be reached", -2: "sent a reply I could not read", 401: "refused the key", 403: "refused the key", 400: "rejected the request (HTTP 400)"}
 
 
 def _cause(code):
@@ -561,7 +617,7 @@ def why_down(name, now=None):
     """A short cause for a provider that cannot be used or whose last real call failed, or '' when its last call worked or it has not been called."""
     now = now or time.time()
     h = HEALTH.get(name)
-    return _unusable(name, now) or (_cause(h["code"]) if h and not h["ok"] else "")
+    return _unusable(name, now) or ((h.get("why") or _cause(h["code"])) if h and not h["ok"] else "")
 
 
 def _ago(seconds):
@@ -580,11 +636,13 @@ def provider_state(name, now=None):
     down = _unusable(name, now)
     if down:
         return "bad", down
+    if name == "ollama" and local.warming():
+        return "idle", "the local model is warming up"
     if h is None:
         return "idle", "not called yet this session"
     if h["ok"]:
         return "ok", f"last call worked {_ago(now - h['at'])}"
-    return "bad", f"last call failed, it {_cause(h['code'])}, {_ago(now - h['at'])}"
+    return "bad", f"last call failed, it {h.get('why') or _cause(h['code'])}, {_ago(now - h['at'])}"
 
 
 def _failure_causes(names=("groq", "openrouter")):
@@ -740,7 +798,7 @@ def _generate_tiers(messages, max_tokens, hard=False, on_delta=None, want_json=F
             return _tier("strong", text.strip())
     if on_delta and not want_json and _busy.get("groq", 0) <= time.time() and _room("groq", estimate(messages) + max_tokens) \
             and not _offline_until[0] > time.time():
-        text, code = _groq_stream(messages, MODEL, max_tokens, on_delta)
+        text, code = _groq_stream(messages, groq_model(), max_tokens, on_delta)
         if code == 429:
             _busy["groq"] = time.time() + BUSY_SECONDS
             LIMITED["count"] += 1
@@ -805,7 +863,7 @@ def _route_chain(messages, max_tokens=PLAN_TOKENS, want_json=True, local=False, 
         _ollama_said[0] = time.time()
     codes = {}
     failed = []
-    for name, call in PROVIDERS:
+    for name, call in _chain():
         if cloud_only and name == "ollama":
             continue
         if name == "ollama" and not local and failed and not _outage["said"] and not any(codes.get(n) == 200 for n in ("groq", "openrouter")):
@@ -937,7 +995,7 @@ def quality_system(text):
     pet = " The user's pet name is " + config.PET_NAME + "." if config.PET_NAME else ""
     parts = [PERSONA_FULL.replace("{NAME}", config.ASSISTANT) + pet + " Current local time: "
              + datetime.now().astimezone().strftime("%A %Y-%m-%d %H:%M") + ".",
-             lang.reply_hint(text), SELF_RULE + "\n" + self_block()]
+             lang.reply_hint(text), profile.prompt_lines(), SELF_RULE + "\n" + self_block()]
     known = (memory.context(text)[:MEMORY_CHARS] + "\n" + facts.context(text)).strip()
     if known:
         parts.append(known)
@@ -947,12 +1005,8 @@ def quality_system(text):
     return "\n\n".join(p for p in parts if p)
 
 
-def chat(text, on_delta=None):
-    """Conversation on the plain path, no tools. Quality mode (the default) uses the fuller prompt, up to 12 turns of the shared chat thread
-    and more room to answer; tiers pick the larger model for hard questions. Returns a plan, or None."""
-    RECENT.append(text)
-    del RECENT[:-3]
-    _turn_tokens[0] = 0
+def chat_request(text):
+    """The messages and token limit a plain chat turn sends, before any provider trims them. `jarvis.doctor --ollama` uses it to make the same call."""
     q = quality()
     if q:
         history = threads.context(QUALITY_TURNS, skip_last=text) if threads.active() else _turns(plain=True)
@@ -961,13 +1015,24 @@ def chat(text, on_delta=None):
         history = _turns(plain=True)
         system = chat_system(text)
     messages = [{"role": "system", "content": system}] + history + [{"role": "user", "content": text}]
-    hard = is_hard(text)
     if _WRITE_WORDS.search(text):
         limit = DRAFT_TOKENS
     elif q:
-        limit = HARD_TOKENS if hard else QUALITY_TOKENS
+        limit = HARD_TOKENS if is_hard(text) else QUALITY_TOKENS
     else:
         limit = CHAT_TOKENS
+    return messages, history, limit
+
+
+def chat(text, on_delta=None):
+    """Conversation on the plain path, no tools. Quality mode (the default) uses the fuller prompt, up to 12 turns of the shared chat thread
+    and more room to answer; tiers pick the larger model for hard questions. The local model gets the short prompt (`local.compact`).
+    Returns a plan, or None."""
+    RECENT.append(text)
+    del RECENT[:-3]
+    _turn_tokens[0] = 0
+    messages, history, limit = chat_request(text)
+    hard = is_hard(text)
     heavy = advanced_mod.is_heavy(text) or bool(_CODE_WORDS.search(text))
     reply, _ = generate(messages, limit, hard=hard, on_delta=on_delta, advanced=heavy,
                         cloud=[{"role": "system", "content": cloud_system(text)}] + history[-2 * SENT_TURNS:] + [{"role": "user", "content": text}])
@@ -1000,7 +1065,8 @@ def self_block():
     from ..actions import tools
     st = provider_status()
     offline = config.offline()
-    lines = [f"Name: {config.ASSISTANT}. The user: {config.PET_NAME or config.SHORT_NAME or 'unknown'}; use that name.",
+    lines = [f"Name: {config.ASSISTANT}. The user: {config.PET_NAME or config.SHORT_NAME or 'unknown'}; use that name."
+             + (f" Full name: {config.FULL_NAME}." if config.FULL_NAME and config.FULL_NAME != config.PET_NAME else ""),
              "Now: " + datetime.now().astimezone().strftime("%A %Y-%m-%d %H:%M %Z"),
              "Mode: " + MODE_LINE[config.brain_mode()][1],
              "Brains right now: " + "; ".join(f"{LABELS[n]} {st[n]}" for n in (("ollama",) if offline else ("groq", "openrouter", "ollama"))),
@@ -1035,8 +1101,8 @@ def _groq_tools(messages, specs, max_tokens):
     if not key or config.offline():
         return None, 0
     clean = [{k: v for k, v in m.items() if not k.startswith("_")} for m in messages]
-    body = {"model": MODEL, "messages": clean, "tools": specs, "tool_choice": "auto", "temperature": 0.2, "max_tokens": max_tokens}
-    if MODEL.startswith("openai/gpt-oss"):
+    body = {"model": groq_model(), "messages": clean, "tools": specs, "tool_choice": "auto", "temperature": 0.2, "max_tokens": max_tokens}
+    if groq_model().startswith("openai/gpt-oss"):
         body["reasoning_effort"] = "low"
     _sent("groq", clean, max_tokens + 150 * len(specs))
     try:
@@ -1180,6 +1246,16 @@ def finish():
         memory.summarise_pending()
     except Exception as e:
         print(f"  (could not summarise the conversation: {type(e).__name__})")
+
+
+def preload_local():
+    """At startup, when the local model is the brain: start Ollama if needed and load the model while memory allows, so the first question is not the cold one."""
+    if config.brain_mode() == "hybrid":
+        return False
+    if not _ensure_ollama():
+        return False
+    model = _ollama_model()
+    return bool(model) and local.preload(model, _free_gb())
 
 
 def warm():

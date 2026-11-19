@@ -45,7 +45,8 @@ A personal voice assistant that runs locally on Linux. Talk to it, it listens, t
 - New window: `python -m jarvis.main` opens fullscreen on a globe and nothing else (F11 leaves fullscreen). Scroll down, click the globe or press Enter for seven floating
   bubbles (Settings, Notes, Home, Chat, Web Search, Media, Stats); Home, scroll up or Esc comes back. A small panel at the bottom always shows state, microphone,
   connection and brain (local or advanced). Ctrl+K (or the search icon) opens a palette over every feature, setting and tool: "change assistant voice", "delete memory".
-  Tab and the arrow keys work everywhere. Reduced motion and low power are in Settings and the palette. `--classic` opens the previous dashboard.
+  Tab and the arrow keys work everywhere. Move the mouse over the globe: it tilts, a light follows the pointer, stars drift away and a faint trail follows; a click ripples and dragging spins the globe. The bubbles travel slowly round the centre.
+  Reduced motion and low power are in Settings and the palette. `--classic` opens the previous dashboard.
 - Classic dashboard (`python -m jarvis.main --classic`): a dark glass HUD (icon rail with Home, Chat, Activity, Media, Code, Notes, Study, Web, Stats, Settings; a particle orb
   that reacts to listening, thinking and speaking; gauges, a live feed, a today card, provider status, a memory graph of notes). The voice loop
   runs in a background thread, so everything can also be typed and the window works with the mic off. `--no-ui` is the old headless mode,
@@ -333,3 +334,13 @@ python -m jarvis.main
 ```
 
 Requires `.env` with API credentials. See `.env.example`.
+
+## Local model troubleshooting
+`python -m jarvis.doctor --ollama` prints where Ollama is (OLLAMA_URL, OLLAMA_HOST), whether localhost and 127.0.0.1 answer, the model against `ollama list`, free memory, the timeouts, and then makes the same call a chat turn makes.
+The Activity page logs every failed local call with its kind, exception, URL and model. The first question after idle can take about 30 s on a CPU-only laptop; Jarvis preloads the model at start.
+
+## Settings
+Open Settings from the bubbles or Ctrl+K. **Profile** sets your full name, preferred name, nickname and preferences; they apply at once and are kept. **Memory** lists everything Jarvis remembers, lets you search, edit,
+delete and clear it, pause remembering and switch categories (other people and health are off by default; passwords, keys and card numbers are never stored). **Customization** changes the accent colour, background,
+globe, animation intensity, chat text, personality and voice. **Models and providers** shows each brain, whether it is configured, what its last real call did, its usage and errors, and lets you pick a model.
+API keys are entered only in `.env` (see `.env.example`); to add another OpenAI-compatible provider set `EXTRA_PROVIDERS=name`, `NAME_URL`, `NAME_API_KEY` and `NAME_MODEL`.

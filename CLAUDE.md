@@ -353,3 +353,37 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
   `ui/stage.py` (one widget, one paint per frame; scroll between globe and bubbles with `scroll_to`), `ui/bottom.py`, `ui/cmdk.py` (palette), `jarvis/features.py` (registry: sections, settings, every tool;
   `search` is fuzzy; `available=False` with a `why` for what is not built or switched off). Actions: `globe`, `page`, `toggle`, `window`, `tool` (opens Chat with a starter phrase, never runs it), `unavailable`.
   `scripts/shell_check.py` (offscreen) also saves `data/ui-previews/globe-<state>.png`, `globe-bubbles.png`, `globe-palette.png`, `globe-page-settings.png`. Keys: Ctrl+K, Esc, Alt+Left, Alt+Home, F11, Ctrl+., Ctrl+Q.
+
+- Local model (phase 2b): `brain/local.py` is the only code that talks to Ollama. `url()` is `OLLAMA_URL`, else `OLLAMA_HOST` (scheme and port added, 0.0.0.0 means 127.0.0.1), else localhost:11434;
+  `local.http` has `trust_env=False`, so proxy variables are never used, and `request()` retries a refused connection on the other spelling (localhost / 127.0.0.1) and remembers it. `stream_chat` streams
+  `/api/chat`; the timeout is the wait for the next chunk: `FIRST_COLD` 60 s for the first word when the model is not in `/api/ps`, `FIRST_WARM` 15 s when it is, `GAP_SECONDS` 15 s after that (env
+  `OLLAMA_FIRST_COLD`, `OLLAMA_FIRST_WARM`, `OLLAMA_GAP`); a stuck stream is cut with `abort` (socket shutdown first). Every failure is a `LocalError` with a kind (refused, timeout, stalled, missing, oom,
+  ram, http, dropped, empty), the exception type, status, URL, model and seconds; `report` prints it and emits one `sys` line for the Activity page; `brain._record(..., why)` keeps the words, which
+  `provider_state`, `why_down`, the Brains card and the self block show. "could not be reached" is only for a refused connection. `compact` turns a plain chat prompt (persona, memory, facts, self block) into
+  the short persona + nickname + time + last 4 turns (120 characters each), about 400 tokens; tool plans and other prompts pass through. `predict_cap`: chat 200 tokens, drafts 500. `brain.preload_local()`
+  runs at start (not in hybrid mode) and loads the model with keep_alive 5m when free RAM allows; `local.warming()` shows "LOCAL MODEL WARMING UP" in the classic pill and "local, warming up" in the new
+  bottom panel. `python -m jarvis.doctor --ollama` makes the same call chat makes (`brain.chat_request` then `_try_ollama`). `scripts/fakes/fake_ollama.py` is a fake server on a real port;
+  `scripts/ollama_check.py` covers every failure kind, the slow-first-word stream and the real Ollama when running.
+- Globe interaction (phase 2b): `Stage.tick` polls `QCursor.pos()` every frame (also mouse tracking on every widget, `Shell.track`); `engaged` eases to 1 while the pointer moves and back to 0 after `IDLE_SECONDS`
+  (3), which fades tilt, parallax, light, trail and repulsion and returns the globe to its slow spin. Effects: tilt, light spot (`Globe.aim`, `spot_point`, dots near it brighten), particles repelled
+  (`StarField.step`) and shocked by a click (`shock`), parallax, trail (`Budget.trail` points, 0.6 s), ripples on any click, click-and-drag spins the globe (`Globe.drag`, `release`, coasting `extra`);
+  a press that moves under 6 px is a click and opens the bubbles. `Budget` gained `tilt`, `trail`, `ripples`, `inertia`: reduced motion keeps only the light spot and plain dragging. Dots use
+  `Globe.dot_style` over six depth buckets. Bubbles: `World` anchors travel on two ellipses round the centre (`ORBIT_SPEED`, paused while a bubble is hovered or focused), sized by `_spacing`;
+  below r 50 the icon is dropped and the name centred.
+
+- Settings (phase 3): `ui/settings_hub.py` is the Settings destination (`Shell.hub`, registered as `dash.pages["Settings"]`): General (the older page, unchanged), Profile, Memory, Customization, Models and providers.
+  `Shell.run_feature` opens a section from the palette (`("page", "Settings", "<section>")`; `features.SETTINGS` lists each setting). Nothing on these pages reads or shows a key.
+- Profile: `core/profile.py` saves full name, preferred name, nickname, preferences and personality in `settings.json` ("profile") and applies them to `config` with `config.set_names` (also at import, so a
+  restart keeps them; an empty name returns to its `.env` value). `profile.prompt_lines()` (preferences and the personality sentence) is added to `chat_system`, `quality_system`, `cloud_system` and
+  `local.short_system`; `self_block` carries the names; the globe screen's greeting (`status.greeting`) uses the nickname. `profile.listeners` fire on save.
+- Memory: `memory/controls.py` (`settings.json` "memory": `paused`, per-category switches; ordinary categories on, `people` and `health` off) is checked by `facts.add` and `memory.remember`;
+  `facts.secret_refusal` (secrets, numbers, addresses) is never switchable. `memory/manager.py` is one view over `facts` (memory.jsonl), `memory.db` facts, people and episodes: `entries`, `search`, `get`, `update`,
+  `delete`, `clear_all`, refs like `facts:<id>`. The Memory page: pause, category switches, filter, search, table, editor, delete selected, two-click Clear all. Chats are kept separately.
+- Look: `design.settings()` / `update()` / `apply()` hold the saved look (`ui2`: accent, background, globe density/size/glow, intensity, chat size and density); `design.ACCENT` is the chosen accent lifted
+  with `readable` until it reads at 4.5:1 on both the page and the panel colour of the chosen background (`BACKGROUNDS`, `THEMES`, `ACCENT_PRESETS`). `design.version` bumps on every change so caches
+  (`backdrop`, `glass`, bubble pixmaps, the cursor glow) rebuild; `design.listeners` run `Shell.on_look` (restyle, budget, repaint). Globe state colours come from the accent (`globe.look_for`).
+  `budget(low, reduced, intensity, density)`; `pages_qss` dresses tables, text boxes and check boxes. Voice speed is `voices.speed` / `set_speed` (settings.json `voice_speed`, else `VOICE_SPEED`).
+- Models: `brain/registry.py` builds the Models page from real data: `describe(pid)` (configured, key set or not, last real call from `brain.HEALTH`, manual `probe`, role from `order()` for the mode, selected model,
+  capabilities, usage from `data/usage.json` and `data/traces.jsonl`, errors). Extra providers: `EXTRA_PROVIDERS=name` with `NAME_URL`, `NAME_API_KEY`, `NAME_MODEL` (OpenAI-compatible; `brain._extra_call`, inserted
+  before the local model by `brain._chain`). The model picked on the page is `config.chosen(provider)` (`settings.json` "models"), used by `brain.groq_model`, `brain.openrouter_models` and `pick_ollama_model`.
+  `openrouter_models()` fetches the list when asked and caches it in `data/openrouter-models.json`. `scripts/settings_check.py` includes a scan that no key appears in any UI string, log, result or saved file.

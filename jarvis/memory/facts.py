@@ -11,9 +11,9 @@ from datetime import date
 
 from .. import redact
 from ..core import config
-from . import threads
+from . import controls, threads
 
-KINDS = ("project", "goal", "preference", "plan", "decision", "fact")
+KINDS = controls.CATEGORIES
 MAX_FACT = 160
 TOP = 5
 _lock = threading.RLock()
@@ -55,16 +55,44 @@ def _norm(text):
     return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
 
 
-def allowed(text):
-    """True when a sentence may be stored. Anything secret, medical or about another person is refused."""
+def sensitive_category(text):
+    """'health' or 'people' when the sentence is about either, else ''."""
+    t = str(text)
+    if HEALTH.search(t):
+        return "health"
+    if OTHERS.search(t):
+        return "people"
+    return ""
+
+
+def secret_refusal(text):
+    """Why a sentence may never be stored whatever the switches say (secrets, numbers, addresses), or ''."""
     t = str(text)
     if not t.strip() or len(t) > 400:
-        return False
-    if SECRET.search(t) or DIGITS.search(t) or HEALTH.search(t) or OTHERS.search(t):
-        return False
-    if redact.mask(t) != t:
-        return False
-    return True
+        return "That is empty or too long to remember."
+    if SECRET.search(t) or DIGITS.search(t) or redact.mask(t) != t:
+        return "I never keep passwords, keys, card numbers, id numbers, phone numbers or addresses."
+    return ""
+
+
+def refusal(text):
+    """Why a sentence may not be stored, in words, or '' when it may. Secrets, numbers and addresses are always refused; health and other people only
+    while their switch in Settings, Memory is off; everything is refused while remembering is paused."""
+    t = str(text)
+    why = secret_refusal(t)
+    if why:
+        return why
+    if controls.paused():
+        return controls.refusal()
+    cat = sensitive_category(t)
+    if cat and not controls.allows(cat):
+        return controls.refusal(cat)
+    return ""
+
+
+def allowed(text):
+    """True when a sentence may be stored."""
+    return not refusal(text)
 
 
 def _clean(text):
@@ -104,7 +132,9 @@ def add(text, kind="fact", day=None):
     text = _clean(text)
     if len(text) < 8:
         return None
-    kind = kind if kind in KINDS else "fact"
+    kind = sensitive_category(text) or (kind if kind in KINDS else "fact")
+    if not controls.allows(kind):
+        return None
     with _lock:
         rows = load()
         key = _norm(text)
@@ -138,6 +168,46 @@ def delete(fact_id):
             _write(keep)
             _index["sig"] = None
         return len(rows) - len(keep)
+
+
+def update(fact_id, text=None, kind=None):
+    """Edit one stored fact in place, keeping its id. Returns (True, "") or (False, why)."""
+    with _lock:
+        rows = load()
+        row = next((r for r in rows if r.get("id") == fact_id), None)
+        if row is None:
+            return False, "That memory is gone."
+        if text is not None:
+            why = secret_refusal(text)
+            if why:
+                return False, why
+            row["text"] = _clean(text)
+            row["kind"] = sensitive_category(row["text"]) or row.get("kind", "fact")
+        if kind is not None and kind in controls.NORMAL and row.get("kind") not in controls.SENSITIVE:
+            row["kind"] = kind
+        _write(rows)
+        _index["sig"] = None
+    return True, ""
+
+
+def delete_many(ids):
+    ids = set(ids)
+    with _lock:
+        rows = load()
+        keep = [r for r in rows if r.get("id") not in ids]
+        if len(keep) != len(rows):
+            _write(keep)
+            _index["sig"] = None
+        return len(rows) - len(keep)
+
+
+def clear():
+    """Remove every stored fact."""
+    with _lock:
+        n = len(load())
+        _write([])
+        _index["sig"] = None
+    return n
 
 
 def terms(query):

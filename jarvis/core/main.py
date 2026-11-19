@@ -828,7 +828,7 @@ def start(watch_reminders=True):
     clipwatch.start()
     threading.Thread(target=command_loop, daemon=True).start()
     threading.Thread(target=brain.warm, daemon=True).start()
-    threading.Thread(target=brain.ollama_model_in_use, daemon=True).start()
+    threading.Thread(target=lambda: (brain.ollama_model_in_use(), brain.preload_local()), daemon=True).start()
     voice.warm()
 
 

@@ -35,13 +35,25 @@ def best():
     return min(names, key=lambda n: (-quality(n), n != DEFAULT, n)) if names else None
 
 
-def length_scale():
-    """Piper phoneme length: 0.92 is a little brisker than the model default; VOICE_SPEED above 1 speaks faster."""
+def speed():
+    """Speaking speed: the value saved in Settings (settings.json "voice_speed"), else VOICE_SPEED from .env, else 1."""
+    saved = read_settings().get("voice_speed")
     try:
-        speed = float(config.get("VOICE_SPEED", "1"))
-    except ValueError:
-        speed = 1.0
-    return round(0.92 / min(2.0, max(0.5, speed)), 3)
+        value = float(saved) if saved is not None else float(config.get("VOICE_SPEED", "1"))
+    except (TypeError, ValueError):
+        value = 1.0
+    return min(2.0, max(0.5, value))
+
+
+def set_speed(value):
+    data = read_settings()
+    data["voice_speed"] = round(min(2.0, max(0.5, float(value))), 2)
+    write_settings(data)
+
+
+def length_scale():
+    """Piper phoneme length: 0.92 is a little brisker than the model default; a speed above 1 speaks faster."""
+    return round(0.92 / speed(), 3)
 
 
 def english():

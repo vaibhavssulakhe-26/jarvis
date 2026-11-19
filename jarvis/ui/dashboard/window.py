@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QFrame, QHBo
 
 from ... import platform
 from ...actions import events, mpvctl, web_agent
+from ...brain import local
 from ...core import config, state
 from ...voice import ptt
 from . import icons, pages, privacy, themes
@@ -357,6 +358,8 @@ class Dashboard(QWidget):
         n = alerts.count()
         free = psutil.virtual_memory().available / 2 ** 30
         parts = [config.brain_mode().replace("_", " ").upper(), "ERROR" if time.time() < self.error_until else self.ctx.mode.upper()]
+        if local.warming():
+            parts.append("LOCAL MODEL WARMING UP")
         if free < CHIP_RAM_GB:
             parts.append("LOW RAM")
         if n:

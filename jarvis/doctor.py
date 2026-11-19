@@ -85,9 +85,10 @@ def key_status(label, *names):
 
 
 def check_ollama():
-    url = config.get("OLLAMA_URL", "http://localhost:11434")
+    from .brain import local
+    url = local.url()
     try:
-        r = requests.get(url + "/api/tags", timeout=3)
+        r = requests.get(url + "/api/tags", timeout=3, proxies={"http": None, "https": None})
         models = r.json().get("models", [])
         names = [m.get("name", "") for m in models]
     except (requests.RequestException, ValueError):
@@ -103,7 +104,7 @@ def check_ollama():
     chosen = brain.pick_ollama_model(names)
     size = next((int(m.get("size") or 0) for m in models if m.get("name") == chosen), 0) / 2**30
     try:
-        held = next((int(m.get("size") or 0) for m in requests.get(url + "/api/ps", timeout=3).json().get("models", []) if m.get("name") == chosen), 0) / 2**30
+        held = next((int(m.get("size") or 0) for m in requests.get(url + "/api/ps", timeout=3, proxies={"http": None, "https": None}).json().get("models", []) if m.get("name") == chosen), 0) / 2**30
     except (requests.RequestException, ValueError):
         held = 0.0
     free = brain._free_gb()
@@ -256,7 +257,52 @@ def summary(results):
     return line
 
 
+def ollama_report(text="can you hear me?"):
+    """`python -m jarvis.doctor --ollama`: where Ollama is, what the settings say, and the exact call a chat turn makes. Returns (lines, ok)."""
+    import os
+    from .brain import brain, local
+    out = []
+    out.append(f"url          {local.url()}  (from {'OLLAMA_URL' if config.get('OLLAMA_URL') else 'OLLAMA_HOST' if (os.environ.get('OLLAMA_HOST') or config.get('OLLAMA_HOST')) else 'the default'})")
+    proxies = local.proxy_variables()
+    out.append("proxy        " + (", ".join(proxies) + " are set; Ollama calls ignore them" if proxies else "no proxy variables set; Ollama calls never use one"))
+    names = []
+    for label, base in (("localhost", "http://localhost:11434"), ("127.0.0.1", "http://127.0.0.1:11434")):
+        try:
+            r = local.http.get(base + "/api/tags", timeout=3)
+            names = names or [m.get("name", "") for m in r.json().get("models", [])]
+            out.append(f"{label:<12} HTTP {r.status_code}")
+        except requests.RequestException as e:
+            out.append(f"{label:<12} {type(e).__name__}: {str(e)[:90]}")
+    wanted = config.get("OLLAMA_MODEL")
+    chosen = brain._ollama_model()
+    installed = chosen in names or chosen + ":latest" in names
+    out.append(f"model        .env OLLAMA_MODEL={wanted or '(not set)'}, chosen {chosen}, " + ("installed" if installed else "NOT in ollama list: ollama pull " + chosen))
+    out.append("installed    " + (", ".join(names) or "(none, or Ollama is not answering)"))
+    free = brain._free_gb()
+    loaded = brain._loaded()
+    out.append(f"memory       {free:.1f} GB free, gate {brain.MIN_FREE_GB} GB, " + ("loaded now: " + ", ".join(loaded) if loaded else "no model loaded (the first call is cold)") if free is not None else "memory       unknown")
+    out.append(f"timeouts     first word {local.FIRST_COLD} s cold, {local.FIRST_WARM} s warm; {local.GAP_SECONDS} s between chunks after that")
+    messages, _, limit = brain.chat_request(text)
+    sent = local.compact(messages)
+    out.append(f"request      '{text}', about {brain.estimate(sent)} tokens (the chat prompt was {brain.estimate(messages)}), up to {local.predict_cap(limit, False)} tokens back")
+    started = time.time()
+    reply, code = brain._try_ollama(messages, limit, False)
+    took = time.time() - started
+    if reply:
+        info = local.LAST
+        out.append(f"result       pass, {took:.1f} s, first word after {info.get('first_token', 0):.1f} s ({'warm' if info.get('warm') else 'cold'}): {' '.join(reply.split())[:160]}")
+        return out, True
+    info = local.LAST
+    out.append(f"result       FAIL after {took:.1f} s: {info.get('message', 'no answer')}")
+    out.append(f"detail       kind={info.get('kind')} exception={info.get('exc') or '-'} status={info.get('status') or '-'} url={info.get('url')} model={info.get('model')}")
+    return out, False
+
+
 if __name__ == "__main__":
+    if "--ollama" in sys.argv:
+        lines, good = ollama_report()
+        print("\n".join(lines))
+        sys.exit(0 if good else 1)
     started = time.time()
     out = run()
     print(report(out))

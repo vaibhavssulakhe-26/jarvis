@@ -27,16 +27,37 @@ GATED = (
     ("Study", "study quiz learning roadmap streak revision", ("page", "Study"), "STUDY"),
     ("Jobs", "jobs applications interview tracker recruiter career", ("page", "Jobs"), "JOBS"),
 )
+def _settings_page(section):
+    return ("page", "Settings", section)
+
+
 SETTINGS = (
-    ("Theme and colours", "theme colour color hue appearance look dark", ("page", "Settings")),
-    ("Crowd mode", "crowd noise wake word listening noisy room", ("page", "Settings")),
-    ("Mute Jarvis's voice", "mute silence quiet voice speaker volume off", ("page", "Settings")),
+    ("General settings", "general settings options keys diagnostics doctor crowd mode mute", _settings_page("general")),
+    ("Profile", "profile name full name preferred name nickname preferences about me who am i", _settings_page("profile")),
+    ("Nickname", "nickname call me pet name what to call me", _settings_page("profile")),
+    ("Preferences", "preferences how i like answers short metric", _settings_page("profile")),
+    ("Memory manager", "memory memories remembered facts list search edit delete clear forget manage", _settings_page("memory")),
+    ("Pause remembering", "pause remembering stop remembering memory off", _settings_page("memory")),
+    ("What may be remembered", "memory categories sensitive health people allow remember switches", _settings_page("memory")),
+    ("Customization", "customization customise customize appearance look personalise", _settings_page("customize")),
+    ("Accent colour", "accent colour color highlight hue personalise theme", _settings_page("customize")),
+    ("Background", "background wallpaper backdrop colour dark", _settings_page("customize")),
+    ("Theme and colours", "theme colour color hue appearance look dark", _settings_page("customize")),
+    ("Globe look", "globe look dots size glow density sphere", _settings_page("customize")),
+    ("Animation intensity", "animation intensity motion particles speed calm", _settings_page("customize")),
+    ("Chat appearance", "chat appearance text size font spacing bubbles", _settings_page("customize")),
+    ("Assistant personality", "personality tone style friendly formal playful concise coach", _settings_page("customize")),
+    ("Voice settings", "voice settings speed speaking rate pitch speaker test", _settings_page("customize")),
+    ("Models and providers", "models providers brains ollama groq openrouter fallback primary usage errors", _settings_page("models")),
+    ("API keys", "api keys key env where groq openrouter token", _settings_page("models")),
+    ("OpenRouter model", "openrouter model picker list choose", _settings_page("models")),
+    ("Crowd mode", "crowd noise wake word listening noisy room", _settings_page("general")),
+    ("Mute Jarvis's voice", "mute silence quiet voice speaker volume off", _settings_page("general")),
     ("Low power mode", "low power battery saver slow fps animation", ("toggle", "low_power")),
     ("Reduced motion", "reduce motion animation accessibility calm still particles", ("toggle", "reduced_motion")),
     ("Toggle full screen", "fullscreen full screen window maximise", ("window", "fullscreen")),
 )
 PLANNED = (
-    ("Accent colour", "accent colour color personalise theme", "arrives in a later update"),
     ("About JARVIS", "about version features list what is", "arrives in a later update"),
 )
 TITLES = {
