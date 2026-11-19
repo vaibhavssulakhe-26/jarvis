@@ -19,7 +19,7 @@ DEFAULT = "ice"
 ORDER = list(PRESETS)
 SEMANTIC = dict(ok="#3ddc84", warn="#ffb02e", bad="#ff4d5e", white="#ffffff")
 STATE_TINT = {"listening": "#7ff0ff", "thinking": "#ffb02e", "error": "#ff3b4e"}
-DEFAULT_UI = dict(state_colours=False, cycle=False, low_power=False, chat_dock=False)
+DEFAULT_UI = dict(state_colours=False, cycle=False, low_power=False, chat_dock=False, reduced_motion=False)
 
 
 def from_hue(hue):

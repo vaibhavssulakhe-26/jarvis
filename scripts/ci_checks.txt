@@ -38,6 +38,7 @@ screen_check linux
 player_check linux
 stop_check linux
 dashboard_check linux
+shell_check linux
 chat_check linux
 telegram_check
 timetable_check

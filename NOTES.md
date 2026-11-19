@@ -286,3 +286,26 @@ See "How to test phases 22 to 28" in README.md.
   and the camera and holo viewer once the bridge exists.
 - The wall thickness estimate samples 60 rays and skips meshes over 40000 faces; treat it as a hint.
 
+
+## Phase 2: design system, globe screen, bubbles, command palette
+
+### Built
+- `jarvis/ui/design.py`, `status.py`, `globe.py`, `bubbles.py`, `stage.py`, `bottom.py`, `cmdk.py`, `shell.py` and `jarvis/features.py`; `scripts/shell_check.py` (about 170 checks, in `ci_checks.txt`).
+- The new window is the default; `--classic` keeps the old dashboard. The ten existing pages (Chat, Activity, Media, Code, Notes, Study, Jobs, Web, Stats, Settings) open inside it unchanged.
+- Small changes elsewhere: `events.hearing` and two lines in `ears.py`; `reduced_motion` in `themes.DEFAULT_UI`; a Reduced motion checkbox in Settings; `Dashboard` got `reduced`, `on_power`,
+  `set_reduced_motion`, a `make` argument on `window.run`, and its tray "Show" now calls `self.bring_up()` at click time. `dashboard_check` now expects the new window by default and `--classic` for the old one.
+
+### Decisions and limits
+- The classic `Dashboard` is still built (hidden) because it owns events, tray, theme and quitting and the pages need its `Theme` and `Clock`. It goes away when the pages are rebuilt.
+- "Listening" means the ears are recording after a wake word, push to talk or a follow-up; waiting for the wake word is "idle". "Offline" means offline mode or every provider's last call failed.
+- Tools in the palette open Chat with a starter phrase and do not run; most need arguments and risky ones (shutdown, delete) must not fire from a keystroke.
+- Unavailable entries: About JARVIS and Accent colour (planned), Study and Jobs while `STUDY` / `JOBS` are off. They are shown greyed, with the reason, and cannot be chosen.
+- Reduced motion and low power both run the clock at 15 fps. Destination pages sit in a scroll area because some need more than 520 px of height.
+- Frame time and memory are measured offscreen with software rendering; the numbers on a real GPU session will differ.
+
+### Needs your real screen and mic
+- Fullscreen on KDE Wayland (the app forces xcb as before), F11, and the look of the globe, stars and bubbles at your resolution and scale factor.
+- Cursor parallax, particles moving away from the cursor and the globe tilt with a real mouse; smoothness of the scroll and the fade into a page.
+- The globe actually following your voice: listening pulse with the real mic level, speaking rhythm from Piper, thinking while a real request runs, error and offline after a real failure.
+- The bottom panel texts with a live Groq or Ollama, and the brain label switching to advanced on an advanced answer.
+- Tab order and visible focus with a keyboard, Ctrl+K against the KDE shortcut set, and the UI process memory in a long session (the 250 MB check is a short offscreen run).

@@ -741,9 +741,12 @@ with mock.patch("jarvis.ui.dashboard.run") as dash, mock.patch.object(core, "sta
         mock.patch.object(sys, "argv", ["jarvis", "--no-ui"]):
     core.main()
 check("--no-ui keeps the old headless mode", listen.called and not dash.called)
-with mock.patch("jarvis.ui.dashboard.run") as dash, mock.patch.object(sys, "argv", ["jarvis"]):
+with mock.patch("jarvis.ui.dashboard.run") as dash, mock.patch("jarvis.ui.shell.run") as new, mock.patch.object(sys, "argv", ["jarvis"]):
     core.main()
-check("without flags the dashboard opens first", dash.called)
+check("without flags the new window opens first", new.called and not dash.called)
+with mock.patch("jarvis.ui.dashboard.run") as dash, mock.patch("jarvis.ui.shell.run") as new, mock.patch.object(sys, "argv", ["jarvis", "--classic"]):
+    core.main()
+check("--classic keeps the dashboard reachable", dash.called and not new.called)
 
 check("no exception reached the Qt event loop", not problems, "".join(problems)[-500:])
 sys.exit(1 if bad else 0)

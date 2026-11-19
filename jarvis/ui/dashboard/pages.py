@@ -933,6 +933,8 @@ class Settings(Page):
         opt = Panel(t, "Options")
         self.low = QCheckBox("Low power mode (15 fps, 40 points, no rings)")
         self.low.toggled.connect(window.set_low_power)
+        self.reduced = QCheckBox("Reduced motion (no particles, drift or transitions)")
+        self.reduced.toggled.connect(window.set_reduced_motion)
         self.tint = QCheckBox("State colours (accent follows listening, thinking, error)")
         self.tint.toggled.connect(lambda on: window.set_ui_flag("state_colours", on))
         self.cycle = QCheckBox("Slowly cycle the hue")
@@ -941,7 +943,7 @@ class Settings(Page):
         self.mute.toggled.connect(lambda on: state.update(muted=bool(on)))
         self.crowd = QCheckBox("Crowd mode (wake word for every command, no follow-up window)")
         self.crowd.toggled.connect(listen.set_crowd)
-        for w in (self.low, self.tint, self.cycle, self.mute, self.crowd):
+        for w in (self.low, self.reduced, self.tint, self.cycle, self.mute, self.crowd):
             opt.box.addWidget(w)
         keys = Panel(t, "Keys")
         self.keys = value_label("")
@@ -997,7 +999,7 @@ class Settings(Page):
             b.blockSignals(True)
             b.setChecked(name == th.name)
             b.blockSignals(False)
-        for box, value in ((self.low, self.window.low_manual), (self.tint, th.state_colours), (self.cycle, th.cycle), (self.mute, state.get("muted")), (self.crowd, listen.crowd())):
+        for box, value in ((self.low, self.window.low_manual), (self.reduced, self.window.reduced), (self.tint, th.state_colours), (self.cycle, th.cycle), (self.mute, state.get("muted")), (self.crowd, listen.crowd())):
             box.blockSignals(True)
             box.setChecked(bool(value))
             box.blockSignals(False)

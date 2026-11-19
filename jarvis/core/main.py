@@ -878,8 +878,11 @@ def utf8_streams():
 def main():
     utf8_streams()
     if "--text" not in sys.argv and "--no-ui" not in sys.argv:
-        from ..ui import dashboard
-        return dashboard.run()
+        if "--classic" in sys.argv:
+            from ..ui import dashboard
+            return dashboard.run()
+        from ..ui import shell
+        return shell.run()
     start()
     if "--text" in sys.argv:
         print("text mode: type a command, Ctrl+C to stop")

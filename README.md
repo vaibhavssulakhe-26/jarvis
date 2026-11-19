@@ -42,7 +42,11 @@ A personal voice assistant that runs locally on Linux. Talk to it, it listens, t
   command and Jarvis offers the normal browser. "What can you do" and "can you code" are answered from the tool list, never guessed.
 - Browser control: "go to github", "search cats on YouTube", "click About us", "scroll down", "read this page", "go back", "new tab",
   "close tab". Own profile, no typing into secret fields, risky clicks and downloads wait for a yes
-- Dashboard: `python -m jarvis.main` opens a dark glass HUD (icon rail with Home, Chat, Activity, Media, Code, Notes, Study, Web, Stats, Settings; a particle orb
+- New window: `python -m jarvis.main` opens fullscreen on a globe and nothing else (F11 leaves fullscreen). Scroll down, click the globe or press Enter for seven floating
+  bubbles (Settings, Notes, Home, Chat, Web Search, Media, Stats); Home, scroll up or Esc comes back. A small panel at the bottom always shows state, microphone,
+  connection and brain (local or advanced). Ctrl+K (or the search icon) opens a palette over every feature, setting and tool: "change assistant voice", "delete memory".
+  Tab and the arrow keys work everywhere. Reduced motion and low power are in Settings and the palette. `--classic` opens the previous dashboard.
+- Classic dashboard (`python -m jarvis.main --classic`): a dark glass HUD (icon rail with Home, Chat, Activity, Media, Code, Notes, Study, Web, Stats, Settings; a particle orb
   that reacts to listening, thinking and speaking; gauges, a live feed, a today card, provider status, a memory graph of notes). The voice loop
   runs in a background thread, so everything can also be typed and the window works with the mic off. `--no-ui` is the old headless mode,
   `--text` is typed-only in the terminal. Close hides to the tray; Quit stops mpv, the browser and child processes.

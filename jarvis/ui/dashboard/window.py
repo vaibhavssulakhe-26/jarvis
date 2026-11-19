@@ -66,6 +66,8 @@ class Dashboard(QWidget):
         self.clock = Clock()
         self.ctx = pages.Context(self.theme, self.clock, self.run_command)
         self.low_manual = themes.load()[2]["low_power"]
+        self.reduced = themes.load()[2]["reduced_motion"]
+        self.on_power = None
         self.low_auto = False
         self.error_until = 0.0
         self.seen_theme = float(state.get("theme_at") or 0)
@@ -279,15 +281,22 @@ class Dashboard(QWidget):
 
     # ---------- low power, visibility ----------
     def apply_low_power(self):
-        low = self.low_manual or self.low_auto
+        low = self.low_manual or self.low_auto or self.reduced
         self.clock.set_low(low)
         home = self.pages.get("Home")
         if home:
             home.orb.set_low(low)
+        if self.on_power:
+            self.on_power()
 
     def set_low_power(self, on):
         self.low_manual = bool(on)
         themes.save(low_power=bool(on))
+        self.apply_low_power()
+
+    def set_reduced_motion(self, on):
+        self.reduced = bool(on)
+        themes.save(reduced_motion=bool(on))
         self.apply_low_power()
 
     def sync_visibility(self):
@@ -471,7 +480,7 @@ class Dashboard(QWidget):
         self.setWindowIcon(icon)
         self.tray = QSystemTrayIcon(icon, self)
         menu = QMenu()
-        for text, fn in (("Show", self.bring_up), ("Talk to Jarvis", self.talk), ("Stop", self.stop_all), ("Quit", self.quit_all)):
+        for text, fn in (("Show", lambda: self.bring_up()), ("Talk to Jarvis", self.talk), ("Stop", self.stop_all), ("Quit", self.quit_all)):
             act = QAction(text, menu)
             act.triggered.connect(lambda _=False, f=fn: f())
             menu.addAction(act)
@@ -513,7 +522,7 @@ class Dashboard(QWidget):
         self.close()
 
 
-def run(with_core=True):
+def run(with_core=True, make=None):
     from PyQt6.QtCore import QLockFile
     os.environ.setdefault("QT_LOGGING_RULES", "qt.text.font.db=false")
     if platform.name() == "linux":
@@ -525,8 +534,8 @@ def run(with_core=True):
     app = QApplication(sys.argv)
     app.setApplicationName("Jarvis")
     app.setQuitOnLastWindowClosed(False)
-    win = Dashboard()
-    win.show()
+    win = (make or Dashboard)()
+    getattr(win, "present", win.show)()
     events.emit("sys", "Say " + config.wake_label().title() + ", or type below. Close hides to the tray; Quit stops everything.")
     if with_core:
         from .. import ui

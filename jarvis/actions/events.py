@@ -3,6 +3,7 @@ listeners = []
 level = 0.0
 out_level = 0.0
 via = ["spoken"]
+hearing = False
 mic = {"floor": 0.0, "thr": 0.0, "mode": "normal", "vad": ""}
 
 

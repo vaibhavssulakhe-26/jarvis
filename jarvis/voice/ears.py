@@ -237,6 +237,7 @@ class Ears:
                 pass
 
     def _reset(self):
+        events.hearing = False
         self.phase = None
         self.buf = []
         self.pre.clear()
@@ -246,6 +247,7 @@ class Ears:
         self.quiet = 0
 
     def _begin(self, now, phase, preroll=None, source=None):
+        events.hearing = True
         state.update(touched_at=time.time())
         mpvctl.duck()
         self.source = source or self.source

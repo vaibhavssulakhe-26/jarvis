@@ -341,3 +341,15 @@ the `@tool` decorator; modules with their own tools are imported at the bottom o
   `local model` or `offline`. A cloud failure or a used-up day gives one spoken sentence and the local answer. Local model: `pick_ollama_model` takes 1B under 2.5 GB free and up to 3B above
   (sizes come from `note_models`, which reads Ollama's own parameter counts), `num_ctx` 2048 (4096 for a 3B model with room), `keep_alive` 5m, one request at a time (`_ollama_lock`), other
   loaded models are unloaded first. `brain.local_status()` and doctor show model, free memory and whether it fits. `scripts/local_first_check.py` covers every path with fake providers.
+
+- New window (phase 2): `jarvis/ui/shell.py` is the default window; `--classic` opens `ui/dashboard/window.py` as before. The shell builds a hidden classic `Dashboard` as its engine (events, tray,
+  quit, theme, the `Clock`) and re-parents its ten pages (all but Home) into `Destination`, which adds a Back and Home bar inside a scroll area. `shell.run` is `window.run(make=Shell)`.
+  `ui/design.py` has the tokens (colour, `SPACE`, `RADIUS`, `MOTION`), `contrast_pairs` (all at least 4.5, asserted), `readable` (lifts any user accent), the cached `backdrop` and `glass`,
+  and `budget(low, reduced)`: normal 30 fps, 300 particles, 1100 globe points; low power 15 fps, 80 particles, 420 points; reduced motion also stops drift, parallax and transitions.
+  Both flags live in `themes.DEFAULT_UI` (`low_power`, `reduced_motion`), set by `Dashboard.set_low_power` / `set_reduced_motion` (Settings page, palette) which call `on_power`.
+  `ui/status.py` (no Qt) turns real state into one of six states (`resolve_state`: error, offline, speaking, thinking, listening, idle) from `Snapshot`: the state file, `voice.SPEAKING`,
+  `events.hearing` (set by `Ears._begin`, cleared by `_reset`), a `Tracker` on the event bus (recent failure, last tier, activity) and `brain.provider_state` (read twice a second, never a ping).
+  `ui/globe.py` (`LOOKS` table, `Globe`, `StarField`), `ui/bubbles.py` (`World` spring physics with a projection pass that keeps pairs at `2 * rc` apart, `Bubble` widgets with the label inside the circle),
+  `ui/stage.py` (one widget, one paint per frame; scroll between globe and bubbles with `scroll_to`), `ui/bottom.py`, `ui/cmdk.py` (palette), `jarvis/features.py` (registry: sections, settings, every tool;
+  `search` is fuzzy; `available=False` with a `why` for what is not built or switched off). Actions: `globe`, `page`, `toggle`, `window`, `tool` (opens Chat with a starter phrase, never runs it), `unavailable`.
+  `scripts/shell_check.py` (offscreen) also saves `data/ui-previews/globe-<state>.png`, `globe-bubbles.png`, `globe-palette.png`, `globe-page-settings.png`. Keys: Ctrl+K, Esc, Alt+Left, Alt+Home, F11, Ctrl+., Ctrl+Q.
